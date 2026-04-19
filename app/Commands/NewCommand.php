@@ -13,6 +13,7 @@ use App\Traits\CheckPrerequisites;
 use App\Traits\GathersInfrastructureConfig;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithDocker;
+use App\Traits\InteractsWithMcpConfig;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Console\Scheduling\Schedule;
@@ -25,7 +26,7 @@ use function Laravel\Prompts\warning;
 
 class NewCommand extends Command
 {
-    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithMcpConfig, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -121,6 +122,7 @@ class NewCommand extends Command
 
         $this->withSpin('Orchestrating infrastructure manifests...', function () use ($projectPath, $name, $config) {
             $this->orchestrateProjectScaffolding($projectPath, $name, $config);
+            $this->scaffoldMcpConfigs($projectPath);
         });
 
         $this->laraKubeInfo("Project {$name} created successfully!");

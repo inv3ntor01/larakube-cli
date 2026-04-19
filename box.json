@@ -4,10 +4,21 @@
         "app",
         "bootstrap",
         "config",
+        "resources",
         "vendor"
     ],
     "files": [
         "composer.json"
+    ],
+    "finder": [
+        {
+            "name": "*.stub",
+            "in": "resources/stubs"
+        },
+        {
+            "name": "*.pem",
+            "in": "resources/stubs/traefik/dev/certificates"
+        }
     ],
     "exclude-composer-files": false,
     "compression": "GZ",

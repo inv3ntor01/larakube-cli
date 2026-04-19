@@ -76,15 +76,47 @@ trait InteractsWithGlobalConfig
         $this->setGlobalConfig($config);
     }
 
-    protected function getAiApiKey(): ?string
+    protected function getAiProvider(): string
     {
-        return $this->getGlobalConfig()['ai_api_key'] ?? env('GEMINI_API_KEY') ?? env('OPENAI_API_KEY');
+        return $this->getGlobalConfig()['ai_provider'] ?? 'gemini';
     }
 
-    protected function setAiApiKey(string $key): void
+    protected function setAiProvider(string $provider): void
     {
         $config = $this->getGlobalConfig();
-        $config['ai_api_key'] = $key;
+        $config['ai_provider'] = $provider;
         $this->setGlobalConfig($config);
+    }
+
+    protected function getAiApiKey(?string $provider = null): ?string
+    {
+        $provider = $provider ?? $this->getAiProvider();
+        $config = $this->getGlobalConfig();
+
+        return $config['ai_keys'][$provider] ?? env(strtoupper($provider).'_API_KEY');
+    }
+
+    protected function setAiApiKey(string $key, ?string $provider = null): void
+    {
+        $provider = $provider ?? $this->getAiProvider();
+        $config = $this->getGlobalConfig();
+        $config['ai_keys'][$provider] = $key;
+        $this->setGlobalConfig($config);
+    }
+
+    protected function checkCaTrust(): bool
+    {
+        $os = PHP_OS_FAMILY;
+
+        if ($os === 'Darwin') {
+            $output = shell_exec('security find-certificate -c "Server Side Up CA" 2>/dev/null');
+            return ! empty($output);
+        }
+
+        if ($os === 'Linux') {
+            return file_exists('/usr/local/share/ca-certificates/larakube-local-ca.crt');
+        }
+
+        return false;
     }
 }

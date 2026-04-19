@@ -57,6 +57,8 @@ return [
 
     'providers' => [
         AppServiceProvider::class,
+        Laravel\Ai\AiServiceProvider::class,
+        Laravel\Mcp\Server\McpServiceProvider::class,
     ],
 
 ];

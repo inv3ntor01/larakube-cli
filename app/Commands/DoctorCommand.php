@@ -216,15 +216,17 @@ class DoctorCommand extends Command
 
     protected function performAiDiagnosis(array $podNames)
     {
+        $provider = $this->getAiProvider();
         $apiKey = $this->getAiApiKey();
         
         if (! $apiKey) {
-            $this->warn('  ⚠ AI API Key not found. Set it with: larakube config --ai-key=YOUR_KEY');
+            $this->warn("  ⚠ AI API Key not found for provider '{$provider}'. Set it with: larakube config --ai-key=YOUR_KEY");
             return;
         }
 
-        // Dynamically set the key for the AI SDK
-        config(['ai.providers.gemini.key' => $apiKey]);
+        // Dynamically set the provider and key for the AI SDK
+        config(['ai.default' => $provider]);
+        config(["ai.providers.{$provider}.key" => $apiKey]);
 
         $this->line('');
         $this->laraKubeInfo('🧠 Performing Deep AI Diagnosis...');
@@ -247,7 +249,7 @@ class DoctorCommand extends Command
             }, 'AI is thinking...');
 
             $this->line('');
-            $this->line($response->text());
+            $this->line($response->text);
             $this->line('');
         }
     }
