@@ -26,6 +26,11 @@ larakube new my-masterpiece
 larakube up
 ```
 
+### AI-Native Interaction
+```bash
+larakube chat
+```
+
 ### AI-Native Diagnostics
 ```bash
 larakube doctor --ai
