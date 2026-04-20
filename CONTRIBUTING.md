@@ -13,23 +13,44 @@ All command classes must use the `App\Traits\LaraKubeOutput` trait.
 - **Failures:** Use `$this->laraKubeError("Message")` for errors.
 - **Header:** Always call `$this->renderHeader()` at the start of the `handle()` method.
 
+## 🛠 Local Development (Professional CLI Toolkit)
+
+LaraKube follows a strict **Zero-Host Dependency** philosophy. To ensure your development environment is consistent with our build servers, use the provided wrappers:
+
+### 1. The Development Runner (`./php`)
+Use this for running ANY LaraKube command or PHP code. It automatically bootstraps a container with `php`, `docker`, and `kubectl` mapped to your host.
+```bash
+# Run chat in dev mode
+./php larakube chat
+
+# Check cluster info from container
+./php kubectl cluster-info
+```
+
+### 2. Dependency Management (`./composer`)
+Always manage dependencies via the wrapper to ensure version consistency.
+```bash
+./composer require some/package
+```
+
+### 3. The Builder (`./build`)
+Use this to compile and test the standalone binary locally.
+```bash
+# Build and install to /usr/local/bin/larakube
+./build --local
+```
+
 ## 🏗 Modular Architecture (The Lego System)
+...
+## ✅ Development Workflow
 
-LaraKube is designed to be modular. Features and Database engines are built as independent **Actions**.
-
-- **Adding a Feature:** Create a new class in `app/Actions` that implements the `FeatureAction` interface.
-- **Enums:** Map your new action in the `LaravelFeature` or `DatabaseEngine` enums.
-- **Zero-Host Rule:** Ensure your actions run inside Docker containers using the `InteractsWithDocker` trait.
-
-## 🛠 Local Development
-
-1. **Active Hooks:** LaraKube uses Git hooks to keep the code clean. Activate them once:
+1. **Active Hooks:** Activate the professional guardrails:
    ```bash
    git config core.hooksPath .githooks
    ```
-2. **Linting:** We use **Laravel Pint**. Your code will be automatically checked on commit, but you can run it manually:
+2. **Linting:** We use **Laravel Pint**. Run it via the wrapper:
    ```bash
-   ./vendor/bin/pint
+   ./php ./vendor/bin/pint
    ```
 
 ## 🧪 Deployment Testing

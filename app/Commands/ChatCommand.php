@@ -3,40 +3,65 @@
 namespace App\Commands;
 
 use App\Ai\LaraKubeAssistantAgent;
-use App\Traits\InteractsWithGlobalConfig;
+use App\Models\User;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
+use Exception;
+use Laravel\Ai\Streaming\Events\TextDelta;
+use Laravel\Ai\Streaming\Events\ToolCall;
 use LaravelZero\Framework\Commands\Command;
-use Laravel\Ai\Events\TextChunkReceived;
-use Laravel\Ai\Events\ToolCallStarted;
-use Laravel\Ai\Events\ToolCallFinished;
 
 use function Laravel\Prompts\text;
 
 class ChatCommand extends Command
 {
-    use InteractsWithGlobalConfig, LaraKubeOutput;
+    use InteractsWithInternalDatabase, LaraKubeOutput;
 
-    protected $signature = 'chat';
+    protected $signature = 'chat {--query= : A single-shot natural language query to execute}';
 
     protected $description = 'Interact with LaraKube using natural language';
 
-    public function handle()
+    public function handle(): int
     {
         $this->renderHeader();
-        $this->laraKubeInfo('Welcome to LaraKube Chat! How can I help you today?');
+        $this->ensureDatabaseIsReady();
 
         $provider = $this->getAiProvider();
-        $apiKey = $this->getAiApiKey();
+        $apiKey = $this->getAiApiKey($provider);
 
         if (! $apiKey) {
             $this->error("  ✖ AI API Key not found for provider '{$provider}'.");
             $this->info("    👉 Use: larakube config:ai --{$provider}=YOUR_KEY");
+
             return 1;
         }
 
         config(['ai.default' => $provider]);
         config(["ai.providers.{$provider}.key" => $apiKey]);
 
+        // Initialize a SINGLE persistent agent for this session
+        $agent = LaraKubeAssistantAgent::make();
+
+        // 1. Establish User Context and Memory
+        try {
+            if ($user = User::where('email', $this->getEmail())->first()) {
+                // Resume the last conversation for this user
+                $agent = $agent->continueLastConversation($user);
+            }
+        } catch (Exception $e) {
+            // Silence early boot errors
+        }
+
+        // 2. Single-Shot Mode
+        if ($query = $this->option('query')) {
+            $this->info("🧠 LaraKube Single-Shot: {$query}");
+            $this->performChat($agent, $query);
+
+            return 0;
+        }
+
+        // 3. Interactive Mode
+        $this->laraKubeInfo('Welcome to LaraKube Chat! How can I help you today?');
         while (true) {
             $query = text(
                 label: 'You',
@@ -45,35 +70,41 @@ class ChatCommand extends Command
             );
 
             if (in_array(strtolower($query), ['exit', 'quit', 'bye'])) {
-                $this->info('Goodbye!');
+                $this->info('  👋 Goodbye!');
                 break;
             }
 
-            $this->info('🧠 LaraKube is analyzing...');
-            $this->line('');
-            $this->output->write('🤖 LaraKube: ');
-
-            try {
-                LaraKubeAssistantAgent::make()
-                    ->stream($query)
-                    ->each(function ($event) {
-                        if ($event instanceof TextChunkReceived) {
-                            $this->output->write($event->text);
-                        } elseif ($event instanceof ToolCallStarted) {
-                            $this->line("\n  <fg=gray>🛠 Calling Tool:</> <fg=yellow>{$event->toolCall->name}</>");
-                        } elseif ($event instanceof ToolCallFinished) {
-                            $this->line("  <fg=green>✔ Tool execution complete.</>");
-                        }
-                    });
-                
-                $this->line("\n");
-            } catch (\Exception $e) {
-                $this->line('');
-                $this->error('  ✖ Error: ' . $e->getMessage());
-                $this->line('');
-            }
+            $this->performChat($agent, $query);
         }
 
         return 0;
+    }
+
+    protected function performChat(LaraKubeAssistantAgent $agent, string $query): void
+    {
+        $this->info('🧠 LaraKube is analyzing...');
+        $this->line('');
+        $this->output->write('🤖 LaraKube: ');
+
+        try {
+            $stream = $agent->stream($query);
+
+            foreach ($stream as $event) {
+                if ($event instanceof TextDelta) {
+                    $this->output->write($event->delta);
+                } elseif ($event instanceof ToolCall) {
+                    $this->line("\n  <fg=gray>🛠 Calling Tool:</> <fg=yellow>{$event->toolCall->name}</>");
+                    if (isset($event->toolCall->arguments['command'])) {
+                        $this->line("  <fg=gray>➤ Command:</> <fg=blue>{$event->toolCall->arguments['command']}</>");
+                    }
+                }
+            }
+
+            $this->line("\n");
+        } catch (Exception $e) {
+            $this->line('');
+            $this->error('  ✖ Error: '.$e->getMessage());
+            $this->line('');
+        }
     }
 }

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512">
+  <defs>
+    <style>
+      .stroke-brand {
+        stroke: #FF2D20;
+        stroke-width: 14;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+    </style>
+  </defs>
+
+  <polygon class="stroke-brand" points="100,30 154.7,56.4 168.2,115.6 130.4,163.1 69.6,163.1 31.8,115.6 45.3,56.4" />
+
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(51.428 100 100)" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(102.857 100 100)" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(154.286 100 100)" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(205.714 100 100)" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(257.143 100 100)" />
+  <line class="stroke-brand" x1="100" y1="30" x2="100" y2="8" transform="rotate(308.571 100 100)" />
+
+  <polyline class="stroke-brand" points="75,80 95,100 75,120" />
+  <line class="stroke-brand" x1="105" y1="120" x2="125" y2="120" />
+</svg>

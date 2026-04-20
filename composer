@@ -16,5 +16,6 @@ docker run --rm -it \
     -e USER_ID=$USER_ID \
     -e GROUP_ID=$GROUP_ID \
     -e COMPOSER_ALLOW_SUPERUSER=1 \
+    -e SHOW_WELCOME_MESSAGE=false \
     serversideup/php:8.4-cli \
     composer "$@"

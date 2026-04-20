@@ -12,8 +12,8 @@ DOCKER_SOCK="/var/run/docker.sock"
 
 # Detect Architecture for tool installation
 ARCH=$(uname -m)
-[ "$ARCH" == "arm64" ] && K8S_ARCH="arm64" || K8S_ARCH="amd64"
-[ "$ARCH" == "arm64" ] && DOCKER_ARCH="aarch64" || DOCKER_ARCH="x86_64"
+[ "$ARCH" = "arm64" ] && K8S_ARCH="arm64" || K8S_ARCH="amd64"
+[ "$ARCH" = "arm64" ] && DOCKER_ARCH="aarch64" || DOCKER_ARCH="x86_64"
 
 docker run --rm -it \
     -v "$PROJECT_DIR":/app \
@@ -29,22 +29,25 @@ docker run --rm -it \
     --entrypoint /bin/sh \
     serversideup/php:8.4-cli \
     -c "
-        # 1. Install kubectl
+        # 1. Install kubectl (Silently)
         if ! command -v kubectl > /dev/null; then
             curl -LOs \"https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/$K8S_ARCH/kubectl\"
-            chmod +x kubectl && mv kubectl /usr/local/bin/
+            chmod +x kubectl && mv kubectl /usr/local/bin/ > /dev/null 2>&1
         fi
-        # 2. Install docker CLI
+        # 2. Install docker CLI (Silently)
         if ! command -v docker > /dev/null; then
-            curl -fsSLs https://download.docker.com/linux/static/stable/$DOCKER_ARCH/docker-27.3.1.tgz | tar xvz -C /tmp/ && mv /tmp/docker/docker /usr/local/bin/
+            curl -fsSLs https://download.docker.com/linux/static/stable/$DOCKER_ARCH/docker-27.3.1.tgz | tar xz -C /tmp/ && mv /tmp/docker/docker /usr/local/bin/ > /dev/null 2>&1
         fi
         
-        # 3. Handle Docker socket permissions for current user
-        # We run the command as root but LaraKube might need to know the host user
-        
-        # Determine if we should run PHP or a direct CLI tool
-        if command -v \"\$1\" > /dev/null && [ \"\$1\" != \"php\" ] && [ -f \"\$1\" ] || [ \"\$1\" == \"docker\" ] || [ \"\$1\" == \"kubectl\" ]; then
+        # 3. Execution logic
+        # If the first arg is php, shift and run php with the rest
+        if [ \"\$1\" = \"php\" ]; then
+            shift
+            php \"\$@\"
+        # If it's a native tool, run it directly
+        elif [ \"\$1\" = \"docker\" ] || [ \"\$1\" = \"kubectl\" ]; then
             \"\$@\"
+        # Otherwise, assume the user wants to run a PHP file in the current dir (like larakube)
         else
             php \"\$@\"
         fi

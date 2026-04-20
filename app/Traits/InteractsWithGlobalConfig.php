@@ -110,6 +110,7 @@ trait InteractsWithGlobalConfig
 
         if ($os === 'Darwin') {
             $output = shell_exec('security find-certificate -c "Server Side Up CA" 2>/dev/null');
+
             return ! empty($output);
         }
 

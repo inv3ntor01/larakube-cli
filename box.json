@@ -18,6 +18,14 @@
         {
             "name": "*.pem",
             "in": "resources/stubs/traefik/dev/certificates"
+        },
+        {
+            "name": "*.svg",
+            "in": "resources"
+        },
+        {
+            "name": "*.md",
+            "in": "resources/ai"
         }
     ],
     "exclude-composer-files": false,

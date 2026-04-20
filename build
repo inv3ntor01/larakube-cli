@@ -65,7 +65,7 @@ case $BUILD_TYPE in
         ;;
 
     *)
-        echo "Usage: ./build.sh [--local | --all] [version]"
+        echo "Usage: ./build [--local | --all] [version]"
         exit 1
         ;;
 esac

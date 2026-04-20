@@ -27,18 +27,18 @@ class ConfigCommand extends Command
         $this->laraKubeInfo('Current Global Configuration:');
 
         $this->info('👤 General Settings');
-        $this->line("  <fg=gray>● Admin Email:</> " . ($this->getEmail() ?? '<fg=red>Not Set</>'));
-        
+        $this->line('  <fg=gray>● Admin Email:</> '.($this->getEmail() ?? '<fg=red>Not Set</>'));
+
         $trusted = $this->checkCaTrust();
-        $this->line("  <fg=gray>● Local HTTPS:</> " . ($trusted ? '<fg=green>Trusted ✅</>' : '<fg=yellow>Not Trusted ⚠</>'));
+        $this->line('  <fg=gray>● Local HTTPS:</> '.($trusted ? '<fg=green>Trusted ✅</>' : '<fg=yellow>Not Trusted ⚠</>'));
         $this->line('');
 
         $this->info('🧠 AI Orchestration');
-        $this->line("  <fg=gray>● Default Provider:</> " . $this->getAiProvider());
-        $this->line("  <fg=gray>● Gemini Key:</> " . ($this->getAiApiKey('gemini') ? '********' : '<fg=red>Not Set</>'));
-        $this->line("  <fg=gray>● OpenAI Key:</> " . ($this->getAiApiKey('openai') ? '********' : '<fg=red>Not Set</>'));
-        $this->line("  <fg=gray>● Anthropic Key:</> " . ($this->getAiApiKey('anthropic') ? '********' : '<fg=red>Not Set</>'));
-        
+        $this->line('  <fg=gray>● Default Provider:</> '.$this->getAiProvider());
+        $this->line('  <fg=gray>● Gemini Key:</> '.($this->getAiApiKey('gemini') ? '********' : '<fg=red>Not Set</>'));
+        $this->line('  <fg=gray>● OpenAI Key:</> '.($this->getAiApiKey('openai') ? '********' : '<fg=red>Not Set</>'));
+        $this->line('  <fg=gray>● Anthropic Key:</> '.($this->getAiApiKey('anthropic') ? '********' : '<fg=red>Not Set</>'));
+
         $this->line('');
         $this->info('👉 To update AI settings: larakube config:ai --gemini=KEY');
         $this->info('👉 To register global MCP: larakube config:mcp --all');

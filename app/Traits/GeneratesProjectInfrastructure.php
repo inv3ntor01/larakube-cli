@@ -78,7 +78,7 @@ trait GeneratesProjectInfrastructure
         @mkdir($k8sPath.'/overlays/local', 0755, true);
         @mkdir($k8sPath.'/overlays/production', 0755, true);
 
-        $host = $appName.'.local';
+        $host = $appName.'.dev.test';
 
         $dbEngines = collect($databases)->map(fn ($db) => DatabaseEngine::from($db));
         $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::SQLITE;
@@ -442,7 +442,7 @@ JS;
         $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::SQLITE;
 
         $this->syncEnvFile($projectPath, [
-            'APP_URL' => "http://{$appName}.local",
+            'APP_URL' => "http://{$appName}.dev.test",
             'DB_CONNECTION' => $primaryDb->dbConnection(),
             'DB_HOST' => $primaryDb->dbHost(),
             'DB_PORT' => $primaryDb->dbPort(),

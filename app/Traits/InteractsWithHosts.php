@@ -18,7 +18,7 @@ trait InteractsWithHosts
     {
         $projectPath = getcwd();
         $appName = basename($projectPath);
-        $baseHost = "{$appName}.local";
+        $baseHost = "{$appName}.dev.test";
 
         $requiredHosts = [$baseHost, "mailpit.{$baseHost}", "vite.{$baseHost}"];
 

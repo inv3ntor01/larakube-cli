@@ -27,6 +27,7 @@ class ConfigMcpCommand extends Command
 
         if (! $gemini && ! $claude) {
             $this->warn('  ⚠ No targets specified. Use --gemini, --claude, or --all.');
+
             return 1;
         }
 

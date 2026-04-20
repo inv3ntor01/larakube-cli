@@ -3,7 +3,6 @@
 namespace App\Ai;
 
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Messages\Message;
 use Laravel\Ai\Promptable;
 use Stringable;
 

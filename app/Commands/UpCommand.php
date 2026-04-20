@@ -128,10 +128,10 @@ class UpCommand extends Command
         $envPath = getcwd().'/'.$envFile;
 
         if (file_exists($envPath)) {
-            $this->withSpin("Injecting configuration and blueprint...", function () use ($namespace, $envPath) {
+            $this->withSpin('Injecting configuration and blueprint...', function () use ($namespace, $envPath) {
                 exec("kubectl create configmap laravel-config -n {$namespace} --from-env-file={$envPath} --dry-run=client -o yaml | kubectl apply -f -");
                 exec("kubectl create secret generic laravel-secrets -n {$namespace} --from-env-file={$envPath} --dry-run=client -o yaml | kubectl apply -f -");
-                
+
                 // Store the blueprint for resilience
                 $blueprintPath = getcwd().'/.larakube.json';
                 if (file_exists($blueprintPath)) {
@@ -144,7 +144,7 @@ class UpCommand extends Command
 
         // 4. Apply manifests
         $this->laraKubeInfo('Applying Kubernetes manifests...');
-        
+
         // Scale down to release file locks (Safe transition)
         $this->withSpin('Preparing cluster for architectural update...', function () use ($namespace) {
             exec("kubectl scale deployment --all --replicas=0 -n {$namespace} 2>/dev/null");

@@ -26,16 +26,16 @@ class McpCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): void
     {
         // CRITICAL: We do NOT call $this->renderHeader() here.
         // MCP servers must be absolutely silent on STDOUT except for JSON-RPC messages.
-        
+
         $transport = new StdioTransport(Str::uuid()->toString());
         $server = new LaraKubeServer($transport);
-        
+
         $server->start();
-        
+
         $transport->run();
     }
 }

@@ -33,34 +33,16 @@ jobs:
     - name: Install Dependencies
       run: composer install --no-dev --optimize-autoloader
 
-    - name: Build LaraKube PHAR
-      run: php larakube app:build larakube --build-version=${{ github.sha }}
-
-    - name: Install PHPacker
-      run: composer require phpacker/phpacker:^0.6.4 --dev
-
-    - name: Build Standalone Binaries
-      run: |
-        # Ensure PHAR has correct extension for PHPacker
-        cp builds/larakube builds/larakube.phar
-        
-        # Build for Linux (x64, ARM)
-        ./vendor/bin/phpacker build linux x64 arm --src=builds/larakube.phar --dest=builds/standalone -v
-        
-        # Build for Mac (x64, ARM)
-        ./vendor/bin/phpacker build mac x64 arm --src=builds/larakube.phar --dest=builds/standalone -v
+    - name: Build All Platforms
+      run: ./build --all ${{ github.sha }}
 
     - name: Organize Artifacts
       run: |
         mkdir -p artifacts
-        
-        # Standardize naming for distribution
         cp builds/standalone/linux/linux-x64 artifacts/larakube-linux-x64
         cp builds/standalone/linux/linux-arm artifacts/larakube-linux-arm
         cp builds/standalone/mac/mac-x64 artifacts/larakube-mac-x64
         cp builds/standalone/mac/mac-arm artifacts/larakube-mac-arm
-        
-        # Set permissions
         chmod +x artifacts/*
 
     - name: Upload Binaries to Release
@@ -81,3 +63,11 @@ jobs:
         make_latest: ${{ github.ref_type == 'tag' && 'true' || 'false' }}
         generate_release_notes: true
         overwrite_files: true
+
+    - name: Upload Artifacts (Workflow Run)
+      uses: actions/upload-artifact@v4
+      with:
+        name: larakube-binaries
+        path: artifacts/
+        if-no-files-found: error
+        retention-days: 7

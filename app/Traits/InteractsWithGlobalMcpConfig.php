@@ -10,23 +10,22 @@ trait InteractsWithGlobalMcpConfig
     protected function registerGlobalGeminiMcp(): bool
     {
         $home = $_SERVER['HOME'] ?? getenv('HOME');
-        $path = $home . '/.gemini/settings.json';
-        $dir = dirname($path);
+        $path = $home.'/.gemini/settings.json';
 
-        if (! is_dir($dir)) {
-            @mkdir($dir, 0700, true);
+        @mkdir(dirname($path), 0700, true);
+
+        $config = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
+
+        // Ensure mcpServers exists
+        if (! isset($config['mcpServers'])) {
+            $config['mcpServers'] = [];
         }
 
-        $existing = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
-        
-        $config = array_merge_recursive($existing, [
-            'mcpServers' => [
-                'larakube' => [
-                    'command' => '/usr/local/bin/larakube',
-                    'args' => ['mcp'],
-                ],
-            ],
-        ]);
+        // Direct assignment prevents array_merge_recursive from duplicating strings into arrays
+        $config['mcpServers']['larakube'] = [
+            'command' => '/usr/local/bin/larakube',
+            'args' => ['mcp'],
+        ];
 
         return (bool) file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
@@ -38,27 +37,29 @@ trait InteractsWithGlobalMcpConfig
     {
         $home = $_SERVER['HOME'] ?? getenv('HOME');
         $os = PHP_OS_FAMILY;
-        
-        $path = match($os) {
-            'Darwin' => $home . '/Library/Application Support/Claude/claude_desktop_config.json',
-            'Linux'  => $home . '/.config/Claude/claude_desktop_config.json',
-            default  => null,
+
+        $path = match ($os) {
+            'Darwin' => $home.'/Library/Application Support/Claude/claude_desktop_config.json',
+            'Linux' => $home.'/.config/Claude/claude_desktop_config.json',
+            default => null,
         };
 
-        if (!$path) return false;
+        if (! $path) {
+            return false;
+        }
 
         @mkdir(dirname($path), 0755, true);
 
-        $existing = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
-        
-        $config = array_merge_recursive($existing, [
-            'mcpServers' => [
-                'larakube' => [
-                    'command' => '/usr/local/bin/larakube',
-                    'args' => ['mcp'],
-                ],
-            ],
-        ]);
+        $config = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
+
+        if (! isset($config['mcpServers'])) {
+            $config['mcpServers'] = [];
+        }
+
+        $config['mcpServers']['larakube'] = [
+            'command' => '/usr/local/bin/larakube',
+            'args' => ['mcp'],
+        ];
 
         return (bool) file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }

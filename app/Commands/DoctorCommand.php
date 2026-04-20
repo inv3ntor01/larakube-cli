@@ -200,9 +200,11 @@ class DoctorCommand extends Command
                 $name = $pod['metadata']['name'];
                 $ready = true;
                 foreach ($pod['status']['containerStatuses'] ?? [] as $cs) {
-                    if (! $cs['ready']) $ready = false;
+                    if (! $cs['ready']) {
+                        $ready = false;
+                    }
                 }
-                
+
                 if (! $ready || $pod['status']['phase'] !== 'Running') {
                     $unhealthyPods[] = $name;
                 }
@@ -218,9 +220,10 @@ class DoctorCommand extends Command
     {
         $provider = $this->getAiProvider();
         $apiKey = $this->getAiApiKey();
-        
+
         if (! $apiKey) {
             $this->warn("  ⚠ AI API Key not found for provider '{$provider}'. Set it with: larakube config --ai-key=YOUR_KEY");
+
             return;
         }
 
@@ -232,13 +235,13 @@ class DoctorCommand extends Command
         $this->laraKubeInfo('🧠 Performing Deep AI Diagnosis...');
         $environment = $this->option('environment');
         $namespace = $this->getNamespace($environment);
-        
+
         $config = $this->getProjectConfig(getcwd());
         $blueprint = json_encode($config, JSON_PRETTY_PRINT);
 
         foreach ($podNames as $podName) {
             $this->info("  🔍 Analyzing Pod: {$podName}");
-            
+
             $logs = shell_exec("kubectl logs -n {$namespace} {$podName} --tail=50 2>&1");
             $events = shell_exec("kubectl get events -n {$namespace} --field-selector involvedObject.name={$podName} 2>&1");
 

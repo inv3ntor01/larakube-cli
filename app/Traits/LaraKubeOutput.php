@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\State;
+
 use function Termwind\render;
 
 trait LaraKubeOutput

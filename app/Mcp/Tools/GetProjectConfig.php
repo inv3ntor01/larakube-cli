@@ -34,7 +34,7 @@ class GetProjectConfig extends Tool
         $config = $this->getProjectConfig($projectPath);
 
         if (empty($config)) {
-            return Response::error("No LaraKube configuration found (.larakube.json) in " . $projectPath);
+            return Response::error('No LaraKube configuration found (.larakube.json) in '.$projectPath);
         }
 
         return Response::json($config);
