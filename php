@@ -66,23 +66,30 @@ INTERACTIVE="-i"
 
 # Optimized Execution Logic (CI vs Local)
 execute() {
-    local cmd_args=("$@")
-    local first_cmd=""
-    
-    # Find the actual command/file to execute (skip PHP flags)
+    local php_flags=()
+    local cmd_args=()
+    local command_found=false
+
+    # Separate PHP flags from the actual command
     for arg in "$@"; do
-        if [[ ! "$arg" =~ ^- ]]; then
-            first_cmd="$arg"
-            break
+        if [ "$command_found" = true ]; then
+            cmd_args+=("$arg")
+        elif [[ "$arg" =~ ^- ]]; then
+            php_flags+=("$arg")
+        else
+            cmd_args+=("$arg")
+            command_found=true
         fi
     done
 
+    local first_cmd="${cmd_args[0]}"
+
     # If it's a known native tool or an executable file, run it directly
     if [[ "$first_cmd" == "composer" || "$first_cmd" == "docker" || "$first_cmd" == "kubectl" ]] || [[ -x "$first_cmd" ]]; then
-        "$@"
+        "${cmd_args[@]}"
     else
-        # Otherwise, run via PHP
-        php "$@"
+        # Otherwise, run via PHP with flags
+        php "${php_flags[@]}" "${cmd_args[@]}"
     fi
 }
 
