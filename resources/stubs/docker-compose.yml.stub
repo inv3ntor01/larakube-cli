@@ -12,8 +12,8 @@ services:
     networks:
       laravel:
         aliases:
-          - {{APP_NAME}}.local
-          - mailpit.{{APP_NAME}}.local
+          - {{APP_NAME}}.dev.test
+          - mailpit.{{APP_NAME}}.dev.test
 
   php:
     build:
@@ -43,7 +43,7 @@ services:
       - laravel
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.{{APP_NAME}}.rule=Host(`{{APP_NAME}}.local`)"
+      - "traefik.http.routers.{{APP_NAME}}.rule=Host(`{{APP_NAME}}.dev.test`)"
       - "traefik.http.routers.{{APP_NAME}}.entrypoints=websecure"
       - "traefik.http.routers.{{APP_NAME}}.tls=true"
       - "traefik.http.services.{{APP_NAME}}.loadbalancer.server.port={{CONTAINER_PORT}}"
@@ -66,7 +66,7 @@ services:
       - laravel
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mailpit.rule=Host(`mailpit.{{APP_NAME}}.local`)"
+      - "traefik.http.routers.mailpit.rule=Host(`mailpit.{{APP_NAME}}.dev.test`)"
       - "traefik.http.routers.mailpit.entrypoints=websecure"
       - "traefik.http.routers.mailpit.tls=true"
       - "traefik.http.services.mailpit.loadbalancer.server.port=8025"

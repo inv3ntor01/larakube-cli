@@ -1,60 +1,36 @@
+# LaraKube CLI
+
+Industrial-strength Kubernetes orchestration for the modern Laravel Architect.
+
 <p align="center">
-  <img src="resources/larakube-icon.svg" width="150" height="150" alt="LaraKube Logo">
+  <iframe src="https://github.com/sponsors/luchavez-technologies/button" title="Sponsor luchavez-technologies" height="32" width="114" style="border: 0; border-radius: 6px;"></iframe>
 </p>
 
-# 🚀 LaraKube CLI
-> The professional Kubernetes orchestrator for Laravel.
+## 🚀 Overview
 
-[![Documentation](https://img.shields.io/badge/docs-larakube.luchtech.dev-blue.svg)](https://larakube.luchtech.dev)
-[![GitHub Release](https://img.shields.io/github/v/release/luchavez-technologies/larakube-cli?label=standalone)](https://github.com/luchavez-technologies/larakube-cli/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+LaraKube CLI is a high-performance Kubernetes orchestrator designed specifically for the Laravel ecosystem. It eliminates the complexity of cloud-native infrastructure by providing a streamlined, developer-first experience.
 
-LaraKube is a high-performance Kubernetes orchestrator for Laravel, distributed as a **zero-dependency standalone binary** for Linux and macOS.
+-   **Zero-Host Dependency**: Run everything in isolated, professional containers.
+-   **AI-Native**: Built-in MCP tools for autonomous cluster management.
+-   **Absolute Parity**: Identical environments from local dev to production cloud.
 
-## 🌟 Key Features
-- **📦 Standalone Binary**: No local PHP, Node.js, or Composer required.
-- **🤖 AI-Native Interaction**: Built-in **LaraKube Chat** for orchestration via natural language.
-- **🔌 Dynamic MCP Server**: Auto-scaffolding for **Gemini**, **Claude**, and **Cursor** to manage your cluster.
-- **🏗 Masterpiece Blueprints**: One-command architecture for complex, real-time Laravel stacks.
-- **🔒 Stability-First**: Hardened **Serversideup** configurations and automated local HTTPS (`larakube trust`).
+## 🛠 Quick Start
 
-## 📥 Quick Install (Mac/Linux)
+To install LaraKube CLI, run the following command in your terminal:
 
 ```bash
-curl -sSL https://larakube.luchtech.dev/install.sh | bash
+curl -s https://larakube.luchtech.dev/install.sh | bash
 ```
 
-## 🛠 AI-Native Usage
+## 📂 Documentation
 
-### 💬 LaraKube Chat
-Interact with your cluster using natural language:
-```bash
-larakube chat
-# Or single-shot:
-larakube chat --query="Create a project named shop with MariaDB and Redis"
-```
+Detailed architectural guides, blueprints, and command references are available at [https://larakube.luchtech.dev](https://larakube.luchtech.dev).
 
-### 🧠 Intelligent Doctor
-Automatically diagnose and heal cluster issues:
-```bash
-larakube doctor --ai
-```
+## 🤝 Community
 
-### 🔌 Global MCP Registration
-Enable AI agents to manage any project directory:
-```bash
-larakube config:mcp --all
-```
-
-## 🏗 Common Commands
-- `larakube new`: Scaffold a new architectural masterpiece.
-- `larakube up`: Deploy infrastructure to your local cluster.
-- `larakube stop`: Scale down pods to save resources without deleting data.
-- `larakube trust`: Install Local CA for seamless HTTPS.
-
-## 📖 Documentation
-For high-context guides, recipes, and architectural deep-dives, visit the official documentation:
-👉 **[https://larakube.luchtech.dev](https://larakube.luchtech.dev)**
+-   **Discord**: [Join our community](https://discord.gg/g2pFhpEh9G)
+-   **GitHub**: [Report Bugs & Contribute](https://github.com/luchavez-technologies/larakube-cli)
 
 ## 📄 License
-LaraKube is open-source software licensed under the MIT license.
+
+LaraKube is open-sourced software licensed under the [MIT license](LICENSE.md).

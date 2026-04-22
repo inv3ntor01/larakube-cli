@@ -63,4 +63,27 @@ trait InteractsWithGlobalMcpConfig
 
         return (bool) file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
+
+    /**
+     * Register the LaraKube Documentation (Algolia) as a global MCP server for the Gemini CLI.
+     */
+    protected function registerGlobalDocsMcp(): bool
+    {
+        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $path = $home.'/.gemini/settings.json';
+
+        @mkdir(dirname($path), 0700, true);
+
+        $config = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
+
+        if (! isset($config['mcpServers'])) {
+            $config['mcpServers'] = [];
+        }
+
+        $config['mcpServers']['larakube-docs'] = [
+            'url' => 'https://L42693MTAB.algolia.net/mcp/1/ccdl9WLFT-mLi8OqSkmx8A/mcp',
+        ];
+
+        return (bool) file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
 }

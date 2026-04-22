@@ -5,11 +5,25 @@
 
 set -e
 
+# ANSI escape codes for formatting
+BOLD="\033[1m"
+RESET="\033[0m"
+
 # Ensure we are in the CLI directory
 cd "$(dirname "$0")"
 
-BUILD_TYPE=$1
-VERSION=${2:-"local"}
+# Smart Argument Handling
+if [[ "$1" == "--all" ]]; then
+    BUILD_TYPE="--all"
+    VERSION=${2:-"local"}
+elif [[ "$1" == "--local" ]]; then
+    BUILD_TYPE="--local"
+    VERSION=${2:-"local"}
+else
+    # Default to --local build
+    BUILD_TYPE="--local"
+    VERSION=${1:-"local"}
+fi
 
 # Helper to run PHP via Docker
 run_php() {
@@ -18,7 +32,7 @@ run_php() {
 }
 
 build_phar() {
-    echo "📦 Building PHAR foundation (v$VERSION)..."
+    echo -e "📦 Building PHAR foundation ${BOLD}[$VERSION]${RESET}..."
     run_php larakube app:build larakube --build-version=$VERSION
     cp builds/larakube builds/larakube.phar
 }
@@ -48,7 +62,8 @@ case $BUILD_TYPE in
         sudo mv builds/standalone/$OS/$OS-$ARCH /usr/local/bin/larakube
         sudo chmod +x /usr/local/bin/larakube
         
-        echo "✅ LaraKube v$VERSION is now live on your system!"
+        echo -e "✅ LaraKube ${BOLD}[$VERSION]${RESET} is now live on your system!"
+        echo "👉 Verify by running: larakube --version"
         ;;
 
     "--all")

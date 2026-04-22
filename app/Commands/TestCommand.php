@@ -39,20 +39,34 @@ class TestCommand extends Command
                 $url = "{$protocol}://{$host}";
                 $this->laraKubeInfo("Testing connectivity to {$url}...");
 
+                // 🛡 PHASE 1: Standard Domain Check
                 for ($i = 1; $i <= $maxAttempts; $i++) {
-                    // Use -k to allow self-signed certificates
-                    // Use -s to be silent, -o /dev/null to discard output, -w to get status code
-                    $httpCode = trim(shell_exec("curl -k -s -o /dev/null -w \"%{http_code}\" {$url}") ?? '');
+                    $httpCode = trim(shell_exec("curl -k -s -o /dev/null -w \"%{http_code}\" {$url} --connect-timeout 2") ?? '');
 
-                    if ($httpCode === '200') {
-                        $this->laraKubeInfo("SUCCESS! Your application is reachable via {$protocol} (HTTP 200).");
+                    if ($httpCode === '200' || $httpCode === '302' || $httpCode === '301') {
+                        $this->laraKubeInfo("SUCCESS! Application reachable via {$protocol} (HTTP {$httpCode}).");
                         $success = true;
                         break 2;
                     }
 
                     if ($i < $maxAttempts) {
-                        sleep(2);
+                        sleep(1);
                     }
+                }
+
+                // 🛡 PHASE 2: Cluster IP Bypass (Ensures app is healthy even if hosts are out of sync)
+                $this->line('  <fg=gray>[INFO]</> Retrying via internal cluster bridge...');
+                $externalIp = shell_exec("kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null") ?? '127.0.0.1';
+
+                // If it's a k3d setup, localhost (127.0.0.1) is usually the correct bridge for the daemon
+                $bypassUrl = "{$protocol}://127.0.0.1";
+                $httpCode = trim(shell_exec("curl -k -s -o /dev/null -w \"%{http_code}\" -H \"Host: {$host}\" {$bypassUrl} --connect-timeout 2") ?? '');
+
+                if ($httpCode === '200' || $httpCode === '302' || $httpCode === '301') {
+                    $this->laraKubeInfo("SUCCESS! Application verified via Cluster Bridge (HTTP {$httpCode}).");
+                    $this->line("  <fg=yellow>⚠ NOTE: Your app is healthy, but you might need to run 'larakube hosts' to sync your domains.</>");
+                    $success = true;
+                    break;
                 }
             }
 

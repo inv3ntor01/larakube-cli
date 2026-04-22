@@ -19,11 +19,17 @@ enum ServerVariation: string
 
     public function containerPort(): int
     {
-        return 8080;
+        return match ($this) {
+            self::FRANKENPHP => 8080,
+            default => 8443,
+        };
     }
 
     public function traefikScheme(): string
     {
-        return 'http';
+        return match ($this) {
+            self::FRANKENPHP => 'http',
+            default => 'https',
+        };
     }
 }

@@ -2,9 +2,9 @@
 
 namespace App\Enums;
 
-use App\Actions\BlueprintAction;
-use App\Actions\FilamentAction;
-use App\Actions\StatamicAction;
+use App\Actions\Blueprints\FilamentAction;
+use App\Actions\Blueprints\StatamicAction;
+use App\Actions\Contracts\BlueprintAction;
 
 enum Blueprint: string
 {

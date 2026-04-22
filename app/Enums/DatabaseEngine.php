@@ -2,18 +2,19 @@
 
 namespace App\Enums;
 
-use App\Actions\DatabaseAction;
-use App\Actions\MariaDbAction;
-use App\Actions\MySqlAction;
-use App\Actions\PostgresAction;
-use App\Actions\RedisAction;
+use App\Actions\Contracts\DatabaseAction;
+use App\Actions\Databases\MariaDbAction;
+use App\Actions\Databases\MongoDbAction;
+use App\Actions\Databases\MySqlAction;
+use App\Actions\Databases\PostgresAction;
+use App\Actions\Databases\RedisAction;
 
 enum DatabaseEngine: string
 {
-    case SQLITE = 'SQLite';
     case MYSQL = 'MySQL';
     case MARIADB = 'MariaDB';
     case POSTGRESQL = 'PostgreSQL';
+    case MONGODB = 'MongoDB';
     case REDIS = 'Redis';
 
     public function action(): ?DatabaseAction
@@ -22,8 +23,8 @@ enum DatabaseEngine: string
             self::MYSQL => new MySqlAction,
             self::MARIADB => new MariaDbAction,
             self::POSTGRESQL => new PostgresAction,
+            self::MONGODB => new MongoDbAction,
             self::REDIS => new RedisAction,
-            default => null,
         };
     }
 
@@ -32,7 +33,7 @@ enum DatabaseEngine: string
         return match ($this) {
             self::MYSQL, self::MARIADB => 'mysql',
             self::POSTGRESQL => 'pgsql',
-            default => 'sqlite',
+            self::MONGODB => 'mongodb',
         };
     }
 
@@ -41,8 +42,8 @@ enum DatabaseEngine: string
         return match ($this) {
             self::MYSQL, self::MARIADB => 'mysql',
             self::POSTGRESQL => 'postgres',
+            self::MONGODB => 'mongodb',
             self::REDIS => 'redis',
-            default => '127.0.0.1',
         };
     }
 
@@ -50,6 +51,7 @@ enum DatabaseEngine: string
     {
         return match ($this) {
             self::POSTGRESQL => 5432,
+            self::MONGODB => 27017,
             self::REDIS => 6379,
             default => 3306,
         };
@@ -60,7 +62,8 @@ enum DatabaseEngine: string
         return match ($this) {
             self::MYSQL, self::MARIADB => 'laravel',
             self::POSTGRESQL => 'postgres',
-            default => 'root',
+            self::MONGODB => 'root',
+            self::REDIS => 'root',
         };
     }
 

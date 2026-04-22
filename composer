@@ -1,21 +1,12 @@
 #!/bin/bash
 
-# LaraKube Composer Context-Aware Wrapper
-# Manages dependencies for the CURRENT project using the Serversideup engine
+# LaraKube Composer Context-Aware Wrapper (Daemonized)
+# Manages dependencies for the CURRENT project using the persistent PHP CLI daemon
 
+# Ensure we use the local php script which manages the daemon
 CLI_DIR=$(cd "$(dirname "$0")" && pwd)
-PROJECT_DIR=$(pwd)
 
-USER_ID=$(id -u)
-GROUP_ID=$(id -g)
-
-docker run --rm -it \
-    -v "$PROJECT_DIR":/app \
-    -v "$CLI_DIR":/larakube \
-    -w /app \
-    -e USER_ID=$USER_ID \
-    -e GROUP_ID=$GROUP_ID \
-    -e COMPOSER_ALLOW_SUPERUSER=1 \
-    -e SHOW_WELCOME_MESSAGE=false \
-    serversideup/php:8.4-cli \
-    composer "$@"
+# Run composer via the php runner
+# We pass COMPOSER_ALLOW_SUPERUSER=1 because we run as root in the daemon
+# then it maps back to host UID/GID if needed (but usually composer manages perms well)
+"$CLI_DIR/php" composer "$@"

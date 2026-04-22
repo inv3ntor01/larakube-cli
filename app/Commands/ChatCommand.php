@@ -2,11 +2,13 @@
 
 namespace App\Commands;
 
-use App\Ai\LaraKubeAssistantAgent;
+use App\Ai\Agents\LaraKubeAssistantAgent;
 use App\Models\User;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use Exception;
+use Illuminate\Support\Facades\DB;
+use Laravel\Ai\Contracts\ConversationStore;
 use Laravel\Ai\Streaming\Events\TextDelta;
 use Laravel\Ai\Streaming\Events\ToolCall;
 use LaravelZero\Framework\Commands\Command;
@@ -17,9 +19,22 @@ class ChatCommand extends Command
 {
     use InteractsWithInternalDatabase, LaraKubeOutput;
 
-    protected $signature = 'chat {--query= : A single-shot natural language query to execute}';
+    /**
+     * The name and signature of the console command.
+     */
+    protected $signature = 'chat {query? : A single-shot natural language query} 
+                           {--query= : A single-shot natural language query}
+                           {--new : Start a fresh conversation for this project}';
 
-    protected $description = 'Interact with LaraKube using natural language';
+    /**
+     * The console command description.
+     */
+    protected $description = 'Interact with LaraKube using natural language (alias: ask)';
+
+    /**
+     * The console command aliases.
+     */
+    protected $aliases = ['ask'];
 
     public function handle(): int
     {
@@ -39,29 +54,37 @@ class ChatCommand extends Command
         config(['ai.default' => $provider]);
         config(["ai.providers.{$provider}.key" => $apiKey]);
 
-        // Initialize a SINGLE persistent agent for this session
-        $agent = LaraKubeAssistantAgent::make();
+        $email = $this->getEmail() ?? 'guest@larakube.dev.test';
+        $user = User::firstOrCreate(['email' => $email], ['name' => 'Artisan']);
 
-        // 1. Establish User Context and Memory
-        try {
-            if ($user = User::where('email', $this->getEmail())->first()) {
-                // Resume the last conversation for this user
-                $agent = $agent->continueLastConversation($user);
-            }
-        } catch (Exception $e) {
-            // Silence early boot errors
+        // 2. Find or Create a Conversation scoped strictly to this directory (Email-Agnostic)
+        $title = 'CWD: '.getcwd();
+        $conversationId = null;
+
+        if (! $this->option('new')) {
+            $conversationId = DB::table('agent_conversations')
+                ->where('title', $title)
+                ->value('id');
         }
 
+        if (! $conversationId) {
+            $conversationId = resolve(ConversationStore::class)
+                ->storeConversation(null, $title);
+
+            $this->logActivity('Started new AI conversation', ['title' => $title]);
+        }
+
+        $query = $this->argument('query') ?: $this->option('query');
+
         // 2. Single-Shot Mode
-        if ($query = $this->option('query')) {
-            $this->info("🧠 LaraKube Single-Shot: {$query}");
-            $this->performChat($agent, $query);
+        if ($query) {
+            $this->performChat($conversationId, $user, $query);
 
             return 0;
         }
 
         // 3. Interactive Mode
-        $this->laraKubeInfo('Welcome to LaraKube Chat! How can I help you today?');
+        $this->laraKubeInfo('Welcome to LaraKube CLI Chat! How can I help you today?');
         while (true) {
             $query = text(
                 label: 'You',
@@ -74,20 +97,20 @@ class ChatCommand extends Command
                 break;
             }
 
-            $this->performChat($agent, $query);
+            $this->performChat($conversationId, $user, $query);
         }
 
         return 0;
     }
 
-    protected function performChat(LaraKubeAssistantAgent $agent, string $query): void
+    protected function performChat(string $conversationId, User $user, string $query): void
     {
         $this->info('🧠 LaraKube is analyzing...');
         $this->line('');
         $this->output->write('🤖 LaraKube: ');
 
         try {
-            $stream = $agent->stream($query);
+            $stream = LaraKubeAssistantAgent::make()->continue($conversationId, $user)->stream($query);
 
             foreach ($stream as $event) {
                 if ($event instanceof TextDelta) {

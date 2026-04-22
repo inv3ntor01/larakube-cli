@@ -1,3 +1,4 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,6 +54,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: mailpit
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: mailpit.{{HOST}}
@@ -68,3 +72,4 @@ spec:
   tls:
     - hosts:
         - mailpit.{{HOST}}
+      secretName: traefik-certificates

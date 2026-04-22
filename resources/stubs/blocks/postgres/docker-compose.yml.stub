@@ -1,5 +1,5 @@
   postgres:
-    image: postgres:15-alpine
+    image: postgres:17.9
     environment:
       - POSTGRES_PASSWORD=secretpassword
       - POSTGRES_DB=laravel

@@ -47,7 +47,7 @@ trait LaraKubeOutput
         render(<<<'HTML'
             <div class="mx-2 mt-2">
                 <div class="px-2 py-0.5 bg-blue-900 text-blue-200 font-bold uppercase w-66 justify-center">
-                    Kubernetes for Laravel from Development to Deployment
+                    The Professional Kubernetes Orchestrator for Laravel
                 </div>
             </div>
         HTML);
@@ -62,7 +62,7 @@ trait LaraKubeOutput
     {
         render(<<<HTML
             <div class="flex mx-2 mt-1">
-                <span class="px-1 bg-blue-500 text-white font-bold">LARAKUBE</span>
+                <span class="px-1 bg-blue-500 text-white font-bold uppercase">LaraKube</span>
                 <span class="ml-1 text-blue-500">{$message}</span>
             </div>
         HTML);
@@ -82,7 +82,7 @@ trait LaraKubeOutput
         }
 
         $this->line('');
-        $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
+        $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube CLI?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
         $this->line('  <fg=gray>● CLI:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-cli</>');
         $this->line('  <fg=gray>● Docs:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-docs</>');
         $this->line('');
@@ -98,7 +98,7 @@ trait LaraKubeOutput
     {
         render(<<<HTML
             <div class="flex mx-2 mt-1">
-                <span class="px-1 bg-red-500 text-white font-bold">LARAKUBE</span>
+                <span class="px-1 bg-red-500 text-white font-bold uppercase">LaraKube</span>
                 <span class="ml-1 text-red-500">{$message}</span>
             </div>
         HTML);

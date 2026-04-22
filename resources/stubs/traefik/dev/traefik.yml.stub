@@ -3,8 +3,7 @@ serversTransport:
   insecureSkipVerify: true
 
 providers:
-  docker:
-    exposedByDefault: false
+  kubernetesIngress: {}
   file:
     filename: /traefik-certs.yml
     watch: true

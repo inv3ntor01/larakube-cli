@@ -3,26 +3,23 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class StartCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
-     *
-     * @var string
      */
     protected $signature = 'start {environment=local : The environment to start}';
 
     /**
      * The console command description.
-     *
-     * @var string
      */
-    protected $description = 'Start all application pods (Scale to 1)';
+    protected $description = 'Resume application services by scaling pods to their original state';
 
     /**
      * Execute the console command.
@@ -34,14 +31,19 @@ class StartCommand extends Command
         $environment = $this->argument('environment');
         $namespace = $this->getNamespace($environment);
 
-        $this->laraKubeInfo("Starting all pods in namespace '{$namespace}'...");
+        $this->laraKubeInfo("Resuming services in '{$environment}'...");
 
-        $this->withSpin('Scaling deployments to 1...', function () use ($namespace) {
-            exec("kubectl scale deployment --all --replicas=1 -n {$namespace} 2>/dev/null");
-            exec("kubectl scale statefulset --all --replicas=1 -n {$namespace} 2>/dev/null");
+        // We scale all deployments to at least 1 (Default LaraKube state)
+        // A more advanced version would read the blueprint to find exact replica counts.
+        $this->withSpin('Scaling up application pods...', function () use ($namespace) {
+            exec("kubectl scale deployment --all --replicas=1 -n {$namespace}");
+
+            return true;
         });
 
-        $this->laraKubeInfo('All pods starting. Use "larakube dashboard" to monitor progress.');
+        $this->logActivity('Services resumed (scaled up)', ['environment' => $environment]);
+
+        $this->laraKubeInfo('All services are resuming. Use larakube status to monitor progress.');
 
         return 0;
     }

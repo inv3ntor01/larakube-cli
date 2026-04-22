@@ -3,30 +3,31 @@
 namespace App\Commands;
 
 use App\Traits\GeneratesProjectInfrastructure;
-use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\info;
 
 class HealCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'heal {environment=local : The environment to restore from}';
+    protected $signature = 'heal {--force : Skip confirmation}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Automated self-healing: Regenerate project infrastructure from .larakube.json';
+    protected $description = 'Regenerate infrastructure manifests from your project blueprint';
 
     /**
      * Execute the console command.
@@ -37,44 +38,66 @@ class HealCommand extends Command
 
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
-        $environment = $this->argument('environment');
-        $namespace = $this->getNamespace($environment);
 
-        // 1. Resilience Check: If local config is missing, try to restore from cluster
         if (empty($config)) {
-            $this->laraKubeInfo('Local .larakube.json not found. Checking cluster for master blueprint...');
+            $this->laraKubeError('No .larakube.json found! LaraKube cannot heal a project without its DNA.');
 
-            $blueprint = shell_exec("kubectl get secret larakube-blueprint -n {$namespace} -o jsonpath='{.data.\.larakube\.json}' 2>/dev/null | base64 --decode");
+            if (confirm('Would you like to try restoring the blueprint from the cluster?', true)) {
+                $config = $this->restoreBlueprintFromCluster();
+                if (! $config) {
+                    return 1;
+                }
+            } else {
+                return 1;
+            }
+        }
 
-            if ($blueprint && ($decoded = json_decode($blueprint, true))) {
-                if (confirm("Master blueprint found in cluster namespace '{$namespace}'. Restore it locally?", true)) {
-                    file_put_contents($projectPath.'/.larakube.json', $blueprint);
-                    $config = $decoded;
-                    $this->laraKubeInfo('Master blueprint restored successfully!');
+        $this->laraKubeInfo('Healing architectural masterpiece: '.basename($projectPath));
+
+        if (! $this->option('force')) {
+            if (! confirm('This will regenerate all manifests in .infrastructure/k8s/. Proceed?', true)) {
+                $this->laraKubeInfo('Heal cancelled.');
+
+                return 0;
+            }
+        }
+
+        $this->withSpin('Regenerating infrastructure manifests...', function () use ($projectPath, $config) {
+            $this->orchestrateProjectScaffolding($projectPath, basename($projectPath), $config, false, false);
+            $this->logActivity('Project healed and manifests regenerated');
+
+            return true;
+        });
+
+        $this->laraKubeInfo('Architectural integrity restored! 🚀');
+        info('Next steps: larakube up');
+
+        return 0;
+    }
+
+    protected function restoreBlueprintFromCluster(): ?array
+    {
+        $this->laraKubeInfo('Attempting to restore blueprint from cluster...');
+
+        $appName = basename(getcwd());
+        // Check local first, then production
+        foreach (['local', 'production'] as $env) {
+            $namespace = "{$appName}-{$env}";
+            $json = shell_exec("kubectl get secret larakube-blueprint -n {$namespace} -o jsonpath='{.data.\.larakube\.json}' 2>/dev/null");
+
+            if ($json) {
+                $config = json_decode(base64_decode($json), true);
+                if ($config) {
+                    $this->laraKubeInfo("✅ Successfully restored blueprint from '{$namespace}' namespace.");
+                    file_put_contents(getcwd().'/.larakube.json', json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+                    return $config;
                 }
             }
         }
 
-        if (empty($config)) {
-            $this->laraKubeError('No LaraKube configuration found locally or in cluster!');
-            $this->info('Make sure you are in the root of a LaraKube project.');
+        $this->laraKubeError('Failed to find blueprint backup in the cluster.');
 
-            return 1;
-        }
-
-        $appName = basename($projectPath);
-        $this->laraKubeInfo("Healing infrastructure for masterpiece: {$appName}...");
-
-        $this->withSpin('Regenerating Kubernetes manifests and patches...', function () use ($projectPath, $appName, $config) {
-            // We pass false for both installFeatures and buildImage because we only want to fix the K8s files
-            $this->orchestrateProjectScaffolding($projectPath, $appName, $config, false, false);
-        });
-
-        $this->laraKubeInfo('ARCHITECTURAL INTEGRITY RESTORED! ✅');
-        $this->info('Next steps: larakube up --dry-run');
-
-        $this->renderStarPrompt();
-
-        return 0;
+        return null;
     }
 }

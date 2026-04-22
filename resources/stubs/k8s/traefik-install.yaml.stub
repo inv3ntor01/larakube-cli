@@ -37,8 +37,8 @@ subjects:
     name: traefik-ingress-controller
     namespace: traefik
 ---
-kind: Deployment
 apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: traefik
   namespace: traefik
@@ -59,11 +59,7 @@ spec:
         - name: traefik
           image: traefik:v3.0
           args:
-            - --api.insecure=true
-            - --accesslog
-            - --entrypoints.web.Address=:80
-            - --entrypoints.websecure.Address=:443
-            - --providers.kubernetesingress
+            - --configfile=/etc/traefik/traefik.yml
           ports:
             - name: web
               containerPort: 80
@@ -71,6 +67,20 @@ spec:
               containerPort: 443
             - name: admin
               containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik
+              readOnly: true
+            - name: certificates
+              mountPath: /certificates
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: traefik-config
+        - name: certificates
+          secret:
+            secretName: traefik-certificates
 ---
 apiVersion: v1
 kind: Service
@@ -90,3 +100,7 @@ spec:
       port: 443
       name: websecure
       targetPort: 443
+    - protocol: TCP
+      port: 8080
+      name: admin
+      targetPort: 8080

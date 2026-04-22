@@ -1,65 +1,38 @@
-# LaraKube Architecture & Best Practices Guide
+# LaraKube CLI: Architectural Blueprint
 
-LaraKube is an opinionated CLI for Laravel developers to manage Kubernetes environments from development to deployment, following a **Container-First** philosophy.
+LaraKube CLI is a professional-grade Kubernetes orchestrator for the Laravel ecosystem, designed with a "Container-First" and "Zero-Host" philosophy.
 
-## 🚀 Core Philosophy: Zero-Host Dependency
-LaraKube assumes the host machine (Mac/Linux) is "clean."
-- **No Local PHP/Node:** All project creation, dependency installation, and asset building happen inside isolated Docker containers.
-- **UID/GID Mapping:** To prevent permission issues, the CLI maps the host's User ID and Group ID into the containers so generated files are owned by the developer.
-- **Service Isolation:** PHP and Node.js tasks are strictly separated. The PHP container handles Laravel/Composer, while a dedicated Node container handles Vite/NPM.
+## 🏗 Command Hierarchy
 
-## 🛠 Command Toolbelt
+### 1. Project Management (`core`)
+- `new`: Scaffold new masterpieces from high-performance stubs.
+- `init`: Adopt existing projects by generating the LaraKube DNA (`.larakube.json`).
+- `uninstall`: The "Clean Break" command. Performs a synchronized wipe of local manifests, cluster namespaces, and optionally Docker images. Requires project name confirmation.
 
-### `new {name}`
-Creates a new Laravel project using the containerized installer. LaraKube orchestrates the entire setup, including .env configuration and feature installation.
+### 2. Deployment Operations (`ops`)
+- `up`: The "Launch" button. Orchestrates image building (with k3d sideloading), .env injection, and manifest application.
+- `status`: Professional health dashboard for all project services.
+- `down`: Synchronized namespace removal with a 5-second volume cleanup cooldown.
+- `stop` / `start`: Scaling-based pause/resume to preserve state without deleting volumes.
 
-### `init`
-Gracefully prepares an existing Laravel application for its Kubernetes debut by generating all necessary infrastructure files.
+### 3. Networking Stack (`traefik:*`)
+Traefik v3 is managed as a first-class, cluster-wide service:
+- `traefik:setup`: Idempotent installation of the controller, SSL wildcard secrets, and config.
+- `traefik:logs`: Tail ingress traffic in real-time.
+- `traefik:dashboard`: Secure tunnel to the network UI.
+- `traefik:restart`: Graceful rollout restart of the networking pods.
+- `traefik:destroy`: Complete removal of networking resources and ClusterRoles.
 
-### `up {environment}`
-The primary deployment tool. Automatically builds local images, updates your hosts file, and deploys the cluster manifests.
+## 🛡 Architectural Guards
 
-### `down {environment}`
-Tears down the environment and specifically cleans up cluster-scoped PersistentVolumes to ensure a clean state for the next session.
+### Persistence Reliability
+- **Recreate Strategy**: All server-based databases use `strategy: type: Recreate` to ensure only one pod ever touches the data files, preventing corruption during updates.
+- **Debian Stability**: Standardized on Debian-based images for databases (Postgres 17.9, MySQL 8.4 LTS) for maximum reliability compared to Alpine.
 
-### `add {items}`
-The "Evolution" tool. Effortlessly add new databases, features, object storage, or architectural blueprints to an existing project.
+### AI-Native Discovery
+- **llms-full.txt**: Automated documentation aggregation during the build process, providing a "Master Context" for LLM synthesis.
+- **Hybrid Tooling**: Command logic is abstracted into traits (e.g., `InteractsWithTraefik`) to allow for both CLI execution and AI-agent SDK integration.
 
-### `tunnel {service}`
-Intelligent port-forwarding that automatically resolves local port conflicts and provides clear connection details for GUI clients.
-
-### `art {commands}`
-A high-speed shortcut for `exec php artisan ...`.
-
-### `npm`/`pnpm`/`bun`/`yarn`
-Direct shortcuts to run package manager commands inside the dedicated local Node pod.
-
-### `php:ext {extension}`
-Surgically injects new PHP extensions into your Dockerfile and configuration without manual editing.
-
-## 🏗 Kubernetes Strategy
-
-### Kustomize Architecture
-We use Kustomize for a "Pure YAML" approach:
-- **Base:** Standard resources (Deployments, Services, PVCs) shared across all environments.
-- **Overlays:** Environment-specific overrides (e.g., `hostPath` for local, cloud disks for production).
-
-### Networking Standards
-- **Internal Port 8080:** All internal cluster traffic is standardized on Port 8080 (HTTP) to simplify health probes and SSL termination at the Ingress.
-- **Project Isolation:** Each project is isolated in its own namespace: `{app-name}-{env}`.
-- **Local Domains:** Automatic generation of local subdomains (`vite.`, `s3.`, `meilisearch.`) for specialized services.
-
-## 🏛 Architectural Pillars
-
-### Blueprints (The Foundation)
-Choose your stack (Standard Laravel, Statamic, or FilamentPHP) and LaraKube automatically handles the specific PHP extensions and installation requirements for that ecosystem.
-
-### Database Engines
-Hardened, production-ready manifests for MySQL 8.4, MariaDB 11.8, and PostgreSQL 17.9. All local databases include specialized readiness probes to ensure the database is fully initialized before migrations run.
-
-### Object Storage (S3-Compatible)
-Integrated support for MinIO, SeaweedFS, and Garage. LaraKube automatically configures the Flysystem drivers and provides dedicated local dashboards.
-
-## 🔐 Security
-- **Zero-Secrets-in-Git:** Manifests never contain secrets. Configuration is dynamically injected from your local, git-ignored `.env` files into Kubernetes `Secret` resources.
-- **Safe Persistence:** Local volumes use the `Retain` policy to ensure your data survives cluster restarts while still allowing the CLI to manage the Kubernetes objects.
+## 🏗 Build & CI/CD
+- **Decoupled Workflow**: The CLI builder (`./build`) is isolated from the documentation builder (`npm run build`).
+- **Phar + Phacker**: Compiles Laravel Zero apps into standalone binaries with embedded runtimes for macOS (arm/x64) and Linux.

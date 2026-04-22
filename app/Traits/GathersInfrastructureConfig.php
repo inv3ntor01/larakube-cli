@@ -108,7 +108,7 @@ trait GathersInfrastructureConfig
         );
 
         $dbOptions = collect(DatabaseEngine::cases())->mapWithKeys(fn ($c) => [$c->value => $c->value])->all();
-        $dbDefault = [DatabaseEngine::SQLITE->value];
+        $dbDefault = [DatabaseEngine::MYSQL->value];
         if (in_array(LaravelFeature::HORIZON->value, $config['features'])) {
             $dbDefault[] = DatabaseEngine::REDIS->value;
         }
@@ -123,7 +123,7 @@ trait GathersInfrastructureConfig
                 }
                 $persistentDbs = array_filter($values, fn ($v) => $v !== DatabaseEngine::REDIS->value);
                 if (empty($persistentDbs)) {
-                    return 'You must select at least one persistent database (SQLite, MySQL, MariaDB, or PostgreSQL).';
+                    return 'You must select at least one persistent database (MySQL, MariaDB, PostgreSQL, or MongoDB).';
                 }
 
                 return null;

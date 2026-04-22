@@ -57,13 +57,6 @@ trait InteractsWithGlobalConfig
                'ghcr.io/cli/cli ';
     }
 
-    protected function getGitHubToken(): ?string
-    {
-        // We'll now rely on the GH CLI's internal state
-        // but we can still keep this for internal helpers if needed
-        return null;
-    }
-
     protected function getEmail(): ?string
     {
         return $this->getGlobalConfig()['email'] ?? null;

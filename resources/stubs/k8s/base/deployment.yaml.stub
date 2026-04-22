@@ -12,10 +12,6 @@ spec:
       labels:
         app: laravel-web
     spec:
-      initContainers:
-        - name: wait-for-db
-          image: busybox:1.37
-          command: ['sh', '-c', 'until nc -zv {{DB_HOST}} {{DB_PORT}}; do echo "Waiting for database..."; sleep 2; done']
       containers:
         - name: php
           image: {{IMAGE_NAME}}:latest

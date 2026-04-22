@@ -13,6 +13,7 @@ use App\Traits\CheckPrerequisites;
 use App\Traits\GathersInfrastructureConfig;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithDocker;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithMcpConfig;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -26,14 +27,14 @@ use function Laravel\Prompts\warning;
 
 class NewCommand extends Command
 {
-    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithMcpConfig, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithInternalDatabase, InteractsWithMcpConfig, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'new {name? : The name of the app} 
+    protected $signature = 'new {name? : The name of the app}
                             {--fast : Skip the LaraKube wizard and use ideal defaults}
                             {--frankenphp : Use FrankenPHP server (Recommended)}
                             {--nginx : Use FPM + Nginx server}
@@ -43,22 +44,26 @@ class NewCommand extends Command
                             {--mysql : Use MySQL database}
                             {--postgres : Use PostgreSQL database}
                             {--mariadb : Use MariaDB database}
-                            {--sqlite : Use SQLite database}
+                            {--mongodb : Use MongoDB database}
                             {--redis : Use Redis cache}
                             {--horizon : Install Laravel Horizon}
                             {--reverb : Install Laravel Reverb}
                             {--meilisearch : Install Laravel Scout with Meilisearch}
                             {--typesense : Install Laravel Scout with Typesense}
+                            {--react : Use React frontend stack}
+                            {--vue : Use Vue frontend stack}
+                            {--livewire : Use Livewire frontend stack}
+                            {--svelte : Use Svelte frontend stack}
+                            {--monitoring : Install Prometheus and Grafana}
                             {--queue : Enable background queue workers}
                             {--schedule : Enable task scheduling}
                             {--mailpit : Enable local Mailpit SMTP}
                             {--minio : Enable MinIO object storage}
-                            {--seaweedfs : Enable SeaweedFS object storage}';
+                            {--seaweedfs : Enable SeaweedFS object storage}
+                            {--dry-run : Show what will be done without making any changes}';
 
     /**
      * The console command description.
-     *
-     * @var string
      */
     protected $description = 'Create a new Laravel application with a custom Kubernetes architecture';
 
@@ -77,6 +82,22 @@ class NewCommand extends Command
     {
         $this->renderHeader();
 
+        // 1. Nesting Protection
+        if (file_exists(getcwd().'/.larakube.json')) {
+            $this->line('');
+            $this->warn(' ⚠ NESTING WARNING: You are already inside a LaraKube CLI project.');
+            $this->line('   Running "new" here will create a nested project structure.');
+            $this->line('');
+
+            if (! $this->confirm('Are you sure you want to proceed with a nested project?', false)) {
+                $this->laraKubeInfo('Action cancelled to prevent project nesting.');
+
+                return 0;
+            }
+
+            $this->logActivity('Project nesting warning ignored', ['action' => 'new'], getcwd());
+        }
+
         if (! $this->checkPrerequisites(true)) {
             return 1;
         }
@@ -94,7 +115,7 @@ class NewCommand extends Command
         // Detect if any architectural flags were provided
         $hasArchFlags = collect($this->options())->only([
             'frankenphp', 'nginx', 'apache',
-            'filament', 'statamic', 'mysql', 'postgres', 'mariadb', 'sqlite', 'redis',
+            'filament', 'statamic', 'mysql', 'postgres', 'mariadb', 'mongodb', 'redis',
             'horizon', 'reverb', 'meilisearch', 'typesense', 'queue', 'schedule', 'mailpit',
             'minio', 'seaweedfs', 'fast',
         ])->filter()->isNotEmpty();
@@ -116,13 +137,36 @@ class NewCommand extends Command
         }
 
         // Create .env.production
-        if (file_exists($projectPath.'/.env')) {
+        if (file_exists($projectPath.'/.env') && ! $this->option('dry-run')) {
             copy($projectPath.'/.env', $projectPath.'/.env.production');
+        }
+
+        // 1. Always show the preview first
+        $this->orchestrateProjectScaffolding($projectPath, $name, $config, true, true, true);
+
+        // 2. Stop if it's an explicit dry-run
+        if ($this->option('dry-run')) {
+            return 0;
+        }
+
+        // 3. Confirm before applying (skip if --fast or --no-interaction)
+        if (! $this->option('fast') && ! $this->option('no-interaction')) {
+            if (! $this->confirm('Would you like to apply these architectural changes?', true)) {
+                $this->laraKubeInfo('Scaffolding cancelled. No files were modified.');
+
+                return 0;
+            }
         }
 
         $this->withSpin('Orchestrating infrastructure manifests...', function () use ($projectPath, $name, $config) {
             $this->orchestrateProjectScaffolding($projectPath, $name, $config);
             $this->scaffoldMcpConfigs($projectPath);
+
+            $this->logActivity('New architectural masterpiece created', [
+                'name' => $name,
+                'blueprint' => $config['blueprint'],
+                'server' => $config['serverVariation'],
+            ], $projectPath);
         });
 
         $this->laraKubeInfo("Project {$name} created successfully!");
@@ -172,8 +216,8 @@ class NewCommand extends Command
         if ($this->option('mariadb')) {
             $databases[] = DatabaseEngine::MARIADB->value;
         }
-        if ($this->option('sqlite')) {
-            $databases[] = DatabaseEngine::SQLITE->value;
+        if ($this->option('mongodb')) {
+            $databases[] = DatabaseEngine::MONGODB->value;
         }
         if ($this->option('redis')) {
             $databases[] = DatabaseEngine::REDIS->value;
@@ -191,8 +235,11 @@ class NewCommand extends Command
         if ($this->option('reverb')) {
             $features[] = LaravelFeature::REVERB->value;
         }
+        if ($this->option('monitoring')) {
+            $features[] = LaravelFeature::MONITORING->value;
+        }
         if ($this->option('queue')) {
-            $features[] = LaravelFeature::QUEUE->value;
+            $features[] = LaravelFeature::QUEUES->value;
         }
         if ($this->option('schedule')) {
             $features[] = LaravelFeature::TASK_SCHEDULING->value;
@@ -213,12 +260,24 @@ class NewCommand extends Command
             $features[] = LaravelFeature::OCTANE->value;
         }
 
+        $frontend = 'none';
+        if ($this->option('react')) {
+            $frontend = 'react';
+        } elseif ($this->option('vue')) {
+            $frontend = 'vue';
+        } elseif ($this->option('livewire')) {
+            $frontend = 'livewire';
+        } elseif ($this->option('svelte')) {
+            $frontend = 'svelte';
+        }
+
         return [
             'blueprint' => $blueprint,
+            'frontend' => $frontend,
             'serverVariation' => $serverVariation,
             'phpVersion' => PhpVersion::PHP_8_5->value,
             'os' => OperatingSystem::ALPINE->value,
-            'email' => $this->getEmail() ?? 'admin@larakube.local',
+            'email' => $this->getEmail() ?? 'admin@larakube.dev.test',
             'additionalExtensions' => [],
             'features' => array_unique($features),
             'packageManager' => PackageManager::NPM->value,
@@ -248,8 +307,8 @@ class NewCommand extends Command
             // 2. Skip LaraKube-specific flags
             $larakubeFlags = [
                 'fast', 'frankenphp', 'nginx', 'apache', 'filament', 'statamic', 'mysql', 'postgres',
-                'mariadb', 'sqlite', 'redis', 'horizon', 'reverb', 'meilisearch', 'typesense',
-                'queue', 'schedule', 'mailpit', 'minio', 'seaweedfs',
+                'mariadb', 'mongodb', 'redis', 'horizon', 'reverb', 'meilisearch', 'typesense',
+                'queue', 'schedule', 'mailpit', 'minio', 'seaweedfs', 'dry-run',
             ];
 
             if (str_starts_with($arg, '--')) {

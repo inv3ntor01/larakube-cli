@@ -77,4 +77,29 @@ trait InteractsWithLaraKubeCli
             'success' => $resultCode === 0,
         ];
     }
+
+    /**
+     * Get the unified AI instructions with dynamic project context.
+     */
+    protected function getAiInstructions(): string
+    {
+        $path = base_path('resources/ai/larakube-assistant.md');
+        $instructions = file_exists($path) ? file_get_contents($path) : 'You are LaraKube, a professional autonomous Kubernetes orchestrator for Laravel.';
+
+        // 1. Detect existing LaraKube project
+        $isLaraKubeProject = file_exists(getcwd().'/.larakube.json');
+
+        // 2. Detect uninitialized Laravel project (Must have BOTH)
+        $isLaravelProject = file_exists(getcwd().'/composer.json') && file_exists(getcwd().'/artisan');
+
+        if ($isLaraKubeProject) {
+            $context = "\n\n### CURRENT CONTEXT:\n- You ARE currently inside an existing LaraKube project (detected .larakube.json).\n- DO NOT suggest or execute 'new' or 'init' here to avoid conflicts.\n- Focus on 'add', 'up', 'down', 'heal', or 'doctor' commands.";
+        } elseif ($isLaravelProject) {
+            $context = "\n\n### CURRENT CONTEXT:\n- You are inside a Laravel project that is NOT yet a LaraKube project.\n- Suggest 'init' to initialize LaraKube for this project.\n- DO NOT suggest 'new' here as it would create a nested directory.";
+        } else {
+            $context = "\n\n### CURRENT CONTEXT:\n- You are in a blank or non-Laravel directory.\n- Suggest 'new' to create a fresh LaraKube project from scratch.";
+        }
+
+        return $instructions.$context;
+    }
 }

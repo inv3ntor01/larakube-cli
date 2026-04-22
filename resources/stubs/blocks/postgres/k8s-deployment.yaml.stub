@@ -4,6 +4,8 @@ metadata:
   name: postgres
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres
@@ -14,7 +16,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:17.9-alpine
+          image: postgres:17.9
           ports:
             - containerPort: 5432
           env:
@@ -33,8 +35,6 @@ spec:
                 secretKeyRef:
                   name: laravel-secrets
                   key: DB_PASSWORD
-            - name: POSTGRES_HOST_AUTH_METHOD
-              value: trust
           readinessProbe:
             tcpSocket:
               port: 5432

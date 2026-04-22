@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Mcp\Tools;
 
+use App\Ai\Tools\LaraKubeTool;
 use App\Traits\InteractsWithProjectConfig;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Tool;
 
-class GetProjectConfig extends Tool
+class GetProjectConfig extends LaraKubeTool
 {
     use InteractsWithProjectConfig;
 
@@ -25,18 +25,30 @@ class GetProjectConfig extends Tool
 
     public function schema(JsonSchema $schema): array
     {
-        return [];
+        return [
+            'path' => $schema->string()
+                ->description('The directory path to check for configuration.')
+                ->default('.')
+                ->required(),
+        ];
     }
 
-    public function handle(): Response
+    /**
+     * MCP Server entry point.
+     */
+    public function callTool(array $arguments = []): Response
     {
-        $projectPath = getcwd();
-        $config = $this->getProjectConfig($projectPath);
+        return $this->runMcp($arguments);
+    }
+
+    protected function run(array $arguments): string
+    {
+        $config = $this->getProjectConfig(getcwd());
 
         if (empty($config)) {
-            return Response::error('No LaraKube configuration found (.larakube.json) in '.$projectPath);
+            return 'No .larakube.json found in the current directory.';
         }
 
-        return Response::json($config);
+        return json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     }
 }

@@ -2,258 +2,156 @@
 
 namespace App\Commands;
 
-use App\Ai\ClusterDoctorAgent;
+use App\Ai\Agents\ClusterDoctorAgent;
+use App\Traits\CheckPrerequisites;
 use App\Traits\InteractsWithEnvironments;
-use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
+use Exception;
+use Laravel\Ai\Streaming\Events\TextDelta;
+use Laravel\Ai\Streaming\Events\ToolCall;
 use LaravelZero\Framework\Commands\Command;
 
-use function Laravel\Prompts\spin;
+use function Laravel\Prompts\info;
 
 class DoctorCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
 
-    protected $signature = 'doctor {--environment=local : The environment to diagnose} {--ai : Use AI to provide a deep diagnosis of unhealthy pods}';
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'doctor {--environment=local : The environment to diagnose} {--ai : Use AI to analyze issues}';
 
-    protected $description = 'Diagnose project and cluster health issues';
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Scan your LaraKube project and cluster for issues';
 
-    public function handle()
+    /**
+     * Execute the console command.
+     */
+    public function handle(): int
     {
         $this->renderHeader();
-        $this->laraKubeInfo('Starting LaraKube Health Check...');
 
-        $this->checkPrerequisites();
-        $this->checkLocalEnvironment();
-        $this->checkManifestIntegrity();
-        $this->checkHostsFile();
-        $this->checkPortConflicts();
-        $this->checkClusterConnectivity();
-        $unhealthyPods = $this->checkPodHealth();
+        $environment = $this->option('environment');
+        $namespace = $this->getNamespace($environment);
 
-        if ($this->option('ai') && ! empty($unhealthyPods)) {
-            $this->performAiDiagnosis($unhealthyPods);
+        $this->laraKubeInfo("Diagnosing LaraKube environment: {$environment}...");
+
+        $issues = $this->runDiagnostics($namespace);
+
+        if (empty($issues)) {
+            $this->laraKubeInfo('✅ No critical issues detected! Your cluster health is looking like a masterpiece.');
+            $this->logActivity('Doctor scan completed: Healthy', ['environment' => $environment]);
+        } else {
+            $this->laraKubeError('Issues detected:');
+            foreach ($issues as $issue) {
+                $this->line("  ● <fg=red>{$issue['title']}</>: {$issue['description']}");
+                if (isset($issue['fix'])) {
+                    $this->line("    <fg=gray>👉 Fix: {$issue['fix']}</>");
+                }
+            }
+
+            $this->logActivity('Doctor scan completed: Issues found', [
+                'environment' => $environment,
+                'issue_count' => count($issues),
+            ]);
+
+            if ($this->option('ai')) {
+                $this->performAiDiagnosis($issues);
+            } else {
+                $this->line('');
+                info('Pro Tip: Run larakube doctor --ai for an automated recovery plan.');
+            }
         }
-
-        $this->line('');
-        $this->laraKubeInfo('Diagnostic complete!');
 
         return 0;
     }
 
-    protected function checkPrerequisites()
+    protected function runDiagnostics(string $namespace): array
     {
-        $this->task('Checking Prerequisites', function () {
-            $docker = shell_exec('docker --version');
-            $kubectl = shell_exec('kubectl version --client');
+        $issues = [];
 
-            return $docker && $kubectl;
-        });
-    }
+        // 1. Check for .larakube.json
+        if (! file_exists(getcwd().'/.larakube.json')) {
+            $issues[] = [
+                'title' => 'Missing Configuration',
+                'description' => 'No .larakube.json file found in the current directory.',
+                'fix' => 'Run larakube init to adopting this project.',
+            ];
+        }
 
-    protected function checkLocalEnvironment()
-    {
-        $this->task('Checking .env configuration', function () {
-            $projectPath = getcwd();
-            $envPath = $projectPath.'/.env';
+        // 2. Check Cluster Connectivity
+        $check = shell_exec('kubectl cluster-info 2>&1');
+        if (str_contains($check, 'refused') || str_contains($check, 'error')) {
+            $issues[] = [
+                'title' => 'Cluster Unreachable',
+                'description' => 'Cannot connect to the Kubernetes cluster.',
+                'fix' => 'Ensure your cluster (Docker Desktop, OrbStack, or k3s) is running.',
+            ];
 
-            if (! file_exists($envPath)) {
-                $this->warn('  ⚠ .env file is missing.');
+            return $issues; // Stop here if cluster is down
+        }
 
-                return false;
-            }
-
-            $envContent = file_get_contents($envPath);
-            $criticalKeys = ['DB_PASSWORD', 'APP_KEY', 'DB_CONNECTION'];
-            $issues = [];
-
-            foreach ($criticalKeys as $key) {
-                if (preg_match("/^#\s*{$key}=/m", $envContent)) {
-                    $issues[] = "{$key} is commented out.";
-                } elseif (! preg_match("/^{$key}=/m", $envContent)) {
-                    $issues[] = "{$key} is missing entirely.";
+        // 3. Check for failed pods
+        $pods = shell_exec("kubectl get pods -n {$namespace} -o json 2>/dev/null");
+        if ($pods) {
+            $data = json_decode($pods, true);
+            foreach ($data['items'] ?? [] as $pod) {
+                $phase = $pod['status']['phase'];
+                if ($phase !== 'Running' && $phase !== 'Succeeded') {
+                    $issues[] = [
+                        'title' => "Pod Failure: {$pod['metadata']['name']}",
+                        'description' => "Pod is in state '{$phase}'.",
+                        'fix' => 'Check logs with: larakube logs '.str_replace('laravel-', '', $pod['metadata']['name']),
+                    ];
                 }
             }
+        }
 
-            if (! empty($issues)) {
-                $this->line('');
-                foreach ($issues as $issue) {
-                    $this->warn("  ⚠ {$issue}");
-                }
-
-                return false;
-            }
-
-            return true;
-        });
+        return $issues;
     }
 
-    protected function checkManifestIntegrity()
+    protected function performAiDiagnosis(array $issues): void
     {
-        $environment = $this->option('environment');
-        $path = ".infrastructure/k8s/overlays/{$environment}";
+        $this->line('');
+        $this->laraKubeInfo('🧠 LaraKube AI is analyzing cluster telemetry...');
 
-        $this->task("Checking Manifest Integrity ({$environment})", function () use ($path) {
-            if (! is_dir(getcwd().'/'.$path)) {
-                $this->warn("  ⚠ Manifest directory '{$path}' not found.");
-
-                return false;
-            }
-
-            $output = [];
-            $result = 0;
-            exec("kubectl kustomize {$path} 2>&1", $output, $result);
-
-            if ($result !== 0) {
-                $this->line('');
-                $this->error('  ✖ Malformed or broken Kubernetes configuration detected:');
-                foreach (array_slice($output, 0, 5) as $line) {
-                    $this->error("    {$line}");
-                }
-
-                return false;
-            }
-
-            return true;
-        });
-    }
-
-    protected function checkHostsFile()
-    {
-        $this->task('Checking /etc/hosts resolution', function () {
-            $projectPath = getcwd();
-            $config = $this->getProjectConfig($projectPath);
-            if (empty($config)) {
-                return true;
-            }
-
-            $appName = basename($projectPath);
-            $baseHost = "{$appName}.local";
-            $required = [$baseHost, "vite.{$baseHost}"];
-
-            foreach ($required as $host) {
-                $ip = gethostbyname($host);
-                if ($ip === $host || ($ip !== '127.0.0.1' && $ip !== '::1')) {
-                    $this->line('');
-                    $this->warn("  ⚠ Host '{$host}' does not resolve to 127.0.0.1.");
-                    $this->info("    👉 FIX: Run 'larakube up' to update your hosts file.");
-
-                    return false;
-                }
-            }
-
-            return true;
-        });
-    }
-
-    protected function checkPortConflicts()
-    {
-        $this->task('Checking Port Conflicts (80, 443, 5173)', function () {
-            $ports = [80, 443, 5173];
-            $conflicts = [];
-
-            foreach ($ports as $port) {
-                $connection = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
-                if (is_resource($connection)) {
-                    fclose($connection);
-                    $conflicts[] = $port;
-                }
-            }
-
-            if (! empty($conflicts)) {
-                $this->line('');
-                $this->warn('  ⚠ The following ports are already in use on your host: '.implode(', ', $conflicts));
-
-                return false;
-            }
-
-            return true;
-        });
-    }
-
-    protected function checkClusterConnectivity()
-    {
-        $this->task('Checking Cluster Connectivity', function () {
-            $output = shell_exec('kubectl cluster-info 2>&1');
-            if (str_contains($output, 'Unable to connect') || str_contains($output, 'timeout')) {
-                return false;
-            }
-
-            return true;
-        });
-    }
-
-    protected function checkPodHealth(): array
-    {
-        $environment = $this->option('environment');
-        $namespace = $this->getNamespace($environment);
-        $unhealthyPods = [];
-
-        $this->task("Checking Project Pods ({$namespace})", function () use ($namespace, &$unhealthyPods) {
-            $output = shell_exec("kubectl get pods -n {$namespace} -o json 2>/dev/null");
-            if (! $output) {
-                return false;
-            }
-
-            $pods = json_decode($output, true)['items'] ?? [];
-            foreach ($pods as $pod) {
-                $name = $pod['metadata']['name'];
-                $ready = true;
-                foreach ($pod['status']['containerStatuses'] ?? [] as $cs) {
-                    if (! $cs['ready']) {
-                        $ready = false;
-                    }
-                }
-
-                if (! $ready || $pod['status']['phase'] !== 'Running') {
-                    $unhealthyPods[] = $name;
-                }
-            }
-
-            return empty($unhealthyPods);
-        });
-
-        return $unhealthyPods;
-    }
-
-    protected function performAiDiagnosis(array $podNames)
-    {
         $provider = $this->getAiProvider();
-        $apiKey = $this->getAiApiKey();
+        $apiKey = $this->getAiApiKey($provider);
 
         if (! $apiKey) {
-            $this->warn("  ⚠ AI API Key not found for provider '{$provider}'. Set it with: larakube config --ai-key=YOUR_KEY");
+            $this->laraKubeError('AI API Key not found. Cannot perform AI diagnosis.');
 
             return;
         }
 
-        // Dynamically set the provider and key for the AI SDK
         config(['ai.default' => $provider]);
         config(["ai.providers.{$provider}.key" => $apiKey]);
 
-        $this->line('');
-        $this->laraKubeInfo('🧠 Performing Deep AI Diagnosis...');
-        $environment = $this->option('environment');
-        $namespace = $this->getNamespace($environment);
+        $agent = ClusterDoctorAgent::make();
+        $query = 'Here are the current cluster issues: '.json_encode($issues).'. Please analyze and provide a recovery plan.';
 
-        $config = $this->getProjectConfig(getcwd());
-        $blueprint = json_encode($config, JSON_PRETTY_PRINT);
+        $this->output->write('🤖 Recovery Plan: ');
 
-        foreach ($podNames as $podName) {
-            $this->info("  🔍 Analyzing Pod: {$podName}");
-
-            $logs = shell_exec("kubectl logs -n {$namespace} {$podName} --tail=50 2>&1");
-            $events = shell_exec("kubectl get events -n {$namespace} --field-selector involvedObject.name={$podName} 2>&1");
-
-            $prompt = "Namespace: {$namespace}\nPod: {$podName}\nBlueprint: {$blueprint}\n\nLogs:\n{$logs}\n\nEvents:\n{$events}";
-
-            $response = spin(function () use ($prompt) {
-                return ClusterDoctorAgent::make()->prompt($prompt);
-            }, 'AI is thinking...');
-
-            $this->line('');
-            $this->line($response->text);
-            $this->line('');
+        try {
+            $stream = $agent->stream($query);
+            foreach ($stream as $event) {
+                if ($event instanceof TextDelta) {
+                    $this->output->write($event->delta);
+                } elseif ($event instanceof ToolCall) {
+                    $this->line("\n  <fg=gray>🛠 Fixing:</> <fg=yellow>{$event->toolCall->name}</>");
+                }
+            }
+            $this->line("\n");
+        } catch (Exception $e) {
+            $this->error('AI Error: '.$e->getMessage());
         }
     }
 }

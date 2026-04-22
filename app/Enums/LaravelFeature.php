@@ -2,13 +2,14 @@
 
 namespace App\Enums;
 
-use App\Actions\FeatureAction;
-use App\Actions\HorizonAction;
-use App\Actions\OctaneAction;
-use App\Actions\QueueAction;
-use App\Actions\ReverbAction;
-use App\Actions\ScoutAction;
-use App\Actions\TaskSchedulingAction;
+use App\Actions\Contracts\FeatureAction;
+use App\Actions\Features\MonitoringAction;
+use App\Actions\Features\OctaneAction;
+use App\Actions\Features\ReverbAction;
+use App\Actions\Queues\HorizonAction;
+use App\Actions\Queues\QueueAction;
+use App\Actions\Queues\TaskSchedulingAction;
+use App\Actions\Search\ScoutAction;
 
 enum LaravelFeature: string
 {
@@ -18,6 +19,8 @@ enum LaravelFeature: string
     case REVERB = 'Reverb';
     case SCOUT = 'Laravel Scout';
     case OCTANE = 'Octane (requires FrankenPHP)';
+    case MONITORING = 'Monitoring (Prometheus & Grafana)';
+    case METALLB = 'MetalLB (LoadBalancer Provider)';
 
     public function action(): FeatureAction
     {
@@ -27,7 +30,9 @@ enum LaravelFeature: string
             self::QUEUES => new QueueAction,
             self::REVERB => new ReverbAction,
             self::SCOUT => new ScoutAction,
-            self::OCTANE => new OctaneAction
+            self::OCTANE => new OctaneAction,
+            self::MONITORING => new MonitoringAction,
+            self::METALLB => new MetalLbAction,
         };
     }
 }

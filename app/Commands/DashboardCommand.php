@@ -15,22 +15,30 @@ class DashboardCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'dashboard {environment? : The environment to monitor (local or production)} {--simple : Use simple kubectl view instead of k9s}';
+    protected $signature = 'dashboard {environment? : The environment to monitor (local or production)} 
+                            {--simple : Use simple kubectl view instead of k9s}
+                            {--traefik : Open the Traefik network dashboard}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Open a dashboard to monitor your Kubernetes cluster';
+    protected $description = 'Open a dashboard to monitor your Kubernetes cluster or network';
 
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): int
     {
+        $this->renderHeader();
+
         $environment = $this->argument('environment') ?? 'local';
         $namespace = $this->getNamespace($environment);
+
+        if ($this->option('traefik')) {
+            return $this->showTraefikDashboard();
+        }
 
         $hasK9s = shell_exec('which k9s') !== null;
         $hasWatch = shell_exec('which watch') !== null;
@@ -74,6 +82,25 @@ class DashboardCommand extends Command
                 sleep(1);
             }
         }
+
+        return 0;
+    }
+
+    /**
+     * Open a tunnel to the Traefik Dashboard.
+     */
+    protected function showTraefikDashboard(): int
+    {
+        $this->laraKubeInfo('Opening Traefik Network Dashboard...');
+
+        $this->line('');
+        $this->line('    🌐 <fg=cyan;options=bold>http://localhost:8080/dashboard/</>');
+        $this->line('');
+        $this->info('  Keep this process running to maintain the connection.');
+        $this->info('  Press Ctrl+C to stop.');
+        $this->line('');
+
+        passthru('kubectl port-forward -n traefik svc/traefik 8080:8080');
 
         return 0;
     }

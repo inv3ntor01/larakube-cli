@@ -22,6 +22,10 @@ class TrustCommand extends Command
         if (file_exists('/.dockerenv')) {
             $this->error('  ✖ The "trust" command must be run directly on your HOST machine.');
             $this->info('    This command interacts with your system Keychain/Trust Store.');
+            $this->line('');
+            $this->warn('    👉 How to run this from your host:');
+            $this->line('    1. Build the standalone binary: ./build --local');
+            $this->line('    2. Run the command directly: larakube trust');
 
             return 1;
         }

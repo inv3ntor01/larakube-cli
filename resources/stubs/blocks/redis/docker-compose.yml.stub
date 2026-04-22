@@ -1,4 +1,4 @@
   redis:
-    image: redis:alpine
+    image: redis:7.4
     networks:
       - laravel

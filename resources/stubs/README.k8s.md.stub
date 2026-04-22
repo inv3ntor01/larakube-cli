@@ -12,7 +12,7 @@ larakube up
 
 LaraKube will automatically:
 1. **Build** your local Docker images.
-2. **Setup** your `/etc/hosts` file for `https://{{APP_NAME}}.local`.
+2. **Setup** your `/etc/hosts` file for `https://{{APP_NAME}}.dev.test`.
 3. **Ensure** an Ingress Controller is active.
 4. **Inject** your local `.env` variables securely into the cluster.
 5. **Deploy** your entire stack and wait for health checks.

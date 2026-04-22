@@ -3,26 +3,23 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class StopCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
-     *
-     * @var string
      */
     protected $signature = 'stop {environment=local : The environment to stop}';
 
     /**
      * The console command description.
-     *
-     * @var string
      */
-    protected $description = 'Stop all application pods without deleting data (Scale to 0)';
+    protected $description = 'Pause application services by scaling pods to zero (Data is preserved)';
 
     /**
      * Execute the console command.
@@ -34,15 +31,18 @@ class StopCommand extends Command
         $environment = $this->argument('environment');
         $namespace = $this->getNamespace($environment);
 
-        $this->laraKubeInfo("Stopping all pods in namespace '{$namespace}'...");
+        $this->laraKubeInfo("Pausing services in '{$environment}'...");
 
-        $this->withSpin('Scaling deployments to 0...', function () use ($namespace) {
-            exec("kubectl scale deployment --all --replicas=0 -n {$namespace} 2>/dev/null");
-            exec("kubectl scale statefulset --all --replicas=0 -n {$namespace} 2>/dev/null");
+        $this->withSpin('Scaling down application pods to zero...', function () use ($namespace) {
+            exec("kubectl scale deployment --all --replicas=0 -n {$namespace}");
+
+            return true;
         });
 
-        $this->laraKubeInfo('All pods stopped. Your data remains safe in the cluster volumes.');
-        $this->info('Next steps: larakube start');
+        $this->logActivity('Services paused (scaled to zero)', ['environment' => $environment]);
+
+        $this->laraKubeInfo('All services have been paused. Your data remains safe in the cluster volumes.');
+        $this->info('Run larakube start to resume.');
 
         return 0;
     }

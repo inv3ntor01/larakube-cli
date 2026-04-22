@@ -3,6 +3,7 @@
 namespace App\Ai\Tools;
 
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Mcp\Response;
 
 class ExecuteCommand extends LaraKubeTool
 {
@@ -23,6 +24,11 @@ class ExecuteCommand extends LaraKubeTool
                 ->description('The full command to run (e.g. "new chat-app --fast").')
                 ->required(),
         ];
+    }
+
+    public function callTool(array $arguments = []): Response
+    {
+        return $this->runMcp($arguments);
     }
 
     protected function run(array $arguments): string

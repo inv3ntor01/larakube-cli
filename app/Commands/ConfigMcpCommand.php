@@ -12,7 +12,8 @@ class ConfigMcpCommand extends Command
 
     protected $signature = 'config:mcp {--all : Register for all supported AI tools} 
                                        {--gemini : Register for Gemini CLI} 
-                                       {--claude : Register for Claude Code (Desktop)}';
+                                       {--claude : Register for Claude Code (Desktop)}
+                                       {--docs : Register LaraKube Docs (Algolia MCP) for Gemini CLI}';
 
     protected $description = 'Register LaraKube as a global MCP server for AI tools';
 
@@ -24,9 +25,10 @@ class ConfigMcpCommand extends Command
         $all = $this->option('all');
         $gemini = $this->option('gemini') || $all;
         $claude = $this->option('claude') || $all;
+        $docs = $this->option('docs') || $all;
 
-        if (! $gemini && ! $claude) {
-            $this->warn('  ⚠ No targets specified. Use --gemini, --claude, or --all.');
+        if (! $gemini && ! $claude && ! $docs) {
+            $this->warn('  ⚠ No targets specified. Use --gemini, --claude, --docs, or --all.');
 
             return 1;
         }
@@ -40,6 +42,12 @@ class ConfigMcpCommand extends Command
         if ($claude) {
             $this->task('Registering global MCP for Claude Code', function () {
                 return $this->registerGlobalClaudeMcp();
+            });
+        }
+
+        if ($docs) {
+            $this->task('Registering global MCP for LaraKube Docs (Algolia)', function () {
+                return $this->registerGlobalDocsMcp();
             });
         }
 

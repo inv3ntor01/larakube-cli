@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Mcp\Tools;
 
+use App\Ai\Tools\LaraKubeTool;
+use App\Traits\InteractsWithEnvironments;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Tool;
 
-class ApplyHealingPatch extends Tool
+class ApplyHealingPatch extends LaraKubeTool
 {
+    use InteractsWithEnvironments;
+
     public function name(): string
     {
         return 'apply_healing_patch';
@@ -23,27 +26,40 @@ class ApplyHealingPatch extends Tool
     public function schema(JsonSchema $schema): array
     {
         return [
-            'filename' => $schema->string()
-                ->description('The name of the patch file (e.g., fix-permissions-patch.yaml).'),
             'content' => $schema->string()
-                ->description('The raw YAML content of the Kubernetes manifest.'),
+                ->description('The raw YAML content of the Kubernetes manifest.')
+                ->required(),
+            'filename' => $schema->string()
+                ->description('The name of the patch file (e.g., fix-permissions-patch.yaml).')
+                ->required(),
             'environment' => $schema->string()
                 ->description('The environment to target (local or production). Defaults to local.')
-                ->default('local'),
+                ->default('local')
+                ->required(),
         ];
     }
 
-    public function handle(string $filename, string $content, string $environment = 'local'): Response
+    /**
+     * MCP Server entry point.
+     */
+    public function callTool(array $arguments = []): Response
     {
-        $projectPath = getcwd();
-        $patchPath = "{$projectPath}/.infrastructure/k8s/overlays/{$environment}/{$filename}";
+        return $this->runMcp($arguments);
+    }
 
-        if (! is_dir(dirname($patchPath))) {
-            return Response::error("Environment directory '{$environment}' not found.");
-        }
+    protected function run(array $arguments): string
+    {
+        $content = $arguments['content'];
+        $filename = $arguments['filename'];
+        $environment = $arguments['environment'] ?? 'local';
+        $namespace = $this->getNamespace($environment);
 
-        file_put_contents($patchPath, $content);
+        $tmpPath = sys_get_temp_dir().'/'.$filename;
+        file_put_contents($tmpPath, $content);
 
-        return Response::text("Patch '{$filename}' applied successfully to {$environment}. Run 'larakube up' to deploy the fix.");
+        $output = shell_exec("kubectl apply -f {$tmpPath} -n {$namespace} 2>&1");
+        @unlink($tmpPath);
+
+        return "Patch Result: {$output}";
     }
 }

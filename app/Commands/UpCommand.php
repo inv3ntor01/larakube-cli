@@ -2,8 +2,11 @@
 
 namespace App\Commands;
 
+use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
+use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -12,7 +15,7 @@ use function Laravel\Prompts\info;
 
 class UpCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithHosts, LaraKubeOutput;
+    use InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -101,21 +104,29 @@ class UpCommand extends Command
 
         $this->laraKubeInfo("Targeting environment: {$environment}");
 
+        $this->logActivity('Project deployed to cluster', ['environment' => $environment]);
+
         // Check if ANY Ingress Controller is running (local only)
-        if ($environment === 'local' && shell_exec("kubectl get pods -A -l 'app.kubernetes.io/component=controller' 2>/dev/null | grep Running") === null && shell_exec('kubectl get pods -A -l app=traefik 2>/dev/null | grep Running') === null) {
-            $this->laraKubeInfo('No Ingress Controller detected in your local cluster.');
-            if (confirm('LaraKube works best with Traefik. Would you like us to install it for you?', true)) {
-                $this->laraKubeInfo('Installing Traefik Ingress Controller...');
-                passthru('kubectl apply -f '.base_path('resources/stubs/k8s/traefik-install.yaml.stub'));
-                $this->laraKubeInfo('Waiting for Traefik to be ready...');
-                passthru('kubectl wait --for=condition=ready pod -l app=traefik -n traefik --timeout=60s');
+        if ($environment === 'local') {
+            if (! $this->isTraefikInstalled()) {
+                $this->laraKubeInfo('No Ingress Controller detected in your local cluster.');
+                if (confirm('LaraKube works best with Traefik. Would you like us to install it for you?', true)) {
+                    $this->setupTraefik();
+                }
+            } else {
+                // Ensure Traefik infra (SSL/Config) is up-to-date
+                $this->withSpin('Syncing Traefik SSL configuration...', function () {
+                    $this->createTraefikInfrastructure();
+
+                    return true;
+                });
             }
         }
 
         // 1. Build image if local
         if ($environment === 'local') {
             $this->laraKubeInfo("Building local Docker image '{$appName}:latest'...");
-            passthru("docker build -t {$appName}:latest -f Dockerfile.php .");
+            $this->buildImage(getcwd(), $appName);
         }
 
         // 2. Ensure Namespace exists

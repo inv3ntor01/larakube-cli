@@ -3,6 +3,7 @@
 namespace App\Ai\Tools;
 
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Mcp\Response;
 
 class ListCommands extends LaraKubeTool
 {
@@ -18,7 +19,17 @@ class ListCommands extends LaraKubeTool
 
     public function schema(JsonSchema $schema): array
     {
-        return [];
+        return [
+            'filter' => $schema->string()
+                ->description('An optional filter for the command list.')
+                ->default('')
+                ->required(),
+        ];
+    }
+
+    public function callTool(array $arguments = []): Response
+    {
+        return $this->runMcp($arguments);
     }
 
     protected function run(array $arguments): string

@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Mcp\Tools;
 
+use App\Ai\Tools\LaraKubeTool;
 use App\Traits\InteractsWithEnvironments;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Tool;
 
-class ListPods extends Tool
+class ListPods extends LaraKubeTool
 {
     use InteractsWithEnvironments;
 
@@ -28,19 +28,29 @@ class ListPods extends Tool
         return [
             'environment' => $schema->string()
                 ->description('The environment to target (e.g., local, production). Defaults to local.')
-                ->default('local'),
+                ->default('local')
+                ->required(),
         ];
     }
 
-    public function handle(string $environment = 'local'): Response
+    /**
+     * MCP Server entry point.
+     */
+    public function callTool(array $arguments = []): Response
     {
+        return $this->runMcp($arguments);
+    }
+
+    protected function run(array $arguments): string
+    {
+        $environment = $arguments['environment'] ?? 'local';
         $namespace = $this->getNamespace($environment);
         $output = shell_exec("kubectl get pods -n {$namespace} 2>&1");
 
         if (str_contains($output, 'No resources found')) {
-            return Response::text("No pods found in namespace '{$namespace}'.");
+            return "No pods found in namespace '{$namespace}'.";
         }
 
-        return Response::text($output);
+        return $output;
     }
 }

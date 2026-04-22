@@ -1,6 +1,7 @@
 <?php
 
 use App\Providers\AppServiceProvider;
+use Intonate\TinkerZero\TinkerZeroServiceProvider;
 
 return [
 
@@ -57,6 +58,6 @@ return [
 
     'providers' => [
         AppServiceProvider::class,
+        TinkerZeroServiceProvider::class,
     ],
-
 ];

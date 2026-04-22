@@ -7,11 +7,12 @@ use App\Enums\DatabaseEngine;
 use App\Enums\LaravelFeature;
 use App\Enums\PackageManager;
 use App\Enums\ServerVariation;
+use Illuminate\Support\Str;
 use Random\RandomException;
 
 trait GeneratesProjectInfrastructure
 {
-    use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * Sync values to the .env file.
@@ -81,7 +82,7 @@ trait GeneratesProjectInfrastructure
         $host = $appName.'.dev.test';
 
         $dbEngines = collect($databases)->map(fn ($db) => DatabaseEngine::from($db));
-        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::SQLITE;
+        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::MYSQL;
 
         $dbConnection = $primaryDb->dbConnection();
         $dbHost = $primaryDb->dbHost();
@@ -108,7 +109,7 @@ trait GeneratesProjectInfrastructure
         $stubs = [
             'base/kustomization.yaml', 'base/deployment.yaml', 'base/service.yaml', 'base/ingress.yaml',
             'base/pvc.yaml',
-            'overlays/local/kustomization.yaml', 'overlays/local/namespace.yaml', 'overlays/local/node-deployment.yaml', 'overlays/local/mailpit.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/laravel-volumes.yaml',
+            'overlays/local/kustomization.yaml', 'overlays/local/namespace.yaml', 'overlays/local/node-deployment.yaml', 'overlays/local/mailpit.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml', 'overlays/local/laravel-volumes.yaml',
             'overlays/production/kustomization.yaml', 'overlays/production/namespace.yaml', 'overlays/production/deployment-patch.yaml',
         ];
 
@@ -297,6 +298,33 @@ trait GeneratesProjectInfrastructure
             }
         }
 
+        // Handle Database installation (for DBs that are also features like MongoDB)
+        $dbEngines = collect($context['databases'] ?? [])->map(fn ($db) => DatabaseEngine::tryFrom($db));
+        foreach ($dbEngines as $engine) {
+            if ($engine && $action = $engine->action()) {
+                if ($action instanceof FeatureAction) {
+                    $dbCmds = $action->getInstallCommands([
+                        'projectPath' => $projectPath,
+                        'packageManager' => $packageManager,
+                    ]);
+                    foreach ($dbCmds as $cmd) {
+                        if (str_starts_with($cmd, 'composer require ')) {
+                            $packages = str_replace('composer require ', '', $cmd);
+                            $composerPackages = array_merge($composerPackages, explode(' ', $packages));
+                        } elseif (str_starts_with($cmd, 'php artisan ')) {
+                            $artisanCommands[] = $cmd;
+                        } else {
+                            $jsCommands[] = $cmd;
+                        }
+                    }
+
+                    $action->onPostInstall($projectPath, [
+                        'projectPath' => $projectPath,
+                    ]);
+                }
+            }
+        }
+
         // 2. Execute PHP installation (Composer/Artisan)
         if (! empty($composerPackages) || ! empty($artisanCommands)) {
             $this->laraKubeInfo('Installing PHP requirements...');
@@ -358,7 +386,7 @@ trait GeneratesProjectInfrastructure
         strictPort: true,
         port: 5173,
         hmr: {
-            host: 'vite.{$appName}.local',
+            host: 'vite.{$appName}.dev.test',
             clientPort: 80,
         },
         cors: true,
@@ -412,13 +440,30 @@ JS;
     /**
      * Orchestrate the entire project infrastructure generation and installation.
      */
-    protected function orchestrateProjectScaffolding(string $projectPath, string $appName, array $config, bool $installFeatures = true, bool $buildImage = true): void
+    protected function orchestrateProjectScaffolding(string $projectPath, string $appName, array $config, bool $installFeatures = true, bool $buildImage = true, bool $dryRun = false): void
     {
+        if ($dryRun) {
+            $this->laraKubeInfo("Architectural Preview for '{$appName}':");
+        }
+
+        // 0. Ensure permanent Project ID
+        if (! isset($config['id'])) {
+            $config['id'] = (string) Str::uuid();
+        }
+
         // 0. Persist configuration for self-healing
-        file_put_contents(
-            $projectPath.'/.larakube.json',
-            json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-        );
+        if ($dryRun) {
+            $this->line('  <fg=gray>[FILE]</> Would create .larakube.json with project blueprint.');
+            $this->line("  <fg=gray>[DB]</> Would register project '{$appName}' in internal database.");
+        } else {
+            file_put_contents(
+                $projectPath.'/.larakube.json',
+                json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            );
+
+            // Register in the internal list
+            $this->registerProject($projectPath, $config);
+        }
 
         // 1. Handle Blueprint extensions
         $blueprint = Blueprint::from($config['blueprint']);
@@ -426,35 +471,65 @@ JS;
         $allExtensions = array_unique(array_merge($config['additionalExtensions'], $blueprintExtensions));
 
         // 2. Generate Dockerfiles
-        $this->generateDockerfiles($projectPath, $config['serverVariation'], $config['phpVersion'], $config['os'], $allExtensions);
+        if ($dryRun) {
+            $this->line("  <fg=gray>[FILE]</> Would generate Dockerfile.php ({$config['serverVariation']}).");
+        } else {
+            $this->generateDockerfiles($projectPath, $config['serverVariation'], $config['phpVersion'], $config['os'], $allExtensions);
+        }
 
         // 3. Build the local image if requested
         if ($buildImage) {
-            $this->buildImage($projectPath, $appName);
+            if ($dryRun) {
+                $this->line("  <fg=gray>[DOCKER]</> Would build image '{$appName}:latest'.");
+            } else {
+                $this->buildImage($projectPath, $appName);
+            }
         }
 
         // 4. Generate Manifests
-        $this->generateK8sManifests($projectPath, $appName, $config['email'], $config['databases'], $config['features'], $config['serverVariation'], $config);
-        $this->generateDockerCompose($projectPath, $appName, $config['packageManager'], $config['databases'], $config['features'], $config['serverVariation']);
+        if ($dryRun) {
+            $this->line('  <fg=gray>[K8S]</> Would generate base and overlay manifests in .infrastructure/k8s/');
+        } else {
+            $this->generateK8sManifests($projectPath, $appName, $config['email'], $config['databases'], $config['features'], $config['serverVariation'], $config);
+            $this->generateDockerCompose($projectPath, $appName, $config['packageManager'], $config['databases'], $config['features'], $config['serverVariation']);
+        }
 
-        // 4. Sync .env
+        // 5. Sync .env
         $dbEngines = collect($config['databases'])->map(fn ($db) => DatabaseEngine::from($db));
-        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::SQLITE;
+        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::MYSQL;
 
-        $this->syncEnvFile($projectPath, [
+        $envChanges = [
             'APP_URL' => "http://{$appName}.dev.test",
             'DB_CONNECTION' => $primaryDb->dbConnection(),
             'DB_HOST' => $primaryDb->dbHost(),
             'DB_PORT' => $primaryDb->dbPort(),
             'DB_USERNAME' => $primaryDb->dbUsername(),
             'DB_PASSWORD' => 'secretpassword',
-            'DB_DATABASE' => $primaryDb === DatabaseEngine::SQLITE ? '/var/www/html/database/database.sqlite' : 'laravel',
+            'DB_DATABASE' => 'laravel',
             'REDIS_HOST' => $dbEngines->contains(DatabaseEngine::REDIS) ? 'redis' : '127.0.0.1',
-        ]);
+        ];
 
-        // 5. Install features
+        if ($dryRun) {
+            $this->line('  <fg=gray>[.ENV]</> Would sync the following variables:');
+            foreach ($envChanges as $k => $v) {
+                $this->line("         {$k}={$v}");
+            }
+        } else {
+            $this->syncEnvFile($projectPath, $envChanges);
+        }
+
+        // 6. Install features
         if ($installFeatures) {
-            $this->installLaravelFeatures($projectPath, $appName, $config['features'], $config['packageManager'], $config);
+            if ($dryRun) {
+                $this->line('  <fg=gray>[PHP]</> Would install features: '.implode(', ', $config['features']));
+            } else {
+                $this->installLaravelFeatures($projectPath, $appName, $config['features'], $config['packageManager'], $config);
+            }
+        }
+
+        if ($dryRun) {
+            $this->line('');
+            $this->line('  <fg=yellow;options=bold>⚠ No changes have been applied yet.</>');
         }
     }
 }

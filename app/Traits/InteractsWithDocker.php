@@ -28,8 +28,25 @@ trait InteractsWithDocker
      */
     protected function buildImage(string $path, string $appName): void
     {
-        $this->laraKubeInfo("Building local image '{$appName}:local'...");
-        passthru("docker build -t {$appName}:local -f {$path}/Dockerfile.php {$path}");
+        $imageTag = "{$appName}:latest"; // UpCommand standardizes on :latest for k8s
+        $this->laraKubeInfo("Building local image '{$imageTag}'...");
+
+        passthru("docker build -t {$imageTag} -f {$path}/Dockerfile.php {$path}");
+
+        // --- 🛡 K3D IMAGE BRIDGE ---
+        // If k3d cluster exists, import the image so the pods can see it
+        $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
+        if (str_contains($clusters ?? '', 'larakube')) {
+            $this->laraKubeInfo("Importing '{$imageTag}' into k3d cluster...");
+            passthru("k3d image import {$imageTag} -c larakube");
+
+            // Verify the import
+            $this->withSpin('Verifying cluster image availability...', function () use ($imageTag) {
+                $images = shell_exec('k3d image list 2>/dev/null');
+
+                return str_contains($images ?? '', $imageTag);
+            });
+        }
     }
 
     /**

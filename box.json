@@ -5,28 +5,12 @@
         "bootstrap",
         "config",
         "resources",
-        "vendor"
+        "vendor",
+        "database",
+        "routes"
     ],
     "files": [
         "composer.json"
-    ],
-    "finder": [
-        {
-            "name": "*.stub",
-            "in": "resources/stubs"
-        },
-        {
-            "name": "*.pem",
-            "in": "resources/stubs/traefik/dev/certificates"
-        },
-        {
-            "name": "*.svg",
-            "in": "resources"
-        },
-        {
-            "name": "*.md",
-            "in": "resources/ai"
-        }
     ],
     "exclude-composer-files": false,
     "compression": "GZ",

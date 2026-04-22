@@ -3,6 +3,7 @@
 namespace App\Ai\Tools;
 
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Mcp\Response;
 
 class GetCommandHelp extends LaraKubeTool
 {
@@ -23,6 +24,11 @@ class GetCommandHelp extends LaraKubeTool
                 ->description('The command name to get help for (e.g. "new").')
                 ->required(),
         ];
+    }
+
+    public function callTool(array $arguments = []): Response
+    {
+        return $this->runMcp($arguments);
     }
 
     protected function run(array $arguments): string

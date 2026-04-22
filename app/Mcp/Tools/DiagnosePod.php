@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Mcp\Tools;
 
+use App\Ai\Tools\LaraKubeTool;
 use App\Traits\InteractsWithEnvironments;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Tool;
 
-class DiagnosePod extends Tool
+class DiagnosePod extends LaraKubeTool
 {
     use InteractsWithEnvironments;
 
@@ -27,22 +27,32 @@ class DiagnosePod extends Tool
     {
         return [
             'pod_name' => $schema->string()
-                ->description('The name of the pod to diagnose.'),
+                ->description('The name of the pod to diagnose.')
+                ->required(),
             'environment' => $schema->string()
                 ->description('The environment to target. Defaults to local.')
-                ->default('local'),
+                ->default('local')
+                ->required(),
         ];
     }
 
-    public function handle(string $pod_name, string $environment = 'local'): Response
+    /**
+     * MCP Server entry point.
+     */
+    public function callTool(array $arguments = []): Response
     {
+        return $this->runMcp($arguments);
+    }
+
+    protected function run(array $arguments): string
+    {
+        $pod_name = $arguments['pod_name'];
+        $environment = $arguments['environment'] ?? 'local';
         $namespace = $this->getNamespace($environment);
 
         $logs = shell_exec("kubectl logs -n {$namespace} {$pod_name} --tail=100 2>&1");
         $events = shell_exec("kubectl get events -n {$namespace} --field-selector involvedObject.name={$pod_name} --sort-by='.lastTimestamp' 2>&1");
 
-        $diagnosis = "--- LOGS (Last 100 lines) ---\n{$logs}\n\n--- RECENT EVENTS ---\n{$events}";
-
-        return Response::text($diagnosis);
+        return "--- LOGS (Last 100 lines) ---\n{$logs}\n\n--- RECENT EVENTS ---\n{$events}";
     }
 }

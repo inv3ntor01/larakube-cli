@@ -47,16 +47,13 @@ class TunnelCommand extends Command
 
         $selectedKeys = $this->argument('services');
         if (empty($selectedKeys)) {
+            $options = collect($availableServices)->mapWithKeys(fn ($s, $key) => [$key => $s['label']])->all();
+
             $selectedKeys = multiselect(
                 'Which services would you like to tunnel to?',
-                collect($availableServices)->map(fn ($s) => $s['label'])->all(),
+                $options,
                 required: true
             );
-
-            // Map labels back to keys
-            $selectedKeys = collect($selectedKeys)->map(function ($label) use ($availableServices) {
-                return collect($availableServices)->search(fn ($s) => $s['label'] === $label);
-            })->toArray();
         }
 
         $activeTunnels = [];
@@ -124,10 +121,6 @@ class TunnelCommand extends Command
         $runningServices = collect($data['items'] ?? [])->map(fn ($item) => $item['metadata']['name'])->toArray();
 
         foreach (DatabaseEngine::cases() as $engine) {
-            if ($engine === DatabaseEngine::SQLITE) {
-                continue;
-            }
-
             $svcName = $engine->dbHost();
 
             if (in_array($svcName, $runningServices)) {
