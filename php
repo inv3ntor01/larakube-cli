@@ -39,10 +39,8 @@ if ! docker ps --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
         -v "$HOST_HOME":/home/php \
         -v "$DOCKER_SOCK":/var/run/docker.sock \
         -w /app \
-        --user 0:0 \
+        --user "$USER_ID:$GROUP_ID" \
         -e HOME=/home/php \
-        -e USER_ID=$USER_ID \
-        -e GROUP_ID=$GROUP_ID \
         -e COMPOSER_ALLOW_SUPERUSER=1 \
         -e SHOW_WELCOME_MESSAGE=false \
         --entrypoint /bin/sh \
@@ -51,7 +49,7 @@ if ! docker ps --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
 
     # Install tools once (Silently)
     echo "🛠 Installing tools (kubectl, docker) in daemon..."
-    docker exec "$CONTAINER_NAME" /bin/sh -c "
+    docker exec --user 0:0 "$CONTAINER_NAME" /bin/sh -c "
         if ! command -v kubectl > /dev/null; then
             curl -LOs \"https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/$K8S_ARCH/kubectl\"
             chmod +x kubectl && mv kubectl /usr/local/bin/ > /dev/null 2>&1

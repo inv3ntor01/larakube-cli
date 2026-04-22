@@ -34,7 +34,7 @@ run_php() {
 build_phar() {
     echo -e "📦 Building PHAR foundation ${BOLD}[$VERSION]${RESET}..."
     run_php larakube app:build larakube --build-version=$VERSION
-    cp builds/larakube builds/larakube.phar
+    run_php php -r "copy('builds/larakube', 'builds/larakube.phar');"
 }
 
 build_standalone() {
@@ -74,7 +74,7 @@ case $BUILD_TYPE in
         build_standalone mac arm
         
         # Cleanup
-        rm builds/larakube.phar
+        run_php php -r "unlink('builds/larakube.phar');"
         
         echo "✅ All standalone binaries built in builds/standalone/"
         ;;
