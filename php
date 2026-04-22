@@ -60,43 +60,40 @@ if ! docker ps --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
     "
 fi
 
-# If running in GitHub Actions, skip Docker and run directly on host for speed and parity
-if [ "$GITHUB_ACTIONS" = "true" ]; then
-    if [ "$1" = "php" ]; then
-        shift
-        php "$@"
-    elif [ "$1" = "composer" ] || [ "$1" = "docker" ] || [ "$1" = "kubectl" ]; then
-        "$@"
-    else
-        # If it's a file path and executable, run it directly (like vendor/bin/phpacker)
-        if [ -x "$1" ]; then
-            "$@"
-        else
-            php "$@"
-        fi
-    fi
-    exit $?
-fi
-
 # Determine if we should run interactively
 INTERACTIVE="-i"
 [ -t 0 ] && INTERACTIVE="-it"
 
-# Execute the command
-docker exec $INTERACTIVE "$CONTAINER_NAME" /bin/sh -c "
-    # Execution logic
-    # If the first arg is php, shift and run php with the rest
-    if [ \"\$1\" = \"php\" ]; then
-        shift
-        php \"\$@\"
-    # If it's a native tool, run it directly
-    elif [ \"\$1\" = \"docker\" ] || [ \"\$1\" = \"kubectl\" ] || [ \"\$1\" = \"composer\" ]; then
-        \"\$@\"
-    # If it's an executable path, run it directly (like vendor/bin/phpacker)
-    elif [ -x \"\$1\" ]; then
-        \"\$@\"
-    # Otherwise, assume the user wants to run a PHP file in the current dir (like larakube)
+# Optimized Execution Logic (CI vs Local)
+execute() {
+    local cmd_args=("$@")
+    local first_cmd=""
+    
+    # Find the actual command/file to execute (skip PHP flags)
+    for arg in "$@"; do
+        if [[ ! "$arg" =~ ^- ]]; then
+            first_cmd="$arg"
+            break
+        fi
+    done
+
+    # If it's a known native tool or an executable file, run it directly
+    if [[ "$first_cmd" == "composer" || "$first_cmd" == "docker" || "$first_cmd" == "kubectl" ]] || [[ -x "$first_cmd" ]]; then
+        "$@"
     else
-        php \"\$@\"
+        # Otherwise, run via PHP
+        php "$@"
     fi
+}
+
+# If running in GitHub Actions, skip Docker and run directly on host
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+    execute "$@"
+    exit $?
+fi
+
+# Local development: run inside Docker
+docker exec $INTERACTIVE "$CONTAINER_NAME" /bin/sh -c "
+    $(declare -f execute)
+    execute \"\$@\"
 " -- "$@"
