@@ -11,7 +11,42 @@ HOST_HOME="$HOME"
 DOCKER_SOCK="/var/run/docker.sock"
 CONTAINER_NAME="larakube-php-cli"
 
-# Detect Architecture for tool installation
+# Optimized Execution Logic (CI vs Local)
+execute() {
+    local php_flags=()
+    local cmd_args=()
+    local command_found=false
+
+    # Separate PHP flags from the actual command
+    for arg in "$@"; do
+        if [ "$command_found" = true ]; then
+            cmd_args+=("$arg")
+        elif [[ "$arg" =~ ^- ]]; then
+            php_flags+=("$arg")
+        else
+            cmd_args+=("$arg")
+            command_found=true
+        fi
+    done
+
+    local first_cmd="${cmd_args[0]}"
+
+    # If it's a known native tool or an executable file, run it directly
+    if [[ "$first_cmd" == "composer" || "$first_cmd" == "docker" || "$first_cmd" == "kubectl" ]] || [[ -x "$first_cmd" ]]; then
+        "${cmd_args[@]}"
+    else
+        # Otherwise, run via PHP with flags
+        php "${php_flags[@]}" "${cmd_args[@]}"
+    fi
+}
+
+# ⚡️ CI/CD SHORT-CIRCUIT: If running in GitHub Actions, skip all Docker logic
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+    execute "$@"
+    exit $?
+fi
+
+# Detect Architecture for tool installation (Local only)
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && K8S_ARCH="arm64" || K8S_ARCH="amd64"
 [ "$ARCH" = "arm64" ] && DOCKER_ARCH="aarch64" || DOCKER_ARCH="x86_64"
@@ -24,7 +59,7 @@ if [ "$1" = "stop" ]; then
     exit 0
 fi
 
-# Ensure the daemon is running
+# Ensure the daemon is running (Local only)
 if ! docker ps --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
     echo "🚀 Starting LaraKube PHP CLI Daemon..."
     
@@ -63,41 +98,6 @@ fi
 # Determine if we should run interactively
 INTERACTIVE="-i"
 [ -t 0 ] && INTERACTIVE="-it"
-
-# Optimized Execution Logic (CI vs Local)
-execute() {
-    local php_flags=()
-    local cmd_args=()
-    local command_found=false
-
-    # Separate PHP flags from the actual command
-    for arg in "$@"; do
-        if [ "$command_found" = true ]; then
-            cmd_args+=("$arg")
-        elif [[ "$arg" =~ ^- ]]; then
-            php_flags+=("$arg")
-        else
-            cmd_args+=("$arg")
-            command_found=true
-        fi
-    done
-
-    local first_cmd="${cmd_args[0]}"
-
-    # If it's a known native tool or an executable file, run it directly
-    if [[ "$first_cmd" == "composer" || "$first_cmd" == "docker" || "$first_cmd" == "kubectl" ]] || [[ -x "$first_cmd" ]]; then
-        "${cmd_args[@]}"
-    else
-        # Otherwise, run via PHP with flags
-        php "${php_flags[@]}" "${cmd_args[@]}"
-    fi
-}
-
-# If running in GitHub Actions, skip Docker and run directly on host
-if [ "$GITHUB_ACTIONS" = "true" ]; then
-    execute "$@"
-    exit $?
-fi
 
 # Local development: run inside Docker
 docker exec $INTERACTIVE "$CONTAINER_NAME" /bin/sh -c "
