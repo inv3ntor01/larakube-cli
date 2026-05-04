@@ -1,9 +1,0 @@
-  mongodb:
-    image: mongo:8.0
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-
-volumes:
-  mongodb_data:

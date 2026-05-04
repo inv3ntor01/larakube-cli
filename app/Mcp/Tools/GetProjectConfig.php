@@ -43,12 +43,12 @@ class GetProjectConfig extends LaraKubeTool
 
     protected function run(array $arguments): string
     {
-        $config = $this->getProjectConfig(getcwd());
+        $config = $this->getProjectConfig();
 
-        if (empty($config)) {
+        if ($this->isLaraKubeProject(false)) {
             return 'No .larakube.json found in the current directory.';
         }
 
-        return json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        return $config?->toString() ?? '';
     }
 }

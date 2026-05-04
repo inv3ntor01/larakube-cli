@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: {{ $namespace }}
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - node-deployment.yaml
+  - mailpit.yaml
+
+patches:
+  - path: deployment-patch.yaml
+  - path: ingress-patch.yaml

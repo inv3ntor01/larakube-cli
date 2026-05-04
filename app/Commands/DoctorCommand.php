@@ -6,6 +6,7 @@ use App\Ai\Agents\ClusterDoctorAgent;
 use App\Traits\CheckPrerequisites;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Exception;
 use Laravel\Ai\Streaming\Events\TextDelta;
@@ -16,7 +17,7 @@ use function Laravel\Prompts\info;
 
 class DoctorCommand extends Command
 {
-    use CheckPrerequisites, InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
+    use CheckPrerequisites, InteractsWithEnvironments, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -79,7 +80,7 @@ class DoctorCommand extends Command
         $issues = [];
 
         // 1. Check for .larakube.json
-        if (! file_exists(getcwd().'/.larakube.json')) {
+        if (! file_exists(getcwd().'/'.ConfigData::CONFIG_FILE)) {
             $issues[] = [
                 'title' => 'Missing Configuration',
                 'description' => 'No .larakube.json file found in the current directory.',

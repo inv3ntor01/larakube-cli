@@ -2,14 +2,17 @@
 
 namespace App\Commands;
 
+use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use Illuminate\Support\Str;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
+use function Laravel\Prompts\text;
 
 class HealCommand extends Command
 {
@@ -37,33 +40,60 @@ class HealCommand extends Command
         $this->renderHeader();
 
         $projectPath = getcwd();
-        $config = $this->getProjectConfig($projectPath);
+        $name = Str::slug(basename($projectPath));
+        $config = null;
 
-        if (empty($config)) {
+        if (! $this->isLaraKubeProject(false)) {
             $this->laraKubeError('No .larakube.json found! LaraKube cannot heal a project without its DNA.');
 
-            if (confirm('Would you like to try restoring the blueprint from the cluster?', true)) {
-                $config = $this->restoreBlueprintFromCluster();
-                if (! $config) {
-                    return 1;
-                }
+            if (confirm('Would you like to try restoring the blueprint from the cluster?') && $config = ConfigData::restoreFromCluster(appName: $name)) {
+                $this->laraKubeInfo('✅ Successfully restored blueprint from cluster metadata.');
+                $config->saveToFile($projectPath);
             } else {
+                $this->laraKubeError('Failed to find blueprint backup in the cluster.');
+
                 return 1;
             }
         }
 
-        $this->laraKubeInfo('Healing architectural masterpiece: '.basename($projectPath));
+        if (! $config) {
+            $config = $this->getProjectConfig($projectPath);
+        }
+
+        if (! $config->getPath() || $config->getPath() !== $projectPath) {
+            $config->setPath($projectPath);
+        }
+
+        if (! $config->getName() || $config->getName() !== $name) {
+            $config->setName($name);
+        }
+
+        $appName = $config->getName();
+        $this->laraKubeInfo("Healing architectural masterpiece: {$appName}...");
 
         if (! $this->option('force')) {
-            if (! confirm('This will regenerate all manifests in .infrastructure/k8s/. Proceed?', true)) {
-                $this->laraKubeInfo('Heal cancelled.');
+            $this->laraKubeError('WARNING: This will OVERWRITE the following files:');
+            $this->line('  - .infrastructure/k8s/ (All manifests)');
+            $this->line('  - .infrastructure/traefik/certificates/');
+            $this->line('  - Dockerfile.php');
+            $this->line('  - Dockerfile.node');
+            $this->line('  - .env (Syncs architectural keys)');
+            $this->newLine();
+
+            $confirm = text(
+                label: "To confirm architectural regeneration, please type the project name '$appName':",
+                required: true
+            );
+
+            if ($confirm !== $appName) {
+                $this->laraKubeInfo('Confirmation failed. Heal cancelled.');
 
                 return 0;
             }
         }
 
-        $this->withSpin('Regenerating infrastructure manifests...', function () use ($projectPath, $config) {
-            $this->orchestrateProjectScaffolding($projectPath, basename($projectPath), $config, false, false);
+        $this->withSpin('Regenerating infrastructure manifests...', function () use ($config) {
+            $this->orchestrateProjectScaffolding($config, false, false);
             $this->logActivity('Project healed and manifests regenerated');
 
             return true;
@@ -73,31 +103,5 @@ class HealCommand extends Command
         info('Next steps: larakube up');
 
         return 0;
-    }
-
-    protected function restoreBlueprintFromCluster(): ?array
-    {
-        $this->laraKubeInfo('Attempting to restore blueprint from cluster...');
-
-        $appName = basename(getcwd());
-        // Check local first, then production
-        foreach (['local', 'production'] as $env) {
-            $namespace = "{$appName}-{$env}";
-            $json = shell_exec("kubectl get secret larakube-blueprint -n {$namespace} -o jsonpath='{.data.\.larakube\.json}' 2>/dev/null");
-
-            if ($json) {
-                $config = json_decode(base64_decode($json), true);
-                if ($config) {
-                    $this->laraKubeInfo("✅ Successfully restored blueprint from '{$namespace}' namespace.");
-                    file_put_contents(getcwd().'/.larakube.json', json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-
-                    return $config;
-                }
-            }
-        }
-
-        $this->laraKubeError('Failed to find blueprint backup in the cluster.');
-
-        return null;
     }
 }

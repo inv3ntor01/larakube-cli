@@ -24,7 +24,7 @@ class NpmCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): int
     {
         $npmCommand = implode(' ', $this->argument('commands'));
 

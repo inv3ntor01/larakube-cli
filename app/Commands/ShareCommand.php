@@ -3,12 +3,13 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class ShareCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -27,9 +28,7 @@ class ShareCommand extends Command
     {
         $this->renderHeader();
 
-        if (! file_exists(getcwd().'/.larakube.json')) {
-            $this->laraKubeError('Not a LaraKube project. Please run larakube init first.');
-
+        if (! $this->ensureIsProject()) {
             return 1;
         }
 
@@ -49,7 +48,7 @@ class ShareCommand extends Command
         $this->laraKubeInfo('Initializing Cloudflare Tunnel...');
 
         // 1. Prepare Manifest
-        $stub = file_get_contents(base_path('resources/stubs/blocks/cloudflared/k8s-deployment.yaml.stub'));
+        $stub = file_get_contents(resource_path('views/k8s/cloudflared/deployment.blade.php'));
 
         // 2. Apply Manifest
         $this->withSpin('Deploying tunnel pod...', function () use ($namespace, $stub) {

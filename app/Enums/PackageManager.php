@@ -2,12 +2,30 @@
 
 namespace App\Enums;
 
-enum PackageManager: string
+use App\Contracts\HasCommandOptions;
+use App\Contracts\HasLabel;
+use App\Contracts\HasSelectOptions;
+use App\Traits\ProvidesCommandOptions;
+use App\Traits\ProvidesSelectOptions;
+
+enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOptions
 {
+    use ProvidesCommandOptions, ProvidesSelectOptions;
+
     case NPM = 'npm';
     case PNPM = 'pnpm';
     case BUN = 'bun';
     case YARN = 'yarn';
+
+    public function getLabel(): ?string
+    {
+        return match ($this) {
+            self::NPM => 'NPM',
+            self::PNPM => 'PNPM',
+            self::BUN => 'Bun',
+            self::YARN => 'Yarn',
+        };
+    }
 
     public function installCommand(): string
     {
@@ -38,12 +56,20 @@ enum PackageManager: string
     {
         return match ($this) {
             self::YARN, self::PNPM => "{$this->value} dev",
+            self::NPM => 'npm run dev --',
             default => "{$this->value} run dev",
         };
     }
 
-    public function laravelInstallFlag(): string
+    public function getReadinessProbeCommand(): string
     {
-        return "--{$this->value}";
+        $separator = ($this === self::NPM) ? '' : ' --';
+
+        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().' --host"]';
+    }
+
+    public function getOptionFlag(): string
+    {
+        return "--$this->value";
     }
 }

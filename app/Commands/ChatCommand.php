@@ -3,7 +3,10 @@
 namespace App\Commands;
 
 use App\Ai\Agents\LaraKubeAssistantAgent;
+use App\Enums\AiProvider;
 use App\Models\User;
+use App\Traits\InteractsWithDynamicOptions;
+use App\Traits\InteractsWithGlobalConfig;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use Exception;
@@ -17,14 +20,23 @@ use function Laravel\Prompts\text;
 
 class ChatCommand extends Command
 {
-    use InteractsWithInternalDatabase, LaraKubeOutput;
+    use InteractsWithDynamicOptions, InteractsWithGlobalConfig, InteractsWithInternalDatabase, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'chat {query? : A single-shot natural language query} 
+    protected $signature = 'chat {query? : A single-shot natural language query}
                            {--query= : A single-shot natural language query}
                            {--new : Start a fresh conversation for this project}';
+
+    /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addAiProviderOptions();
+    }
 
     /**
      * The console command description.
@@ -41,7 +53,16 @@ class ChatCommand extends Command
         $this->renderHeader();
         $this->ensureDatabaseIsReady();
 
-        $provider = $this->getAiProvider();
+        $provider = $this->getAiProvider()->value;
+
+        // Check if a specific provider flag was passed
+        foreach (AiProvider::cases() as $case) {
+            if ($this->option($case->value)) {
+                $provider = $case->value;
+                break;
+            }
+        }
+
         $apiKey = $this->getAiApiKey($provider);
 
         if (! $apiKey) {
@@ -54,8 +75,8 @@ class ChatCommand extends Command
         config(['ai.default' => $provider]);
         config(["ai.providers.{$provider}.key" => $apiKey]);
 
-        $email = $this->getEmail() ?? 'guest@larakube.dev.test';
-        $user = User::firstOrCreate(['email' => $email], ['name' => 'Artisan']);
+        $email = $this->getEmail() ?? $this->getDefaultEmail();
+        $user = User::query()->firstOrCreate(['email' => $email], ['name' => 'Artisan']);
 
         // 2. Find or Create a Conversation scoped strictly to this directory (Email-Agnostic)
         $title = 'CWD: '.getcwd();

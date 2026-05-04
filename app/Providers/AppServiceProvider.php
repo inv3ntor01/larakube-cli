@@ -19,6 +19,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Ensure view cache directory exists
+        $viewCachePath = config('view.compiled');
+        if ($viewCachePath && ! is_dir($viewCachePath)) {
+            @mkdir($viewCachePath, 0755, true);
+        }
+
         // Hide/Remove commands from binary for clean DX
         if (Phar::running() !== '') {
             Artisan::starting(function ($artisan) {

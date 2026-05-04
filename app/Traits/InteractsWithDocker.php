@@ -2,43 +2,50 @@
 
 namespace App\Traits;
 
+use App\Data\ConfigData;
+
 trait InteractsWithDocker
 {
+    use InteractsWithProjectConfig;
+
     /**
      * Get the base Docker run command for a specific type (php or node).
      */
     protected function getDockerCommand(string $path, string $type = 'php'): string
     {
         if ($type === 'node') {
-            return "docker run --rm --init -v {$path}:/usr/src/app -w /usr/src/app --user root -e npm_config_cache=/tmp/.npm node:22-alpine ";
+            return "docker run --rm --init -v $path:/usr/src/app -w /usr/src/app --user root -e npm_config_cache=/tmp/.npm node:22-alpine ";
         }
 
         $appName = basename($path);
-        $localImage = "{$appName}:local";
+        $localImage = "$appName:latest";
 
         // Check if we have a local image, otherwise fallback to base
         $imageExists = shell_exec("docker images -q {$localImage} 2>/dev/null");
-        $image = $imageExists ? $localImage : $this->getProjectPhpImage($path);
+        $image = $imageExists ? $localImage : $this->getProjectConfig($path)->getPhpImage(true);
 
-        return "docker run --rm --init -v {$path}:/var/www/html -w /var/www/html --user root -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 {$image} ";
+        return "docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1 {$image} ";
     }
 
     /**
      * Build the local project image.
      */
-    protected function buildImage(string $path, string $appName): void
+    protected function buildImage(ConfigData $config): void
     {
-        $imageTag = "{$appName}:latest"; // UpCommand standardizes on :latest for k8s
-        $this->laraKubeInfo("Building local image '{$imageTag}'...");
+        $appName = $config->getName();
+        $path = $config->getPath();
 
-        passthru("docker build -t {$imageTag} -f {$path}/Dockerfile.php {$path}");
+        $imageTag = "$appName:latest";
+        $this->laraKubeInfo("Building local image '$imageTag'...");
+
+        passthru("docker build -t $imageTag -f $path/Dockerfile.php $path");
 
         // --- 🛡 K3D IMAGE BRIDGE ---
         // If k3d cluster exists, import the image so the pods can see it
         $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
         if (str_contains($clusters ?? '', 'larakube')) {
-            $this->laraKubeInfo("Importing '{$imageTag}' into k3d cluster...");
-            passthru("k3d image import {$imageTag} -c larakube");
+            $this->laraKubeInfo("Importing '$imageTag' into k3d cluster...");
+            passthru("k3d image import $imageTag -c larakube");
 
             // Verify the import
             $this->withSpin('Verifying cluster image availability...', function () use ($imageTag) {
@@ -84,7 +91,7 @@ trait InteractsWithDocker
     protected function runInContainer(string $command, string $path, string $type = 'php'): void
     {
         $base = $this->getDockerCommand($path, $type);
-        passthru($base."sh -c '{$command}'");
+        passthru($base."sh -c '$command'");
     }
 
     /**
@@ -95,7 +102,15 @@ trait InteractsWithDocker
         $uid = function_exists('posix_getuid') ? posix_getuid() : 1000;
         $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
 
-        $image = $this->getProjectPhpImage($path);
-        passthru("docker run --rm --init -v {$path}:/var/www/html -w /var/www/html --user root {$image} chown -R {$uid}:{$gid} .");
+        $appName = basename($path);
+        $image = "$appName:latest";
+
+        // Fallback if image doesn't exist
+        $imageExists = shell_exec("docker images -q {$image} 2>/dev/null");
+        if (! $imageExists) {
+            $image = $this->getProjectConfig($path)->getPhpImage(true);
+        }
+
+        passthru("docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root $image chown -R $uid:$gid .");
     }
 }

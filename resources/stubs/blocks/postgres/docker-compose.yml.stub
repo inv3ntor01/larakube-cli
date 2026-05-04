@@ -1,8 +1,0 @@
-  postgres:
-    image: postgres:17.9
-    environment:
-      - POSTGRES_PASSWORD=secretpassword
-      - POSTGRES_DB=laravel
-      - POSTGRES_USER=postgres
-    networks:
-      - laravel

@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\State;
+use Illuminate\Support\Carbon;
 
 use function Termwind\render;
 
@@ -74,21 +75,19 @@ trait LaraKubeOutput
     protected function renderStarPrompt(): void
     {
         $config = $this->getGlobalConfig();
-        $lastShown = $config['last_starred_prompt_at'] ?? 0;
-        $oneWeekAgo = time() - (7 * 24 * 60 * 60);
 
-        if ($lastShown > $oneWeekAgo) {
-            return;
+        $lastShown = $config->getLastStarPromptAt();
+
+        if (! $lastShown || $lastShown->diffInWeeks() > 1) {
+            $this->newLine();
+            $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube CLI?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
+            $this->line('  <fg=gray>● CLI:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-cli</>');
+            $this->line('  <fg=gray>● Docs:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-docs</>');
+            $this->newLine();
+
+            $config->setLastStarPromptAt(Carbon::now());
+            $config->save();
         }
-
-        $this->line('');
-        $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube CLI?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
-        $this->line('  <fg=gray>● CLI:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-cli</>');
-        $this->line('  <fg=gray>● Docs:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-docs</>');
-        $this->line('');
-
-        $config['last_starred_prompt_at'] = time();
-        $this->setGlobalConfig($config);
     }
 
     /**

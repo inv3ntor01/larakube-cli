@@ -6,8 +6,11 @@ use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
 use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
+use Illuminate\Support\Facades\File;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
@@ -15,18 +18,16 @@ use function Laravel\Prompts\info;
 
 class UpCommand extends Command
 {
-    use InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithTraefik, LaraKubeOutput;
+    use InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'up {environment? : The environment to deploy (local or production)} 
-                            {--dashboard : Open k9s after deployment} 
+    protected $signature = 'up {environment? : The environment to deploy (local or production)}
+                            {--dashboard : Open k9s after deployment}
                             {--no-dashboard : Disable the dashboard prompt}
-                            {--migrate : Run migrations without prompting} 
-                            {--no-migrate : Skip migrations without prompting}
                             {--dry-run : Validate manifests without deploying}
                             {--test : Run smoke test without prompting}
                             {--no-test : Skip smoke test without prompting}';
@@ -45,15 +46,19 @@ class UpCommand extends Command
     {
         $this->renderHeader();
 
+        if (! $this->isLaraKubeProject()) {
+            return 1;
+        }
+
         $environment = $this->argument('environment') ?? 'local';
 
         // 1. Safe Dry-Run (Validation Mode)
         if ($this->option('dry-run')) {
-            $this->laraKubeInfo("Performing Architectural Validation for '{$environment}'...");
-            $path = ".infrastructure/k8s/overlays/{$environment}";
+            $this->laraKubeInfo("Performing Architectural Validation for '$environment'...");
+            $path = ".infrastructure/k8s/overlays/$environment";
 
             if (! is_dir(getcwd().'/'.$path)) {
-                $this->laraKubeError("Environment '{$environment}' configuration not found!");
+                $this->laraKubeError("Environment '$environment' configuration not found!");
 
                 return 1;
             }
@@ -91,9 +96,11 @@ class UpCommand extends Command
 
         $this->ensureHostsAreSet();
 
-        $appName = basename(getcwd());
+        $projectPath = getcwd();
+        $config = $this->getProjectConfig($projectPath);
+        $appName = $config->getName() ?? basename($projectPath);
         $path = ".infrastructure/k8s/overlays/{$environment}";
-        $namespace = $this->getNamespace($environment);
+        $namespace = $this->getNamespace($environment, $appName);
 
         if (! is_dir(getcwd().'/'.$path)) {
             $this->laraKubeError("Environment '{$environment}' configuration not found!");
@@ -115,42 +122,35 @@ class UpCommand extends Command
                 }
             } else {
                 // Ensure Traefik infra (SSL/Config) is up-to-date
-                $this->withSpin('Syncing Traefik SSL configuration...', function () {
-                    $this->createTraefikInfrastructure();
-
-                    return true;
-                });
+                $this->setupTraefik();
             }
         }
 
         // 1. Build image if local
         if ($environment === 'local') {
-            $this->laraKubeInfo("Building local Docker image '{$appName}:latest'...");
-            $this->buildImage(getcwd(), $appName);
+            $this->laraKubeInfo("Building local Docker image '$appName:latest'...");
+            $this->buildImage($config);
         }
 
         // 2. Ensure Namespace exists
-        $this->withSpin("Ensuring namespace '{$namespace}' exists...", function () use ($namespace) {
-            exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
+        $this->withSpin("Ensuring namespace '$namespace' exists...", function () use ($namespace) {
+            exec("kubectl create namespace $namespace --dry-run=client -o yaml | kubectl apply -f -");
         });
 
         // 3. Handle .env injection
-        $envFile = $environment === 'local' ? '.env' : ".env.{$environment}";
+        $envFile = $environment === 'local' ? '.env' : ".env.$environment";
         $envPath = getcwd().'/'.$envFile;
 
         if (file_exists($envPath)) {
-            $this->withSpin('Injecting configuration and blueprint...', function () use ($namespace, $envPath) {
-                exec("kubectl create configmap laravel-config -n {$namespace} --from-env-file={$envPath} --dry-run=client -o yaml | kubectl apply -f -");
-                exec("kubectl create secret generic laravel-secrets -n {$namespace} --from-env-file={$envPath} --dry-run=client -o yaml | kubectl apply -f -");
+            $this->withSpin('Injecting configuration and blueprint...', function () use ($namespace, $envPath, $projectPath, $config, $environment) {
+                exec("kubectl create configmap laravel-config -n $namespace --from-env-file=$envPath --dry-run=client -o yaml | kubectl apply -f -");
+                exec("kubectl create secret generic laravel-secrets -n $namespace --from-env-file=$envPath --dry-run=client -o yaml | kubectl apply -f -");
 
-                // Store the blueprint for resilience
-                $blueprintPath = getcwd().'/.larakube.json';
-                if (file_exists($blueprintPath)) {
-                    exec("kubectl create secret generic larakube-blueprint -n {$namespace} --from-file=.larakube.json={$blueprintPath} --dry-run=client -o yaml | kubectl apply -f -");
-                }
+                // Persist locally and sync blueprint to cluster for resilience
+                $this->saveProjectConfig($projectPath, $config, $environment);
             });
         } else {
-            $this->laraKubeError("Environment file {$envFile} not found! Deployment may fail due to missing configuration.");
+            $this->laraKubeError("Environment file $envFile not found! Deployment may fail due to missing configuration.");
         }
 
         // 4. Apply manifests
@@ -158,50 +158,25 @@ class UpCommand extends Command
 
         // Scale down to release file locks (Safe transition)
         $this->withSpin('Preparing cluster for architectural update...', function () use ($namespace) {
-            exec("kubectl scale deployment --all --replicas=0 -n {$namespace} 2>/dev/null");
+            exec("kubectl scale deployment --all --replicas=0 -n $namespace 2>/dev/null");
         });
 
-        passthru("kubectl apply -k {$path}");
+        passthru("kubectl apply -k $path");
 
         // 5. Restart deployments to pick up new ConfigMap/Secret changes
         $this->laraKubeInfo('Restarting deployments to apply potential configuration changes...');
-        passthru("kubectl rollout restart deployment -n {$namespace}");
+        passthru("kubectl rollout restart deployment -n $namespace");
 
-        // 6. Wait for pods to be ready
-        $this->laraKubeInfo('Waiting for infrastructure to be ready...');
-        $timeout = '120s';
-
-        // Detect databases from manifests to ensure wait order even if config is missing
-        $detectedDbs = $this->getDatabasesFromManifests();
-
-        foreach ($detectedDbs as $db) {
-            $this->laraKubeInfo("  ● Waiting for {$db['name']}...");
-            passthru("kubectl wait --for=condition=ready pod -l app={$db['label']} -n {$namespace} --timeout={$timeout}");
+        // 6. Proactive HTTPS Trust Check
+        if ($environment === 'local' && str_starts_with($config->getAppUrl(), 'https://') && ! $this->isSslTrusted()) {
+            $this->newLine();
+            $this->warn(' 🔒 This project is configured for HTTPS, but your system does not trust the LaraKube Local CA yet.');
+            if (confirm('Would you like us to install it now for you? (Requires sudo/admin)', true)) {
+                $this->call('trust');
+            }
         }
 
-        // Wait for web pod LAST
-        $this->laraKubeInfo('  ● Waiting for Web application...');
-        passthru("kubectl wait --for=condition=ready pod -l app=laravel-web -n {$namespace} --timeout={$timeout}");
-
-        // 7. Handle manual migration override
-        if ($this->option('migrate')) {
-            $this->laraKubeInfo('Executing manual database migration...');
-            $this->call('exec', [
-                'commands' => ['php artisan migrate --force'],
-                '--environment' => $environment,
-            ]);
-        } else {
-            $this->laraKubeInfo('Database state is managed by LaraKube Automations.');
-        }
-
-        // 8. Run smoke test
-        $runTest = ($environment === 'local' && $this->option('test')) || ($environment === 'local' && ! $this->option('no-test') && confirm('Would you like to perform a smoke test to check accessibility?', true));
-        if ($runTest) {
-            $this->laraKubeInfo('Running connectivity smoke test...');
-            $this->call('test', ['environment' => $environment]);
-        }
-
-        // 9. Dashboard
+        // 7. Dashboard
         $openDashboard = $this->option('dashboard') || (! $this->option('no-dashboard') && confirm('Would you like to open the dashboard to monitor the deployment?'));
         if ($openDashboard) {
             $this->call('dashboard', ['environment' => $environment]);
@@ -210,29 +185,5 @@ class UpCommand extends Command
         $this->renderStarPrompt();
 
         return 0;
-    }
-
-    protected function getDatabasesFromManifests(): array
-    {
-        $dbs = [];
-        $basePath = getcwd().'/.infrastructure/k8s/base';
-
-        if (! is_dir($basePath)) {
-            return [];
-        }
-
-        $mappings = [
-            'postgres-deployment.yaml' => ['name' => 'PostgreSQL', 'label' => 'postgres'],
-            'mysql-deployment.yaml' => ['name' => 'MySQL',      'label' => 'mysql'],
-            'redis-deployment.yaml' => ['name' => 'Redis',      'label' => 'redis'],
-        ];
-
-        foreach ($mappings as $file => $info) {
-            if (file_exists("{$basePath}/{$file}")) {
-                $dbs[] = $info;
-            }
-        }
-
-        return $dbs;
     }
 }

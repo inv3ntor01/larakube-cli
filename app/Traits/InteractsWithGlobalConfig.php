@@ -2,36 +2,14 @@
 
 namespace App\Traits;
 
+use App\Data\GlobalConfigData;
+use App\Enums\AiProvider;
+
 trait InteractsWithGlobalConfig
 {
-    protected function getGlobalConfigPath(): string
+    protected function getGlobalConfig(): GlobalConfigData
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-
-        return $home.'/.larakube/config.json';
-    }
-
-    protected function getGlobalConfig(): array
-    {
-        $path = $this->getGlobalConfigPath();
-        if (file_exists($path)) {
-            return json_decode(file_get_contents($path), true) ?? [];
-        }
-
-        return [];
-    }
-
-    protected function setGlobalConfig(array $config): void
-    {
-        $path = $this->getGlobalConfigPath();
-        $dir = dirname($path);
-
-        if (! is_dir($dir)) {
-            @mkdir($dir, 0700, true);
-        }
-
-        file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT));
-        @chmod($path, 0600); // Secure the file
+        return GlobalConfigData::load();
     }
 
     protected function getGhConfigPath(): string
@@ -59,42 +37,49 @@ trait InteractsWithGlobalConfig
 
     protected function getEmail(): ?string
     {
-        return $this->getGlobalConfig()['email'] ?? null;
+        return $this->getGlobalConfig()->getEmail();
+    }
+
+    protected function getDefaultEmail(): string
+    {
+        return 'example@email.com';
     }
 
     protected function setEmail(string $email): void
     {
         $config = $this->getGlobalConfig();
-        $config['email'] = $email;
-        $this->setGlobalConfig($config);
+        $config->setEmail($email);
+        $config->save();
     }
 
-    protected function getAiProvider(): string
+    protected function getAiProvider(): AiProvider
     {
-        return $this->getGlobalConfig()['ai_provider'] ?? 'gemini';
+        return $this->getGlobalConfig()->getAiProvider();
     }
 
-    protected function setAiProvider(string $provider): void
+    protected function setAiProvider(AiProvider|string $provider): void
     {
         $config = $this->getGlobalConfig();
-        $config['ai_provider'] = $provider;
-        $this->setGlobalConfig($config);
+        $config->setAiProvider($provider);
+        $config->save();
     }
 
-    protected function getAiApiKey(?string $provider = null): ?string
+    protected function getAiApiKey(AiProvider|string|null $provider = null): ?string
     {
-        $provider = $provider ?? $this->getAiProvider();
         $config = $this->getGlobalConfig();
+        $provider = $provider ?? $config->getAiProvider();
 
-        return $config['ai_keys'][$provider] ?? env(strtoupper($provider).'_API_KEY');
+        $providerName = $provider instanceof AiProvider ? $provider->value : $provider;
+
+        return $config->getAiApiKey($provider) ?? env(strtoupper($providerName).'_API_KEY');
     }
 
-    protected function setAiApiKey(string $key, ?string $provider = null): void
+    protected function setAiApiKey(string $key, AiProvider|string|null $provider = null): void
     {
-        $provider = $provider ?? $this->getAiProvider();
         $config = $this->getGlobalConfig();
-        $config['ai_keys'][$provider] = $key;
-        $this->setGlobalConfig($config);
+        $provider = $provider ?? $config->getAiProvider();
+        $config->setAiApiKey($provider, $key);
+        $config->save();
     }
 
     protected function checkCaTrust(): bool

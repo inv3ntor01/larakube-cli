@@ -2,6 +2,7 @@
 
 namespace App\Commands;
 
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -10,7 +11,7 @@ use function Laravel\Prompts\warning;
 
 class PhpExtensionCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -29,16 +30,14 @@ class PhpExtensionCommand extends Command
     {
         $this->renderHeader();
 
+        if (! $this->ensureIsProject()) {
+            return 1;
+        }
+
         $extension = strtolower($this->argument('extension'));
         $projectPath = getcwd();
         $configPath = $projectPath.'/.larakube.json';
         $dockerfilePath = $projectPath.'/Dockerfile.php';
-
-        if (! file_exists($configPath)) {
-            $this->laraKubeError('No .larakube.json found. Are you in the root of a LaraKube project?');
-
-            return 1;
-        }
 
         // 1. Update .larakube.json
         $config = json_decode(file_get_contents($configPath), true);

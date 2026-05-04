@@ -2,21 +2,25 @@
 
 namespace App\Commands;
 
-use App\Actions\Contracts\FeatureAction;
-use App\Actions\ObjectStorage\GarageAction;
-use App\Actions\ObjectStorage\MinioAction;
-use App\Actions\ObjectStorage\SeaweedFsAction;
+use App\Contracts\HasHiddenComponents;
+use App\Contracts\HasLifecycleHooks;
+use App\Data\ConfigData;
 use App\Enums\Blueprint;
-use App\Enums\DatabaseEngine;
+use App\Enums\DatabaseDriver;
+use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
-use App\Enums\ObjectStorage;
+use App\Enums\ScoutDriver;
+use App\Enums\StorageDriver;
 use App\Traits\CheckPrerequisites;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithDocker;
+use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use Illuminate\Support\Str;
 use LaravelZero\Framework\Commands\Command;
+use Random\RandomException;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
@@ -24,7 +28,7 @@ use function Laravel\Prompts\select;
 
 class AddCommand extends Command
 {
-    use CheckPrerequisites, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -32,18 +36,6 @@ class AddCommand extends Command
      * @var string
      */
     protected $signature = 'add {items?* : The database(s), feature(s), blueprint, or storage to add}
-                            {--mysql : Add MySQL database}
-                            {--postgres : Add PostgreSQL database}
-                            {--mariadb : Add MariaDB database}
-                            {--mongodb : Add MongoDB database}
-                            {--redis : Add Redis cache}
-                            {--horizon : Add Laravel Horizon}
-                            {--reverb : Add Laravel Reverb}
-                            {--meilisearch : Add Meilisearch search engine}
-                            {--typesense : Add Typesense search engine}
-                            {--monitoring : Add Prometheus and Grafana}
-                            {--minio : Add MinIO storage}
-                            {--seaweedfs : Add SeaweedFS storage}
                             {--dry-run : Show what will be done without making any changes}';
 
     /**
@@ -52,7 +44,18 @@ class AddCommand extends Command
     protected $description = 'Add databases, Laravel features, blueprints, or storage to an existing project';
 
     /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
+    }
+
+    /**
      * Execute the console command.
+     *
+     * @throws RandomException
      */
     public function handle(): int
     {
@@ -62,46 +65,74 @@ class AddCommand extends Command
             return 1;
         }
 
-        $projectPath = getcwd();
-        if (! is_dir($projectPath.'/.infrastructure')) {
-            $this->laraKubeError('Not a LaraKube project. Make sure you are in the root directory.');
-
+        if (! $this->isLaraKubeProject()) {
             return 1;
         }
 
+        $projectPath = getcwd();
+        $name = Str::slug(basename($projectPath));
         $config = $this->getProjectConfig($projectPath);
-        $appName = basename($projectPath);
-        $k8sPath = $projectPath.'/.infrastructure/k8s';
+
+        if (! $config->getPath() || $config->getPath() !== $projectPath) {
+            $config->setPath($projectPath);
+        }
+
+        if (! $config->getName() || $config->getName() !== $name) {
+            $config->setName($name);
+        }
+
+        $k8sPath = $config->getK8sPath();
 
         $selectedItems = $this->argument('items');
 
         // 1. Collect items from flags
-        $flagMappings = [
-            'mysql' => DatabaseEngine::MYSQL->value,
-            'postgres' => DatabaseEngine::POSTGRESQL->value,
-            'mariadb' => DatabaseEngine::MARIADB->value,
-            'mongodb' => DatabaseEngine::MONGODB->value,
-            'redis' => DatabaseEngine::REDIS->value,
-            'horizon' => LaravelFeature::HORIZON->value,
-            'reverb' => LaravelFeature::REVERB->value,
-            'meilisearch' => LaravelFeature::SCOUT->value,
-            'typesense' => LaravelFeature::SCOUT->value,
-            'monitoring' => LaravelFeature::MONITORING->value,
-            'minio' => 'minio',
-            'seaweedfs' => 'seaweedfs',
-        ];
+        foreach (DatabaseDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
 
-        foreach ($flagMappings as $flag => $value) {
-            if ($this->option($flag)) {
-                $selectedItems[] = $value;
+            if ($this->option($case->value)) {
+                $config->addDatabase($case);
+            }
+        }
+
+        foreach (LaravelFeature::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $config->addFeature($case);
+            }
+        }
+
+        foreach (StorageDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $config->setObjectStorage($case);
+                break;
+            }
+        }
+
+        foreach (ScoutDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $config->setScoutDriver($case);
+                break;
             }
         }
 
         if (empty($selectedItems)) {
-            $currentBlueprint = $config['blueprint'] ?? Blueprint::LARAVEL->value;
-            $currentDbs = $config['databases'] ?? [];
-            $currentFeatures = $config['features'] ?? [];
-            $currentStorage = $config['objectStorage'] ?? 'none';
+            $currentBlueprint = $config->getBlueprint()?->value ?? Blueprint::LARAVEL->value;
+            $currentDbs = array_map(fn ($db) => $db->value, $config->getDatabases());
+            $currentFeatures = array_map(fn ($f) => $f->value, $config->getFeatures());
+            $currentStorage = $config->getObjectStorage()?->value ?? 'none';
 
             $this->laraKubeInfo('Welcome to the Architectural Evolution wizard.');
 
@@ -116,7 +147,7 @@ class AddCommand extends Command
             );
 
             if ($type === 'database') {
-                $availableDbs = collect(DatabaseEngine::cases())
+                $availableDbs = collect(DatabaseDriver::cases())
                     ->filter(fn ($db) => ! in_array($db->value, $currentDbs))
                     ->mapWithKeys(fn ($db) => [$db->value => $db->value])
                     ->toArray();
@@ -160,138 +191,137 @@ class AddCommand extends Command
                     return 0;
                 }
 
-                $storage = select(
+                $storageName = select(
                     label: 'Select object storage engine:',
-                    options: [
-                        ObjectStorage::MINIO->name => ObjectStorage::MINIO->value,
-                        ObjectStorage::SEAWEEDFS->name => ObjectStorage::SEAWEEDFS->value,
-                        ObjectStorage::GARAGE->name => ObjectStorage::GARAGE->value,
-                    ]
+                    options: collect(StorageDriver::cases())->mapWithKeys(fn ($s) => [$s->name => $s->getLabel()])->all()
                 );
 
-                $this->addStorage(ObjectStorage::from($storage), $projectPath, $k8sPath, $appName, $config);
+                $this->addStorage(StorageDriver::from($storageName), $config);
 
                 return 0;
             }
 
             if ($type === 'blueprint') {
-                $blueprint = select(
+                $blueprintValue = select(
                     label: 'Select specialized blueprint:',
                     options: [
-                        Blueprint::FILAMENT->value => 'FilamentPHP (Admin Panels)',
-                        Blueprint::STATAMIC->value => 'Statamic (Flat-file CMS)',
+                        Blueprint::FILAMENT->value => Blueprint::FILAMENT->getLabel(),
+                        Blueprint::STATAMIC->value => Blueprint::STATAMIC->getLabel(),
                     ]
                 );
 
-                $this->addBlueprint(Blueprint::from($blueprint), $projectPath, $k8sPath, $appName, $config);
+                $this->addBlueprint(Blueprint::from($blueprintValue), $config);
 
                 return 0;
             }
         }
 
         foreach ($selectedItems as $item) {
-            $database = DatabaseEngine::tryFrom($item);
+            $database = DatabaseDriver::tryFrom($item);
             if ($database) {
-                if (in_array($database->value, $config['databases'] ?? [])) {
+                if (in_array($database, $config->getDatabases())) {
                     $this->laraKubeInfo("Database '{$database->value}' is already added to this project. Skipping...");
 
                     continue;
                 }
-                $this->addDatabase($database, $projectPath, $k8sPath, $appName, $config);
+                $this->addDatabase($database, $config);
 
                 continue;
             }
 
             $feature = LaravelFeature::tryFrom($item);
             if ($feature) {
-                if (in_array($feature->value, $config['features'] ?? [])) {
+                if (in_array($feature, $config->getFeatures())) {
                     $this->laraKubeInfo("Feature '{$feature->value}' is already added to this project. Skipping...");
 
                     continue;
                 }
-                $this->addFeature($feature, $projectPath, $k8sPath, $appName, $config);
+                $this->addFeature($feature, $config);
 
                 continue;
             }
 
-            $storage = ObjectStorage::tryFrom($item) ?? ObjectStorage::from(strtoupper($item));
+            $scout = ScoutDriver::tryFrom($item);
+            if ($scout) {
+                if ($config->getScoutDriver() === $scout) {
+                    $this->laraKubeInfo("Scout driver '{$scout->value}' is already added. Skipping...");
+
+                    continue;
+                }
+                $config->setScoutDriver($scout);
+                $this->saveProjectConfig($projectPath, $config);
+                $this->addFeature(LaravelFeature::SCOUT, $config);
+
+                continue;
+            }
+
+            $storage = StorageDriver::tryFrom($item);
             if ($storage) {
-                if (($config['objectStorage'] ?? 'none') === $storage->name) {
+                if ($config->getObjectStorage() === $storage) {
                     $this->laraKubeInfo("Storage '{$storage->value}' is already added. Skipping...");
 
                     continue;
                 }
-                $this->addStorage($storage, $projectPath, $k8sPath, $appName, $config);
+                $this->addStorage($storage, $config);
             }
         }
 
         return 0;
     }
 
-    protected function addBlueprint(Blueprint $blueprint, string $projectPath, string $k8sPath, string $appName, array $config): void
+    /**
+     * @throws RandomException
+     */
+    protected function addBlueprint(Blueprint $blueprint, ConfigData $config): void
     {
-        $blueprintAction = $blueprint->action();
+        $projectPath = $config->getPath();
 
-        if ($blueprintAction) {
-            $blueprintConfig = $blueprintAction->gatherConfig();
-            $config = array_merge($config, $blueprintConfig);
+        // 1. Always show preview
+        $this->laraKubeInfo("Previewing Addition: Blueprint '{$blueprint->value}'");
+        $this->line('  <fg=gray>[PHP]</> Would install required packages and extensions.');
 
-            // 1. Always show preview
-            $this->laraKubeInfo("Previewing Addition: Blueprint '{$blueprint->value}'");
-            $this->line('  <fg=gray>[PHP]</> Would install required packages and extensions.');
+        if ($this->option('dry-run')) {
+            return;
+        }
 
-            if ($this->option('dry-run')) {
+        if (! $this->option('no-interaction')) {
+            if (! $this->confirm("Apply blueprint '$blueprint->value'?", true)) {
                 return;
             }
-
-            if (! $this->option('no-interaction')) {
-                if (! $this->confirm("Apply blueprint '{$blueprint->value}'?", true)) {
-                    return;
-                }
-            }
-
-            // 1. Merge and persist PHP extensions in config first
-            $phpExtensions = $blueprintAction->getPhpExtensions();
-            $config['additionalExtensions'] = array_unique(array_merge($config['additionalExtensions'] ?? [], $phpExtensions));
-            $this->updateProjectConfig($projectPath, 'additionalExtensions', $config['additionalExtensions']);
-            $this->updateProjectConfig($projectPath, 'blueprint', $blueprint->value);
-
-            // 2. Apply manifests
-            $blueprintAction->apply($projectPath, $k8sPath, $appName, $config);
-
-            // 3. Update K8s structure
-            $this->orchestrateProjectScaffolding($projectPath, $appName, $config, false, false);
-
-            // 4. Update Dockerfile for extensions
-            $this->generateDockerfiles($projectPath, $config['serverVariation'], $config['phpVersion'], $config['os'], $config['additionalExtensions']);
-
-            // 5. Build local image
-            $this->buildImage($projectPath, $appName);
-
-            // 6. Install packages
-            $this->installLaravelFeatures($projectPath, [], $config['packageManager'] ?? 'npm', array_merge($config, ['blueprint' => $blueprint->value]), (bool) $this->option('dry-run'));
-
-            $this->logActivity('Project blueprint updated', ['blueprint' => $blueprint->value], $projectPath);
         }
+
+        // 1. Merge and persist PHP extensions in config first
+        $config->setBlueprint($blueprint);
+        $this->saveProjectConfig($projectPath, $config);
+
+        // 3. Update K8s structure
+        $this->orchestrateProjectScaffolding($config, false, false);
+
+        // 4. Update Dockerfile for extensions
+        $this->generateDockerfiles($config);
+
+        // 5. Build local image
+        $this->buildImage($config);
+
+        // 6. Install packages
+        $config->installComponents();
+
+        $this->logActivity('Project blueprint updated', ['blueprint' => $blueprint->value], $projectPath);
 
         $this->laraKubeInfo("Blueprint '{$blueprint->value}' applied successfully!");
 
-        if ($instructions = $blueprintAction->getPostInstallInstructions()) {
+        if ($instructions = $blueprint->getPostInstallInstructions()) {
             $this->line('');
-            $this->warning('Blueprint Next Steps:');
+            $this->warn('Blueprint Next Steps:');
             foreach ($instructions as $line) {
-                $this->line("  {$line}");
+                $this->line("  $line");
             }
         }
     }
 
-    protected function addStorage(ObjectStorage $storage, string $projectPath, string $k8sPath, string $appName, array &$config): void
+    protected function addStorage(StorageDriver $storage, ConfigData $config): void
     {
-        $action = match ($storage) {
-            ObjectStorage::MINIO => new MinioAction,
-            ObjectStorage::SEAWEEDFS => new SeaweedFsAction,
-            ObjectStorage::GARAGE => new GarageAction,
-        };
+        $projectPath = $config->getPath();
 
         // 1. Always show preview
         $this->laraKubeInfo("Previewing Addition: Storage '{$storage->value}'");
@@ -308,28 +338,57 @@ class AddCommand extends Command
             }
         }
 
-        $this->withSpin("Adding storage '{$storage->value}' to cluster manifests...", function () use ($action, $k8sPath, $appName, $projectPath, $storage) {
-            $action->updateK8s($k8sPath, $appName, ['projectPath' => $projectPath]);
+        $this->withSpin("Adding storage '{$storage->value}' to cluster manifests...", function () use ($projectPath, $storage, $config) {
+            $storage->updateK8s($config);
             $this->logActivity('Project storage added', ['storage' => $storage->value], $projectPath);
         });
 
+        $config->setObjectStorage($storage);
+        $this->saveProjectConfig($projectPath, $config);
+
         // Use shared trait for installation
-        $this->installLaravelFeatures($projectPath, [], $config['packageManager'] ?? 'npm', $config);
+        $config->installComponents();
 
         // Run onPostInstall to update .env
-        $action->onPostInstall($projectPath);
-
-        $this->updateProjectConfig($projectPath, 'objectStorage', $storage->name);
+        if ($storage instanceof HasLifecycleHooks) {
+            $storage->onPostInstall($projectPath, $config);
+        }
 
         $this->laraKubeInfo("Storage '{$storage->value}' added successfully!");
+
+        if ($storage instanceof HasLifecycleHooks) {
+            $this->displayInstructions($storage->getPostInstallInstructions());
+        }
     }
 
-    protected function addFeature(LaravelFeature $feature, string $projectPath, string $k8sPath, string $appName, array $config): void
+    protected function addFeature(LaravelFeature $feature, ConfigData $config): void
     {
-        $action = $feature->action();
+        $projectPath = $config->getPath();
+
+        if ($feature === LaravelFeature::REVERB && ! $config->getFrontend()) {
+            $frontend = select(
+                label: 'Which frontend stack are you using?',
+                options: FrontendStack::getSelectOptions(),
+                default: FrontendStack::LIVEWIRE->value
+            );
+            $config->setFrontend(FrontendStack::from($frontend));
+        }
+
+        if ($feature === LaravelFeature::SCOUT && ! $config->getScoutDriver()) {
+            $driver = select(
+                label: 'Which search driver would you like to use for Scout?',
+                options: ScoutDriver::getSelectOptions(),
+                default: ScoutDriver::MEILISEARCH->value
+            );
+
+            $config->setScoutDriver(ScoutDriver::from($driver));
+        }
+
+        // Save changes
+        $config->saveToFile($projectPath);
 
         // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Feature '{$feature->value}'");
+        $this->laraKubeInfo("Previewing Addition: Feature '$feature->value'");
         $this->line('  <fg=gray>[K8S]</> Would add feature manifests and patches to .infrastructure/k8s/');
 
         if ($this->option('dry-run')) {
@@ -337,31 +396,33 @@ class AddCommand extends Command
         }
 
         if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply changes for '{$feature->value}'?", true)) {
+            if (! $this->confirm("Apply changes for '$feature->value'?", true)) {
                 return;
             }
         }
 
-        $this->withSpin("Adding feature '{$feature->value}' to cluster manifests...", function () use ($action, $k8sPath, $appName, $projectPath, $feature) {
-            $action->updateK8s($k8sPath, $appName, [
-                'projectPath' => $projectPath,
-            ]);
-
-            $action->updateDockerCompose($projectPath);
+        $this->withSpin("Adding feature '$feature->value' to cluster manifests...", function () use ($feature, $projectPath, $config) {
+            $feature->updateK8s($config);
             $this->logActivity('Project feature added', ['feature' => $feature->value], $projectPath);
         });
 
+        $config->addFeature($feature);
+
         // Use shared trait for installation
-        $this->installLaravelFeatures($projectPath, [$feature->value], $config['packageManager'] ?? 'npm', $config);
+        $config->installComponents();
 
         $this->updateProjectConfig($projectPath, 'features', [$feature->value]);
 
         $this->laraKubeInfo("Feature '{$feature->value}' added successfully!");
+
+        if ($feature instanceof HasLifecycleHooks) {
+            $this->displayInstructions($feature->getPostInstallInstructions());
+        }
     }
 
-    protected function addDatabase(DatabaseEngine $engine, string $projectPath, string $k8sPath, string $appName, array $config): void
+    protected function addDatabase(DatabaseDriver $engine, ConfigData $config): void
     {
-        $action = $engine->action();
+        $projectPath = $config->getPath();
 
         // 1. Always show preview
         $this->laraKubeInfo("Previewing Addition: Database '{$engine->value}'");
@@ -377,41 +438,53 @@ class AddCommand extends Command
             }
         }
 
-        $this->withSpin("Adding database '{$engine->value}' to cluster manifests...", function () use ($action, $k8sPath, $appName, $projectPath, $engine) {
-            if ($action) {
-                $action->updateK8s($k8sPath, $appName, ['projectPath' => $projectPath]);
-                $action->updateDockerCompose($projectPath);
-            }
+        $this->withSpin("Adding database '$engine->value' to cluster manifests...", function () use ($engine, $projectPath, $config) {
+            $engine->updateK8s($config);
             $this->logActivity('Project database added', ['database' => $engine->value], $projectPath);
         });
 
+        $config->addDatabase($engine);
+        $this->saveProjectConfig($projectPath, $config);
+
         // Use shared trait for installation if it's a feature database (like MongoDB)
-        if ($action instanceof FeatureAction) {
-            $this->installLaravelFeatures($projectPath, [], $config['packageManager'] ?? 'npm', array_merge($config, ['databases' => [$engine->value]]));
+        if (! empty($engine->getComposerDependencies($config))) {
+            $config->installComponents();
         }
 
-        $this->updateProjectConfig($projectPath, 'databases', [$engine->value]);
-
-        if ($engine !== DatabaseEngine::REDIS) {
+        if ($engine !== DatabaseDriver::REDIS) {
             if (confirm("Would you like to make {$engine->value} your primary database connection? (Updates your .env)", true)) {
                 $this->updateEnvironmentDatabase($projectPath, $engine);
             }
         }
 
         $this->laraKubeInfo("Database '{$engine->value}' added successfully!");
+
+        if ($engine instanceof HasLifecycleHooks) {
+            $this->displayInstructions($engine->getPostInstallInstructions());
+        }
     }
 
-    protected function updateEnvironmentDatabase(string $projectPath, DatabaseEngine $engine): void
+    protected function displayInstructions(array $instructions): void
     {
-        $dbHost = $engine->dbHost();
-        $dbUser = $engine->dbUsername();
-        $dbConn = $engine->dbConnection();
+        if (empty($instructions)) {
+            return;
+        }
 
+        $this->newLine();
+        $this->warn('Next Steps:');
+        foreach ($instructions as $line) {
+            $this->line("  $line");
+        }
+        $this->newLine();
+    }
+
+    protected function updateEnvironmentDatabase(string $projectPath, DatabaseDriver $engine): void
+    {
         $this->syncEnvFile($projectPath, [
-            'DB_CONNECTION' => $dbConn,
-            'DB_HOST' => $dbHost,
+            'DB_CONNECTION' => $engine->dbConnection(),
+            'DB_HOST' => $engine->dbHost(),
             'DB_PORT' => $engine->dbPort(),
-            'DB_USERNAME' => $dbUser,
+            'DB_USERNAME' => $engine->dbUsername(),
         ]);
     }
 }

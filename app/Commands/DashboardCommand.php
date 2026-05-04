@@ -17,7 +17,8 @@ class DashboardCommand extends Command
      */
     protected $signature = 'dashboard {environment? : The environment to monitor (local or production)} 
                             {--simple : Use simple kubectl view instead of k9s}
-                            {--traefik : Open the Traefik network dashboard}';
+                            {--traefik : Open the Traefik network dashboard}
+                            {--cli : Force CLI-based monitoring (K9s/kubectl)}';
 
     /**
      * The console command description.
@@ -33,12 +34,17 @@ class DashboardCommand extends Command
     {
         $this->renderHeader();
 
-        $environment = $this->argument('environment') ?? 'local';
-        $namespace = $this->getNamespace($environment);
-
         if ($this->option('traefik')) {
             return $this->showTraefikDashboard();
         }
+
+        // If no --cli flag and no environment specified, try to open the System Dashboard
+        if (! $this->option('cli') && ! $this->argument('environment')) {
+            return $this->showSystemDashboard();
+        }
+
+        $environment = $this->argument('environment') ?? 'local';
+        $namespace = $this->getNamespace($environment);
 
         $hasK9s = shell_exec('which k9s') !== null;
         $hasWatch = shell_exec('which watch') !== null;
@@ -82,6 +88,45 @@ class DashboardCommand extends Command
                 sleep(1);
             }
         }
+
+        return 0;
+    }
+
+    /**
+     * Open (and install if missing) the LaraKube System Dashboard.
+     */
+    protected function showSystemDashboard(): int
+    {
+        $this->laraKubeInfo('Launching LaraKube System Dashboard...');
+
+        $exists = shell_exec('kubectl get namespace larakube-system --no-headers 2>/dev/null');
+
+        if (! $exists) {
+            if (! $this->confirm('The LaraKube System Dashboard is not installed. Would you like to install it now?', true)) {
+                return 1;
+            }
+
+            $this->withSpin('Installing System Dashboard...', function () {
+                $manifest = view('k8s.system-dashboard')->render();
+                $tmp = sys_get_temp_dir() . '/larakube-dashboard.yaml';
+                file_put_contents($tmp, $manifest);
+                passthru("kubectl apply -f {$tmp}");
+                unlink($tmp);
+            });
+
+            $this->laraKubeInfo('✅ System Dashboard installed.');
+        }
+
+        $url = 'https://larakube.dev.test';
+        $this->laraKubeInfo("Opening: {$url}");
+
+        $command = match (PHP_OS_FAMILY) {
+            'Darwin' => 'open',
+            'Windows' => 'start',
+            default => 'xdg-open',
+        };
+
+        passthru("{$command} {$url}");
 
         return 0;
     }

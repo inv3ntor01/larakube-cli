@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -10,7 +11,7 @@ use function Laravel\Prompts\text;
 
 class DownCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -33,13 +34,19 @@ class DownCommand extends Command
     {
         $this->renderHeader();
 
+        if (! $this->isLaraKubeProject()) {
+            return 1;
+        }
+
         $environment = $this->argument('environment');
-        $namespace = $this->getNamespace($environment);
-        $appName = basename(getcwd());
+        $projectPath = getcwd();
+        $config = $this->getProjectConfig($projectPath);
+        $appName = $config->getName() ?? basename($projectPath);
+        $namespace = $this->getNamespace($environment, $appName);
 
         if ($this->option('dry-run')) {
-            $this->laraKubeInfo("DRY RUN: Project '{$appName}' cleanup preview:");
-            $this->line("  <fg=gray>[K8S]</> Would delete namespace '{$namespace}' and ALL internal volumes.");
+            $this->laraKubeInfo("DRY RUN: Project '$appName' cleanup preview:");
+            $this->line("  <fg=gray>[K8S]</> Would delete namespace '$namespace' and ALL internal volumes.");
             $this->laraKubeInfo('DRY RUN COMPLETE: No resources were modified.');
 
             return 0;
@@ -48,7 +55,7 @@ class DownCommand extends Command
         if (! $this->option('force')) {
             $this->laraKubeError('WARNING: This will delete the namespace and all cluster volumes.');
             $confirm = text(
-                label: "To confirm, please type the project name '{$appName}':",
+                label: "To confirm, please type the project name '$appName':",
                 required: true
             );
 
@@ -59,8 +66,11 @@ class DownCommand extends Command
             }
         }
 
-        $this->laraKubeInfo("Removing namespace '{$namespace}'...");
-        passthru("kubectl delete namespace {$namespace}");
+        $this->laraKubeInfo("Removing namespace '$namespace'...");
+        passthru("kubectl delete namespace $namespace");
+
+        $this->laraKubeInfo('Cleaning up cluster-scoped PersistentVolumes...');
+        passthru("kubectl delete pv -l larakube-project=$appName");
 
         // Give the local storage provisioner a moment to actually wipe the host files
         $this->withSpin('Ensuring cluster-native volumes are wiped...', function () {

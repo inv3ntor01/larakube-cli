@@ -2,19 +2,54 @@
 
 namespace App\Enums;
 
-use App\Actions\Blueprints\FilamentAction;
-use App\Actions\Blueprints\StatamicAction;
-use App\Actions\Contracts\BlueprintAction;
+use App\Contracts\HasArtisanCommands;
+use App\Contracts\HasCommandOptions;
+use App\Contracts\HasComposerDependencies;
+use App\Contracts\HasEnvironmentVariables;
+use App\Contracts\HasHiddenComponents;
+use App\Contracts\HasHosts;
+use App\Contracts\HasLabel;
+use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasSelectOptions;
+use App\Contracts\RequiresPhpExtensions;
+use App\Data\ConfigData;
+use App\Traits\ProvidesCommandOptions;
+use App\Traits\ProvidesSelectOptions;
 
-enum Blueprint: string
+enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
 {
-    case LARAVEL = 'Laravel (Standard)';
-    case FILAMENT = 'FilamentPHP (Admin Panel)';
-    case STATAMIC = 'Statamic (CMS)';
+    use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    public function label(): string
+    case LARAVEL = 'laravel';
+    case FILAMENT = 'filament';
+    case STATAMIC = 'statamic';
+
+    public function isHidden(): bool
     {
-        return $this->value;
+        return $this === self::STATAMIC;
+    }
+
+    public function getLabel(): ?string
+    {
+        return match ($this) {
+            self::LARAVEL => 'Laravel (Standard)',
+            self::FILAMENT => 'Filament PHP (Admin Panel)',
+            self::STATAMIC => 'Statamic (CMS)',
+        };
+    }
+
+    public static function getCommandOptionArrays(): array
+    {
+        $options = [];
+
+        foreach (self::cases() as $case) {
+            $options[] = [
+                'name' => $case->value,
+                'description' => "Use {$case->getLabel()} blueprint",
+            ];
+        }
+
+        return $options;
     }
 
     /**
@@ -29,12 +64,73 @@ enum Blueprint: string
         };
     }
 
-    public function action(): ?BlueprintAction
+    public function getEnvironmentVariables(?ConfigData $config = null): array
     {
         return match ($this) {
-            self::STATAMIC => new StatamicAction,
-            self::FILAMENT => new FilamentAction,
-            default => null,
+            self::STATAMIC => [
+                'STATAMIC_LICENSE_KEY' => '',
+            ],
+            default => [],
+        };
+    }
+
+    public function getHosts(ConfigData $config): array
+    {
+        return [];
+    }
+
+    public function getComposerDependencies(?ConfigData $context = null): array
+    {
+        return match ($this) {
+            self::STATAMIC => [
+                'statamic/cms',
+            ],
+            self::FILAMENT => [
+                'filament/filament',
+            ],
+            default => [],
+        };
+    }
+
+    public function getArtisanCommands(?ConfigData $context = null): array
+    {
+        return match ($this) {
+            self::STATAMIC => [
+                'statamic:install --no-interaction',
+            ],
+            self::FILAMENT => [
+                'filament:install --panels',
+            ],
+            default => [],
+        };
+    }
+
+    public function onPostInstall(string $projectPath, ?ConfigData $context = null): void
+    {
+        // TODO: Implement onPostInstall() method.
+    }
+
+    public function getPhpExtensions(): array
+    {
+        return match ($this) {
+            self::STATAMIC => ['gd', 'exif'],
+            self::FILAMENT => ['intl'],
+            default => [],
+        };
+    }
+
+    public function getPostInstallInstructions(): array
+    {
+        return match ($this) {
+            self::STATAMIC => [
+                'To create your first super user, run:',
+                'larakube art make:statamic-user',
+            ],
+            self::FILAMENT => [
+                'To create your first admin user, run:',
+                'larakube art make:filament-user',
+            ],
+            default => [],
         };
     }
 }

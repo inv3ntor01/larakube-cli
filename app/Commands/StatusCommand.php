@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -10,7 +11,7 @@ use function Laravel\Prompts\table;
 
 class StatusCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -34,7 +35,9 @@ class StatusCommand extends Command
         $this->renderHeader();
 
         $environment = $this->argument('environment');
-        $namespace = $this->getNamespace($environment);
+        $config = $this->getProjectConfig(getcwd());
+        $appName = $config->getName() ?? basename(getcwd());
+        $namespace = $this->getNamespace($environment, $appName);
 
         $this->laraKubeInfo("Checking status for namespace '{$namespace}'...");
 
@@ -75,6 +78,18 @@ class StatusCommand extends Command
             ['Service', 'Status', 'Restarts', 'Age'],
             $rows
         );
+
+        $this->newLine();
+        $this->laraKubeInfo('Active Service Links:');
+        $hosts = $config->getAllHosts();
+
+        if (empty($hosts)) {
+            $this->line('  <fg=gray>No external hosts configured for this architecture.</>');
+        } else {
+            foreach ($hosts as $host => $label) {
+                $this->line("  <fg=gray>●</> <fg=blue;options=underscore>https://{$host}</> <fg=gray>($label)</>");
+            }
+        }
 
         return 0;
     }

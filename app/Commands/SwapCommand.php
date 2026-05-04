@@ -2,14 +2,17 @@
 
 namespace App\Commands;
 
-use App\Enums\DatabaseEngine;
-use App\Enums\ObjectStorage;
+use App\Contracts\HasHiddenComponents;
+use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
+use App\Enums\StorageDriver;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use Illuminate\Support\Str;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
@@ -17,16 +20,12 @@ use function Laravel\Prompts\select;
 
 class SwapCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'swap {--db= : The new database engine}
-                                 {--storage= : The new object storage engine}
-                                 {--scout= : The new scout driver}
-                                 {--server= : The new server variation}
-                                 {--dry-run : Show what will be changed without applying}
+    protected $signature = 'swap {--dry-run : Show what will be changed without applying}
                                  {--force : Skip confirmation}';
 
     /**
@@ -35,32 +34,47 @@ class SwapCommand extends Command
     protected $description = 'Seamlessly swap architectural components (DB, Storage, Server, Search)';
 
     /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
+    }
+
+    /**
      * Execute the console command.
      */
     public function handle(): int
     {
         $this->renderHeader();
 
-        $projectPath = getcwd();
-        if (! file_exists($projectPath.'/.larakube.json')) {
-            $this->laraKubeError('Not a LaraKube project.');
-
+        if (! $this->isLaraKubeProject()) {
             return 1;
         }
 
+        $projectPath = getcwd();
+        $name = Str::slug(basename($projectPath));
         $config = $this->getProjectConfig($projectPath);
-        $newConfig = $config;
+
+        if (! $config->getPath() || $config->getPath() !== $projectPath) {
+            $config->setPath($projectPath);
+        }
+
+        if (! $config->getName() || $config->getName() !== $name) {
+            $config->setName($name);
+        }
 
         $swaps = [];
 
         // 1. Process Database Swap
         if ($db = $this->option('db')) {
-            $swaps['db'] = DatabaseEngine::from($db);
+            $swaps['db'] = DatabaseDriver::from($db);
         }
 
         // 2. Process Storage Swap
         if ($storage = $this->option('storage')) {
-            $swaps['storage'] = ObjectStorage::from($storage);
+            $swaps['storage'] = StorageDriver::from($storage);
         }
 
         // 3. Process Scout Swap
@@ -71,6 +85,44 @@ class SwapCommand extends Command
         // 4. Process Server Swap
         if ($server = $this->option('server')) {
             $swaps['server'] = ServerVariation::from($server);
+        }
+
+        // 1.1 Process Enum Flags (Swap behavior)
+        foreach (DatabaseDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $swaps['db'] = $case;
+            }
+        }
+        foreach (StorageDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $swaps['storage'] = $case;
+            }
+        }
+        foreach (ScoutDriver::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $swaps['scout'] = $case;
+            }
+        }
+        foreach (ServerVariation::cases() as $case) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+                continue;
+            }
+
+            if ($this->option($case->value)) {
+                $swaps['server'] = $case;
+            }
         }
 
         // 5. Interactive Mode (Option C)
@@ -87,25 +139,25 @@ class SwapCommand extends Command
 
             switch ($category) {
                 case 'db':
-                    $current = implode(', ', $config['databases']);
+                    $current = implode(', ', array_map(fn ($d) => $d->value, $config->getDatabases()));
                     $this->info("Current Databases: {$current}");
-                    $newDb = select('Switch primary database to:', collect(DatabaseEngine::cases())->mapWithKeys(fn ($e) => [$e->value => $e->value])->all());
-                    $swaps['db'] = DatabaseEngine::from($newDb);
+                    $newDb = select('Switch primary database to:', collect(DatabaseDriver::cases())->mapWithKeys(fn ($e) => [$e->value => $e->value])->all());
+                    $swaps['db'] = DatabaseDriver::from($newDb);
                     break;
                 case 'storage':
-                    $current = $config['objectStorage'] ?? 'none';
+                    $current = $config->getObjectStorage()?->value ?? 'none';
                     $this->info("Current Storage: {$current}");
-                    $newStorage = select('Switch storage to:', collect(ObjectStorage::cases())->mapWithKeys(fn ($e) => [$e->name => $e->value])->all());
-                    $swaps['storage'] = ObjectStorage::from($newStorage);
+                    $newStorage = select('Switch storage to:', collect(StorageDriver::cases())->mapWithKeys(fn ($e) => [$e->value => $e->getLabel()])->all());
+                    $swaps['storage'] = StorageDriver::from($newStorage);
                     break;
                 case 'scout':
-                    $current = $config['scoutDriver'] ?? 'none';
+                    $current = $config->getScoutDriver()->value;
                     $this->info("Current Scout Driver: {$current}");
                     $newScout = select('Switch search to:', collect(ScoutDriver::cases())->mapWithKeys(fn ($e) => [$e->value => $e->label()])->all());
                     $swaps['scout'] = ScoutDriver::from($newScout);
                     break;
                 case 'server':
-                    $current = $config['serverVariation'];
+                    $current = $config->getServerVariation()->value;
                     $this->info("Current Server: {$current}");
                     $newServer = select('Switch server to:', collect(ServerVariation::cases())->mapWithKeys(fn ($e) => [$e->value => $e->value])->all());
                     $swaps['server'] = ServerVariation::from($newServer);
@@ -125,33 +177,38 @@ class SwapCommand extends Command
         $logDetails = [];
 
         if (isset($swaps['db'])) {
-            $primary = collect($config['databases'])->first(fn ($db) => DatabaseEngine::from($db)->isPersistent());
-            $this->line("  <fg=blue>[SWAP]</> Database: {$primary} ➔ {$swaps['db']->value}");
-            $newConfig['databases'] = array_values(array_unique(array_merge(
-                array_diff($config['databases'], [$primary]),
-                [$swaps['db']->value]
-            )));
-            $logDetails['db'] = "{$primary} -> {$swaps['db']->value}";
+            $primary = collect($config->getDatabases())->first(fn ($db) => $db->isPersistent());
+            $primaryValue = $primary ? $primary->value : 'None';
+            $this->line("  <fg=blue>[SWAP]</> Database: {$primaryValue} ➔ {$swaps['db']->value}");
+
+            $databases = $config->getDatabases();
+            if ($primary) {
+                $databases = array_filter($databases, fn ($d) => $d !== $primary);
+            }
+            $databases[] = $swaps['db'];
+            $config->setDatabases(array_unique($databases));
+            $logDetails['db'] = "{$primaryValue} -> {$swaps['db']->value}";
         }
 
         if (isset($swaps['storage'])) {
-            $current = $config['objectStorage'] ?? 'none';
-            $this->line("  <fg=blue>[SWAP]</> Storage: {$current} ➔ {$swaps['storage']->name}");
-            $newConfig['objectStorage'] = $swaps['storage']->name;
-            $logDetails['storage'] = "{$current} -> {$swaps['storage']->name}";
+            $current = $config->getObjectStorage()?->value ?? 'none';
+            $this->line("  <fg=blue>[SWAP]</> Storage: {$current} ➔ {$swaps['storage']->value}");
+            $config->setObjectStorage($swaps['storage']);
+            $logDetails['storage'] = "{$current} -> {$swaps['storage']->value}";
         }
 
         if (isset($swaps['scout'])) {
-            $current = $config['scoutDriver'] ?? 'none';
+            $current = $config->getScoutDriver()->value;
             $this->line("  <fg=blue>[SWAP]</> Search: {$current} ➔ {$swaps['scout']->value}");
-            $newConfig['scoutDriver'] = $swaps['scout']->value;
+            $config->setScoutDriver($swaps['scout']);
             $logDetails['scout'] = "{$current} -> {$swaps['scout']->value}";
         }
 
         if (isset($swaps['server'])) {
-            $this->line("  <fg=blue>[SWAP]</> Server: {$config['serverVariation']} ➔ {$swaps['server']->value}");
-            $newConfig['serverVariation'] = $swaps['server']->value;
-            $logDetails['server'] = "{$config['serverVariation']} -> {$swaps['server']->value}";
+            $current = $config->getServerVariation()->value;
+            $this->line("  <fg=blue>[SWAP]</> Server: {$current} ➔ {$swaps['server']->value}");
+            $config->setServerVariation($swaps['server']);
+            $logDetails['server'] = "{$current} -> {$swaps['server']->value}";
         }
 
         $this->line('  <fg=red;options=bold>‼ DATA WARNING:</> LaraKube swaps infrastructure only. You MUST migrate your data manually.');
@@ -172,9 +229,10 @@ class SwapCommand extends Command
         }
 
         // 7. Execute!
-        $this->withSpin('Updating architectural DNA...', function () use ($projectPath, $newConfig, $logDetails) {
-            $this->orchestrateProjectScaffolding($projectPath, basename($projectPath), $newConfig, true, true);
-            $this->logActivity('Architectural components swapped', $logDetails, $projectPath);
+        $this->withSpin('Updating architectural DNA...', function () use ($config, $logDetails) {
+            $this->saveProjectConfig($config->getPath(), $config);
+            $this->orchestrateProjectScaffolding($config);
+            $this->logActivity('Architectural components swapped', $logDetails, $config->getPath());
 
             return true;
         });

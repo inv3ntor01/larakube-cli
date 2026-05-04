@@ -2,12 +2,9 @@
 
 namespace App\Traits;
 
+use App\Contracts\HasKubernetesFiles;
+use App\Data\ConfigData;
 use App\Enums\Blueprint;
-use App\Enums\DatabaseEngine;
-use App\Enums\LaravelFeature;
-use App\Enums\PackageManager;
-use App\Enums\ServerVariation;
-use Illuminate\Support\Str;
 use Random\RandomException;
 
 trait GeneratesProjectInfrastructure
@@ -24,119 +21,98 @@ trait GeneratesProjectInfrastructure
             return;
         }
 
-        $env = file_get_contents($envPath);
+        $lines = explode("\n", file_get_contents($envPath));
+        $newLines = [];
+        $processedKeys = [];
 
-        foreach ($values as $key => $value) {
-            // Pattern to match the key even if it's commented out
-            $pattern = "/^#?\s*{$key}=.*/m";
-            $replacement = "{$key}={$value}";
+        foreach ($lines as $line) {
+            $matched = false;
+            foreach ($values as $key => $value) {
+                if (preg_match("/^#?\s*{$key}=.*/", $line)) {
+                    $newLines[] = "{$key}={$value}";
+                    $processedKeys[] = $key;
+                    $matched = true;
+                    break;
+                }
+            }
 
-            if (preg_match($pattern, $env)) {
-                $env = preg_replace($pattern, $replacement, $env);
-            } else {
-                $env .= "\n{$replacement}";
+            if (! $matched) {
+                $newLines[] = $line;
             }
         }
 
-        file_put_contents($envPath, $env);
+        // Add keys that didn't exist in the original file
+        foreach ($values as $key => $value) {
+            if (! in_array($key, $processedKeys)) {
+                $newLines[] = "{$key}={$value}";
+            }
+        }
+
+        $content = implode("\n", $newLines);
+        file_put_contents($envPath, $content);
 
         if (file_exists($projectPath.'/.env.production')) {
-            file_put_contents($projectPath.'/.env.production', $env);
+            file_put_contents($projectPath.'/.env.production', $content);
         }
     }
 
-    protected function generateDockerfiles($projectPath, $serverVariation, $phpVersion, $os, $additionalExtensions): void
+    protected function generateDockerfiles(ConfigData $config): void
     {
-        $osSuffix = $os === 'alpine' ? '-alpine' : '';
-        if ($serverVariation === 'fpm-apache') {
-            $osSuffix = '';
-        }
+        $projectPath = $config->getPath();
 
-        $phpExtensions = implode(' ', $additionalExtensions);
+        $phpDockerfile = view('docker.php', ['config' => $config])->render();
+        file_put_contents("$projectPath/Dockerfile.php", $phpDockerfile);
 
-        $phpDockerfile = file_get_contents(base_path('resources/stubs/Dockerfile.php.stub'));
-        $phpDockerfile = str_replace(
-            ['{{PHP_VERSION}}', '{{SERVER_VARIATION}}', '{{OS_SUFFIX}}', '{{PHP_EXTENSIONS}}'],
-            [$phpVersion, $serverVariation, $osSuffix, $phpExtensions],
-            $phpDockerfile
-        );
-
-        if (empty($additionalExtensions)) {
-            $phpDockerfile = str_replace('RUN install-php-extensions', '# RUN install-php-extensions', $phpDockerfile);
-        }
-
-        file_put_contents($projectPath.'/Dockerfile.php', $phpDockerfile);
-
-        $nodeDockerfile = file_get_contents(base_path('resources/stubs/Dockerfile.node.stub'));
-        file_put_contents($projectPath.'/Dockerfile.node', $nodeDockerfile);
+        $nodeDockerfile = view('docker.node', ['config' => $config])->render();
+        file_put_contents("$projectPath/Dockerfile.node", $nodeDockerfile);
     }
 
-    protected function generateK8sManifests($projectPath, $appName, $email, $databases, $features, $serverVariation, $context = []): void
+    protected function generateK8sManifests(ConfigData $config): void
     {
-        $k8sPath = $projectPath.'/.infrastructure/k8s';
-        @mkdir($projectPath.'/.infrastructure', 0755, true);
-        @mkdir($k8sPath.'/base', 0755, true);
-        @mkdir($k8sPath.'/overlays/local', 0755, true);
-        @mkdir($k8sPath.'/overlays/production', 0755, true);
+        $appName = $config->getName();
+        $k8sPath = $config->getk8sPath();
+        @mkdir($config->getInfrastructurePath(), 0755, true);
+        @mkdir("$k8sPath/base", 0755, true);
+        @mkdir("$k8sPath/overlays/local", 0755, true);
+        @mkdir("$k8sPath/overlays/production", 0755, true);
 
-        $host = $appName.'.dev.test';
-
-        $dbEngines = collect($databases)->map(fn ($db) => DatabaseEngine::from($db));
-        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::MYSQL;
-
-        $dbConnection = $primaryDb->dbConnection();
-        $dbHost = $primaryDb->dbHost();
-        $dbPort = $primaryDb->dbPort();
-        $dbUsername = $primaryDb->dbUsername();
-        $redisHost = $dbEngines->contains(DatabaseEngine::REDIS) ? 'redis' : '127.0.0.1';
-
-        $server = ServerVariation::from($serverVariation);
-        $containerPort = $server->containerPort();
-        $traefikScheme = $server->traefikScheme();
-
-        // Calculate Node Command - Added --host so readiness probes can reach port 5173
-        $pm = PackageManager::from($context['packageManager'] ?? 'npm');
-        $nodeCommand = match ($pm) {
-            PackageManager::YARN => '["sh", "-c", "'.$pm->installCommand().' && yarn dev --host"]',
-            PackageManager::PNPM => '["sh", "-c", "'.$pm->installCommand().' && pnpm dev --host"]',
-            PackageManager::BUN => '["sh", "-c", "'.$pm->installCommand().' && bun run dev --host"]',
-            default => '["sh", "-c", "'.$pm->installCommand().' && npm run dev -- --host"]',
-        };
+        // 0. Copy certificates for local development (e.g. for Vite HTTPS)
+        $projectCertsPath = $config->getPath().'/.infrastructure/traefik/certificates';
+        @mkdir($projectCertsPath, 0755, true);
+        $cliCertsPath = base_path('resources/views/traefik/certificates');
+        @copy("$cliCertsPath/local-dev.pem", "$projectCertsPath/local-dev.pem");
+        @copy("$cliCertsPath/local-dev-key.pem", "$projectCertsPath/local-dev-key.pem");
+        @copy("$cliCertsPath/local-ca.pem", "$projectCertsPath/local-ca.pem");
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');
 
         // 1. Generate ALL core stubs first (Clean slate)
         $stubs = [
             'base/kustomization.yaml', 'base/deployment.yaml', 'base/service.yaml', 'base/ingress.yaml',
-            'base/pvc.yaml',
-            'overlays/local/kustomization.yaml', 'overlays/local/namespace.yaml', 'overlays/local/node-deployment.yaml', 'overlays/local/mailpit.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml', 'overlays/local/laravel-volumes.yaml',
+            'base/pvc.yaml', 'base/configmap.yaml',
+            'overlays/local/kustomization.yaml', 'overlays/local/namespace.yaml', 'overlays/local/node-deployment.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml', 'overlays/local/laravel-volumes.yaml',
             'overlays/production/kustomization.yaml', 'overlays/production/namespace.yaml', 'overlays/production/deployment-patch.yaml',
         ];
 
         foreach ($stubs as $stub) {
-            $content = file_get_contents(base_path("resources/stubs/k8s/{$stub}.stub"));
-
             $namespace = $appName;
             if (str_contains($stub, 'overlays/local')) {
-                $namespace = $appName.'-local';
+                $namespace .= '-local';
             } elseif (str_contains($stub, 'overlays/production')) {
-                $namespace = $appName.'-production';
+                $namespace .= '-production';
             }
 
             // Calculate environment-aware command
-            $command = '[]';
-            if ($server === ServerVariation::FRANKENPHP) {
-                $watchFlag = str_contains($stub, 'overlays/local') ? ', "--watch"' : '';
-                $command = "[\"php\", \"artisan\", \"octane:start\", \"--server=frankenphp\", \"--port=8080\", \"--host=0.0.0.0\"{$watchFlag}]";
-            }
+            $command = $config->getServerVariation()->getStartCommand(str_contains($stub, 'overlays/local'));
 
-            $content = str_replace(
-                ['{{IMAGE_NAME}}', '{{APP_NAME}}', '{{HOST}}', '{{DB_CONNECTION}}', '{{APP_KEY}}', '{{DB_PASSWORD}}', '{{EMAIL}}', '{{NAMESPACE}}', '{{PROJECT_PATH}}', '{{MEILI_MASTER_KEY}}', '{{DB_HOST}}', '{{DB_PORT}}', '{{DB_USERNAME}}', '{{CONTAINER_PORT}}', '{{TRAEFIK_SCHEME}}', '{{COMMAND}}', '{{NODE_COMMAND}}', '{{REDIS_HOST}}'],
-                [$appName, $appName, $host, $dbConnection, 'base64:'.base64_encode(random_bytes(32)), 'secretpassword', $email, $namespace, realpath($projectPath), 'secretpassword', $dbHost, $dbPort, $dbUsername, $containerPort, $traefikScheme, $command, $nodeCommand, $redisHost],
-                $content
-            );
+            $viewName = 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub);
+            $content = view($viewName, [
+                'config' => $config,
+                'namespace' => $namespace,
+                'command' => $command,
+            ])->render();
 
-            file_put_contents($k8sPath.'/'.$stub, $content);
+            file_put_contents("$k8sPath/$stub", $content);
         }
 
         // 2. APPLY ACTIONS & COLLECT CATEGORIZED MANIFESTS
@@ -147,40 +123,13 @@ trait GeneratesProjectInfrastructure
             'patches' => [],
         ];
 
-        // Apply Blueprint
-        $blueprintName = $context['blueprint'] ?? Blueprint::LARAVEL->value;
-        $blueprint = Blueprint::from($blueprintName);
-        if ($blueprintAction = $blueprint->action()) {
-            $blueprintAction->apply($projectPath, $k8sPath, $appName, $context);
-            $actionFiles = $blueprintAction->getManifestFiles();
-            foreach (['base', 'local', 'production', 'patches'] as $key) {
-                if (isset($actionFiles[$key])) {
-                    $manifests[$key] = array_merge($manifests[$key], $actionFiles[$key]);
-                }
-            }
-        }
+        // Add Features, Databases, Object Storage
+        $pods = array_filter([...$config->getFeatures(), ...$config->getDatabases(), $config->getObjectStorage(), $config->getScoutDriver()]);
 
-        // Add Features
-        foreach ($features as $featureName) {
-            $feature = LaravelFeature::tryFrom($featureName);
-            if ($feature && $action = $feature->action()) {
-                $action->updateK8s($k8sPath, $appName, [
-                    'projectPath' => $projectPath,
-                ]);
-                $actionFiles = $action->getManifestFiles();
-                foreach (['base', 'local', 'production', 'patches'] as $key) {
-                    if (isset($actionFiles[$key])) {
-                        $manifests[$key] = array_merge($manifests[$key], $actionFiles[$key]);
-                    }
-                }
-            }
-        }
-
-        // Add Databases
-        foreach ($dbEngines as $engine) {
-            if ($action = $engine->action()) {
-                $action->updateK8s($k8sPath, $appName, ['projectPath' => $projectPath]);
-                $actionFiles = $action->getManifestFiles();
+        foreach ($pods as $pod) {
+            if ($pod instanceof HasKubernetesFiles) {
+                $pod->updateK8s($config);
+                $actionFiles = $pod->getManifestFiles();
                 foreach (['base', 'local', 'production', 'patches'] as $key) {
                     if (isset($actionFiles[$key])) {
                         $manifests[$key] = array_merge($manifests[$key], $actionFiles[$key]);
@@ -191,13 +140,13 @@ trait GeneratesProjectInfrastructure
 
         // 3. SYNCHRONIZED REGISTRATION (Explicit Deduplication)
         foreach (array_unique($manifests['base']) as $file) {
-            $this->appendToKustomization($k8sPath, 'base', $file, 'resources');
+            $this->appendToKustomization($k8sPath, 'base', $file);
         }
         foreach (array_unique($manifests['local']) as $file) {
-            $this->appendToKustomization($k8sPath, 'overlays/local', $file, 'resources');
+            $this->appendToKustomization($k8sPath, 'overlays/local', $file);
         }
         foreach (array_unique($manifests['production']) as $file) {
-            $this->appendToKustomization($k8sPath, 'overlays/production', $file, 'resources');
+            $this->appendToKustomization($k8sPath, 'overlays/production', $file);
         }
         foreach (array_unique($manifests['patches']) as $file) {
             $this->appendToKustomization($k8sPath, 'overlays/local', $file, 'patches');
@@ -206,7 +155,7 @@ trait GeneratesProjectInfrastructure
 
     protected function appendToKustomization(string $k8sPath, string $folder, string $filename, string $type = 'resources'): void
     {
-        $kustomizationFile = $k8sPath.'/'.$folder.'/kustomization.yaml';
+        $kustomizationFile = "$k8sPath/$folder/kustomization.yaml";
         if (! file_exists($kustomizationFile)) {
             return;
         }
@@ -214,221 +163,19 @@ trait GeneratesProjectInfrastructure
         $content = file_get_contents($kustomizationFile);
 
         if ($type === 'resources') {
-            if (! str_contains($content, "  - {$filename}") && ! str_contains($content, "- {$filename}")) {
-                $content = preg_replace('/resources:\n/', "resources:\n  - {$filename}\n", $content, 1);
+            if (! str_contains($content, "  - $filename") && ! str_contains($content, "- $filename")) {
+                $content = preg_replace('/resources:\n/', "resources:\n  - $filename\n", $content, 1);
             }
         } elseif ($type === 'patches') {
-            if (! str_contains($content, "path: {$filename}")) {
+            if (! str_contains($content, "path: $filename")) {
                 if (! str_contains($content, 'patches:')) {
                     $content .= "\npatches:\n";
                 }
-                $content = preg_replace('/patches:\n/', "patches:\n  - path: {$filename}\n", $content, 1);
+                $content = preg_replace('/patches:\n/', "patches:\n  - path: $filename\n", $content, 1);
             }
         }
 
         file_put_contents($kustomizationFile, $content);
-    }
-
-    protected function generateDockerCompose($projectPath, $appName, $packageManager, $databases, $features, $serverVariation): void
-    {
-        $content = file_get_contents(base_path('resources/stubs/docker-compose.yml.stub'));
-        file_put_contents($projectPath.'/docker-compose.yml', $content);
-
-        $dbEngines = collect($databases)->map(fn ($db) => DatabaseEngine::from($db));
-
-        // Add databases via Actions
-        foreach ($dbEngines as $engine) {
-            if ($action = $engine->action()) {
-                $action->updateDockerCompose($projectPath);
-            }
-        }
-    }
-
-    /**
-     * @throws RandomException
-     */
-    protected function installLaravelFeatures(string $projectPath, string $appName, array $features, string $packageManager, array $context = []): void
-    {
-        // 1. Gather and categorize commands
-        $composerPackages = [];
-        $artisanCommands = [];
-        $jsCommands = [];
-
-        $pmEnum = PackageManager::from($packageManager);
-
-        // Add Blueprint commands
-        $blueprintName = $context['blueprint'] ?? Blueprint::LARAVEL->value;
-        $blueprint = Blueprint::from($blueprintName);
-        if ($blueprintAction = $blueprint->action()) {
-            $blueprintCmds = $blueprintAction->getInstallCommands($context);
-            foreach ($blueprintCmds as $cmd) {
-                if (str_starts_with($cmd, 'composer require ')) {
-                    $packages = str_replace('composer require ', '', $cmd);
-                    $composerPackages = array_merge($composerPackages, explode(' ', $packages));
-                } elseif (str_starts_with($cmd, 'php artisan ')) {
-                    $artisanCommands[] = $cmd;
-                } else {
-                    $jsCommands[] = $cmd;
-                }
-            }
-        }
-
-        foreach ($features as $featureName) {
-            $feature = LaravelFeature::tryFrom($featureName);
-            if ($feature && $action = $feature->action()) {
-                $featureCmds = $action->getInstallCommands([
-                    'projectPath' => $projectPath,
-                    'packageManager' => $packageManager,
-                ]);
-                foreach ($featureCmds as $cmd) {
-                    if (str_starts_with($cmd, 'composer require ')) {
-                        $packages = str_replace('composer require ', '', $cmd);
-                        $composerPackages = array_merge($composerPackages, explode(' ', $packages));
-                    } elseif (str_starts_with($cmd, 'php artisan ')) {
-                        $artisanCommands[] = $cmd;
-                    } else {
-                        $jsCommands[] = $cmd;
-                    }
-                }
-
-                // Run onPostInstall
-                $action->onPostInstall($projectPath, [
-                    'projectPath' => $projectPath,
-                ]);
-            }
-        }
-
-        // Handle Database installation (for DBs that are also features like MongoDB)
-        $dbEngines = collect($context['databases'] ?? [])->map(fn ($db) => DatabaseEngine::tryFrom($db));
-        foreach ($dbEngines as $engine) {
-            if ($engine && $action = $engine->action()) {
-                if ($action instanceof FeatureAction) {
-                    $dbCmds = $action->getInstallCommands([
-                        'projectPath' => $projectPath,
-                        'packageManager' => $packageManager,
-                    ]);
-                    foreach ($dbCmds as $cmd) {
-                        if (str_starts_with($cmd, 'composer require ')) {
-                            $packages = str_replace('composer require ', '', $cmd);
-                            $composerPackages = array_merge($composerPackages, explode(' ', $packages));
-                        } elseif (str_starts_with($cmd, 'php artisan ')) {
-                            $artisanCommands[] = $cmd;
-                        } else {
-                            $jsCommands[] = $cmd;
-                        }
-                    }
-
-                    $action->onPostInstall($projectPath, [
-                        'projectPath' => $projectPath,
-                    ]);
-                }
-            }
-        }
-
-        // 2. Execute PHP installation (Composer/Artisan)
-        if (! empty($composerPackages) || ! empty($artisanCommands)) {
-            $this->laraKubeInfo('Installing PHP requirements...');
-
-            $phpCommands = [];
-
-            if (! empty($composerPackages)) {
-                $uniquePackages = array_unique($composerPackages);
-                $phpCommands[] = 'composer require '.implode(' ', $uniquePackages);
-            }
-
-            foreach ($artisanCommands as $cmd) {
-                $phpCommands[] = $cmd;
-            }
-
-            $this->runInContainer(implode(' && ', $phpCommands), $projectPath, 'php');
-        }
-
-        // 3. Execute JS installation and build
-        $this->laraKubeInfo('Installing JS packages and building assets...');
-        $jsExecution = [];
-        foreach ($jsCommands as $cmd) {
-            $jsExecution[] = $cmd;
-        }
-        $jsExecution[] = $pmEnum->buildCommand();
-
-        // Remove Wayfinder from config BEFORE running build
-        $this->removeWayfinderFromViteConfig($projectPath);
-        $this->configureViteHmr($projectPath, $appName);
-        $this->removeDuplicateReverbImports($projectPath);
-
-        $this->runInContainer(implode(' && ', $jsExecution), $projectPath, 'node');
-    }
-
-    protected function removeDuplicateReverbImports(string $projectPath): void
-    {
-        $appTs = $projectPath.'/resources/js/app.ts';
-        if (file_exists($appTs)) {
-            $content = file_get_contents($appTs);
-            // Match the import line and only keep the first one
-            $pattern = "/import\s*{\s*configureEcho\s*}\s*from\s*['\"]@laravel\/echo-(vue|react)['\"];?\r?\n?/";
-
-            if (preg_match_all($pattern, $content, $matches) > 1) {
-                // Keep only the first occurrence of the import
-                $newContent = preg_replace($pattern, '', $content);
-                $newContent = $matches[0][0]."\n".$newContent;
-                file_put_contents($appTs, $newContent);
-                $this->laraKubeInfo('Deduplicated Reverb imports in app.ts');
-            }
-        }
-    }
-
-    protected function configureViteHmr(string $projectPath, string $appName): void
-    {
-        $files = ['vite.config.ts', 'vite.config.js'];
-        $hmrConfig = <<<JS
-    server: {
-        host: '0.0.0.0',
-        strictPort: true,
-        port: 5173,
-        hmr: {
-            host: 'vite.{$appName}.dev.test',
-            clientPort: 80,
-        },
-        cors: true,
-    },
-JS;
-
-        foreach ($files as $file) {
-            $path = $projectPath.'/'.$file;
-            if (file_exists($path)) {
-                $content = file_get_contents($path);
-
-                if (! str_contains($content, 'server: {')) {
-                    // Inject before plugins array
-                    $newContent = preg_replace('/export\s+default\s+defineConfig\s*\(\s*\{/', "export default defineConfig({\n{$hmrConfig}", $content);
-                    file_put_contents($path, $newContent);
-                    $this->laraKubeInfo("Configured Vite HMR in {$file}");
-                }
-            }
-        }
-    }
-
-    protected function removeWayfinderFromViteConfig(string $projectPath): void
-    {
-        $files = ['vite.config.ts', 'vite.config.js'];
-
-        foreach ($files as $file) {
-            $path = $projectPath.'/'.$file;
-            if (file_exists($path)) {
-                $content = file_get_contents($path);
-
-                // 1. Remove explicit wayfinder import
-                $cleanContent = preg_replace("/import\s*{\s*wayfinder\s*}\s*from\s*['\"]@laravel\/vite-plugin-wayfinder['\"];?\r?\n?/", '', $content);
-
-                // 2. Remove explicit wayfinder plugin call (including multi-line configuration blocks)
-                $cleanContent = preg_replace("/wayfinder\s*\((?:[^()]+|(?R))*\),?\r?\n?/s", '', $cleanContent);
-
-                if ($cleanContent !== $content) {
-                    file_put_contents($path, $cleanContent);
-                    $this->laraKubeInfo("Cleaned up Wayfinder plugin from {$file}");
-                }
-            }
-        }
     }
 
     protected function setLaravelStoragePermissions(string $projectPath): void
@@ -437,93 +184,107 @@ JS;
         $this->runInContainer('chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache', $projectPath);
     }
 
-    /**
-     * Orchestrate the entire project infrastructure generation and installation.
-     */
-    protected function orchestrateProjectScaffolding(string $projectPath, string $appName, array $config, bool $installFeatures = true, bool $buildImage = true, bool $dryRun = false): void
+    protected function ensureHttpsCompatibility(ConfigData $config): void
     {
-        if ($dryRun) {
-            $this->laraKubeInfo("Architectural Preview for '{$appName}':");
+        $projectPath = $config->getPath();
+        $providerPath = $projectPath.'/app/Providers/AppServiceProvider.php';
+
+        if (! file_exists($providerPath)) {
+            return;
         }
 
-        // 0. Ensure permanent Project ID
-        if (! isset($config['id'])) {
-            $config['id'] = (string) Str::uuid();
+        $content = file_get_contents($providerPath);
+
+        // Check if already applied
+        if (str_contains($content, 'URL::forceScheme')) {
+            return;
+        }
+
+        $this->laraKubeInfo('Surgically applying HTTPS compatibility to AppServiceProvider...');
+
+        $injection = "        if (str_starts_with(config('app.url'), 'https://')) {\n            \Illuminate\Support\Facades\URL::forceScheme('https');\n        }\n\n";
+
+        // Find the boot() method
+        $pattern = "/public function boot\(\): void\n    \{/";
+        $replacement = "public function boot(): void\n    {\n".$injection;
+
+        if (preg_match($pattern, $content)) {
+            $newContent = preg_replace($pattern, $replacement, $content);
+            file_put_contents($providerPath, $newContent);
+        }
+    }
+
+    /**
+     * Orchestrate the entire project infrastructure generation and installation.
+     *
+     * @throws RandomException
+     */
+    protected function orchestrateProjectScaffolding(ConfigData $config, bool $installFeatures = true, bool $buildImage = true, bool $dryRun = false): void
+    {
+        if ($dryRun) {
+            $this->laraKubeInfo("Architectural Preview for '{$config->getName()}':");
         }
 
         // 0. Persist configuration for self-healing
         if ($dryRun) {
             $this->line('  <fg=gray>[FILE]</> Would create .larakube.json with project blueprint.');
-            $this->line("  <fg=gray>[DB]</> Would register project '{$appName}' in internal database.");
+            $this->line("  <fg=gray>[DB]</> Would register project '{$config->getName()}' in internal database.");
         } else {
-            file_put_contents(
-                $projectPath.'/.larakube.json',
-                json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-            );
-
-            // Register in the internal list
-            $this->registerProject($projectPath, $config);
+            $this->saveProjectConfig($config->getPath(), $config);
         }
 
         // 1. Handle Blueprint extensions
-        $blueprint = Blueprint::from($config['blueprint']);
-        $blueprintExtensions = $blueprint->action() ? $blueprint->action()->getPhpExtensions() : [];
-        $allExtensions = array_unique(array_merge($config['additionalExtensions'], $blueprintExtensions));
-
-        // 2. Generate Dockerfiles
-        if ($dryRun) {
-            $this->line("  <fg=gray>[FILE]</> Would generate Dockerfile.php ({$config['serverVariation']}).");
-        } else {
-            $this->generateDockerfiles($projectPath, $config['serverVariation'], $config['phpVersion'], $config['os'], $allExtensions);
+        if (! $config->hasBlueprint()) {
+            $config->setBlueprint(Blueprint::LARAVEL);
         }
 
-        // 3. Build the local image if requested
-        if ($buildImage) {
-            if ($dryRun) {
-                $this->line("  <fg=gray>[DOCKER]</> Would build image '{$appName}:latest'.");
-            } else {
-                $this->buildImage($projectPath, $appName);
-            }
-        }
-
-        // 4. Generate Manifests
-        if ($dryRun) {
-            $this->line('  <fg=gray>[K8S]</> Would generate base and overlay manifests in .infrastructure/k8s/');
-        } else {
-            $this->generateK8sManifests($projectPath, $appName, $config['email'], $config['databases'], $config['features'], $config['serverVariation'], $config);
-            $this->generateDockerCompose($projectPath, $appName, $config['packageManager'], $config['databases'], $config['features'], $config['serverVariation']);
-        }
-
-        // 5. Sync .env
-        $dbEngines = collect($config['databases'])->map(fn ($db) => DatabaseEngine::from($db));
-        $primaryDb = $dbEngines->first(fn ($db) => $db->isPersistent()) ?? DatabaseEngine::MYSQL;
-
-        $envChanges = [
-            'APP_URL' => "http://{$appName}.dev.test",
-            'DB_CONNECTION' => $primaryDb->dbConnection(),
-            'DB_HOST' => $primaryDb->dbHost(),
-            'DB_PORT' => $primaryDb->dbPort(),
-            'DB_USERNAME' => $primaryDb->dbUsername(),
-            'DB_PASSWORD' => 'secretpassword',
-            'DB_DATABASE' => 'laravel',
-            'REDIS_HOST' => $dbEngines->contains(DatabaseEngine::REDIS) ? 'redis' : '127.0.0.1',
-        ];
+        // 2. Sync .env (Source of Truth)
+        $envChanges = $config->getAllEnvironmentVariables();
 
         if ($dryRun) {
             $this->line('  <fg=gray>[.ENV]</> Would sync the following variables:');
             foreach ($envChanges as $k => $v) {
-                $this->line("         {$k}={$v}");
+                $this->line("         $k=$v");
             }
         } else {
-            $this->syncEnvFile($projectPath, $envChanges);
+            $this->syncEnvFile($config->getPath(), $envChanges);
+        }
+
+        // 3. Ensure HTTPS compatibility (Surgical)
+        if (! $dryRun) {
+            $this->ensureHttpsCompatibility($config);
+        }
+
+        // 4. Generate Dockerfiles
+        if ($dryRun) {
+            $this->line("  <fg=gray>[FILE]</> Would generate Dockerfile.php ({$config->getServerVariation()?->value}).");
+        } else {
+            $this->generateDockerfiles($config);
+        }
+
+        // 4. Build the local image if requested
+        if ($buildImage) {
+            if ($dryRun) {
+                $this->line("  <fg=gray>[DOCKER]</> Would build image '{$config->getName()}:latest'.");
+            } else {
+                $this->buildImage($config);
+            }
+        }
+
+        // 5. Generate Manifests
+        if ($dryRun) {
+            $this->line('  <fg=gray>[K8S]</> Would generate base and overlay manifests in .infrastructure/k8s/');
+        } else {
+            $this->generateK8sManifests($config);
         }
 
         // 6. Install features
         if ($installFeatures) {
             if ($dryRun) {
-                $this->line('  <fg=gray>[PHP]</> Would install features: '.implode(', ', $config['features']));
+                $featuresList = array_map(fn ($f) => $f->value, $config->getFeatures());
+                $this->line('  <fg=gray>[PHP]</> Would install features: '.implode(', ', $featuresList));
             } else {
-                $this->installLaravelFeatures($projectPath, $appName, $config['features'], $config['packageManager'], $config);
+                $config->installComponents();
             }
         }
 

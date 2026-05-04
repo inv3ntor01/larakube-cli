@@ -21,7 +21,7 @@ class ConfigCommand extends Command
         $email = $this->option('email');
         if ($email) {
             $this->setEmail($email);
-            $this->info("  ✔ Global email updated to: {$email}");
+            $this->info("  ✔ Global email updated to: $email");
         }
 
         $this->laraKubeInfo('Current Global Configuration:');
@@ -42,7 +42,7 @@ class ConfigCommand extends Command
         $this->line('');
         $this->info('👉 To update AI settings: larakube config:ai --gemini=KEY');
         $this->info('👉 To register global MCP: larakube config:mcp --all');
-        $this->info('👉 To update email: larakube config --email=user@example.dev.test');
+        $this->info('👉 To update email: larakube config --email=example@email.com');
 
         return 0;
     }

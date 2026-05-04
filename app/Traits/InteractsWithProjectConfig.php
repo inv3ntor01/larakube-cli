@@ -2,19 +2,49 @@
 
 namespace App\Traits;
 
+use App\Data\ConfigData;
+use Exception;
+
 trait InteractsWithProjectConfig
 {
     /**
-     * Get the project configuration from .larakube.json.
+     * Ensure the current directory is a LaraKube project.
      */
-    protected function getProjectConfig(string $projectPath): array
+    protected function isLaraKubeProject(bool $showError = true): bool
     {
-        $path = $projectPath.'/.larakube.json';
-        if (file_exists($path)) {
-            return json_decode(file_get_contents($path), true) ?? [];
+        if (file_exists(getcwd().'/'.ConfigData::CONFIG_FILE)) {
+            return true;
         }
 
-        return [];
+        if ($showError) {
+            $this->laraKubeError('Not a LaraKube project.');
+        }
+
+        return true;
+    }
+
+    /**
+     * Get the project configuration from .larakube.json.
+     */
+    protected function getProjectConfig(?string $projectPath = null): ?ConfigData
+    {
+        try {
+            return ConfigData::loadFromFile($projectPath);
+        } catch (Exception) {
+            return null;
+        }
+    }
+
+    /**
+     * Get the project configuration object.
+     */
+    protected function getProjectConfigObject(string $projectPath): ConfigData
+    {
+        try {
+            return ConfigData::loadFromFile($projectPath);
+        } catch (Exception) {
+            return new ConfigData;
+        }
     }
 
     /**
@@ -22,17 +52,37 @@ trait InteractsWithProjectConfig
      */
     protected function updateProjectConfig(string $projectPath, string $key, mixed $value): void
     {
-        $config = $this->getProjectConfig($projectPath);
+        $config = $this->getProjectConfigObject($projectPath);
+        $data = $config->toArray();
 
-        if (is_array($value) && isset($config[$key]) && is_array($config[$key])) {
-            $config[$key] = array_unique(array_merge($config[$key], $value));
+        if (is_array($value) && isset($data[$key]) && is_array($data[$key])) {
+            $data[$key] = array_unique(array_merge($data[$key], $value));
         } else {
-            $config[$key] = $value;
+            $data[$key] = $value;
         }
 
-        file_put_contents(
-            $projectPath.'/.larakube.json',
-            json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-        );
+        ConfigData::fromArray($data)->saveToFile($projectPath);
+    }
+
+    /**
+     * Save the full configuration object, registering it in the local database
+     * and optionally backing it up to the Kubernetes cluster.
+     */
+    protected function saveProjectConfig(string $projectPath, ConfigData $config, ?string $environment = null): void
+    {
+        // 1. Save to local file (.larakube.json)
+        $config->saveToFile($projectPath);
+
+        // 2. Register in internal SQLite database (Speed & List commands)
+        if (method_exists($this, 'registerProject')) {
+            $this->registerProject($projectPath, $config);
+        }
+
+        // 3. Optional: Backup to Cluster (Disilience/Disaster Recovery)
+        if ($environment) {
+            $appName = $config->getName() ?? basename($projectPath);
+            $namespace = method_exists($this, 'getNamespace') ? $this->getNamespace($environment, $appName) : "{$appName}-{$environment}";
+            $config->backupToCluster($namespace);
+        }
     }
 }

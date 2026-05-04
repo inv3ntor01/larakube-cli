@@ -19,9 +19,8 @@ trait InteractsWithTraefik
             return true;
         });
 
-        $stubPath = base_path('resources/stubs/k8s/traefik-install.yaml.stub');
         $tmpInstall = sys_get_temp_dir().'/traefik-install.yaml';
-        file_put_contents($tmpInstall, file_get_contents($stubPath));
+        file_put_contents($tmpInstall, view('k8s.traefik-install')->render());
 
         $this->withSpin('Applying Traefik manifests...', function () use ($tmpInstall) {
             exec("kubectl apply -f {$tmpInstall}");
@@ -46,19 +45,14 @@ trait InteractsWithTraefik
         $namespace = 'traefik';
         shell_exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
 
-        // 1. Create ConfigMap for Traefik configuration
-        $traefikYml = base_path('resources/stubs/traefik/dev/traefik.yml.stub');
-        $traefikCertsYml = base_path('resources/stubs/traefik/dev/traefik-certs.yml.stub');
-
-        $tmpYml = sys_get_temp_dir().'/traefik.yml';
+        // 1. Create ConfigMap for Traefik dynamic configuration
         $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
-        file_put_contents($tmpYml, file_get_contents($traefikYml));
-        file_put_contents($tmpCertsYml, file_get_contents($traefikCertsYml));
+        file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
 
-        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik.yml={$tmpYml} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
 
         // 2. Create Secret for SSL certificates
-        $certDir = base_path('resources/stubs/traefik/dev/certificates');
+        $certDir = base_path('resources/views/traefik/certificates');
         $tmpDevPem = sys_get_temp_dir().'/local-dev.pem';
         $tmpDevKeyPem = sys_get_temp_dir().'/local-dev-key.pem';
         file_put_contents($tmpDevPem, file_get_contents("{$certDir}/local-dev.pem"));
@@ -66,7 +60,9 @@ trait InteractsWithTraefik
 
         shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
 
-        @unlink($tmpYml);
+        // Force Traefik to restart to pick up changes
+        shell_exec("kubectl rollout restart deployment traefik -n {$namespace}");
+
         @unlink($tmpCertsYml);
         @unlink($tmpDevPem);
         @unlink($tmpDevKeyPem);

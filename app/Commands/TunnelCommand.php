@@ -2,7 +2,7 @@
 
 namespace App\Commands;
 
-use App\Enums\DatabaseEngine;
+use App\Enums\DatabaseDriver;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -17,7 +17,7 @@ class TunnelCommand extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'tunnel 
+    protected $signature = 'tunnel
                             {services?* : The service(s) to tunnel to (mysql, postgres, redis)}
                             {--environment=local : The environment to use}';
 
@@ -120,13 +120,11 @@ class TunnelCommand extends Command
         $data = json_decode($output, true);
         $runningServices = collect($data['items'] ?? [])->map(fn ($item) => $item['metadata']['name'])->toArray();
 
-        foreach (DatabaseEngine::cases() as $engine) {
-            $svcName = $engine->dbHost();
-
-            if (in_array($svcName, $runningServices)) {
+        foreach (DatabaseDriver::cases() as $engine) {
+            if (in_array($engine->dbHost(), $runningServices)) {
                 $services[strtolower($engine->name)] = [
                     'label' => $engine->value,
-                    'svc' => $svcName,
+                    'svc' => $engine->dbHost(),
                     'port' => $engine->dbPort(),
                     'user' => $engine->dbUsername(),
                 ];

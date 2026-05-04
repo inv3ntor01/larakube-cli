@@ -2,9 +2,6 @@
 
 namespace App\Traits;
 
-use App\Enums\LaravelFeature;
-use App\Enums\ScoutDriver;
-
 use function Laravel\Prompts\confirm;
 
 trait InteractsWithHosts
@@ -18,39 +15,9 @@ trait InteractsWithHosts
     {
         $projectPath = getcwd();
         $appName = basename($projectPath);
-        $baseHost = "{$appName}.dev.test";
 
-        $requiredHosts = [$baseHost, "mailpit.{$baseHost}", "vite.{$baseHost}"];
-
-        // Discovery Phase: Try to find enabled services even if config is missing
         $config = $this->getProjectConfig($projectPath);
-        $features = $config['features'] ?? [];
-        $k8sBasePath = $projectPath.'/.infrastructure/k8s/base';
-
-        // 1. Storage Discovery
-        if (($config['objectStorage'] ?? 'none') !== 'none' || is_dir($k8sBasePath.'/minio') || file_exists($k8sBasePath.'/minio-deployment.yaml')) {
-            $requiredHosts[] = "s3.{$baseHost}";
-            $requiredHosts[] = "s3-admin.{$baseHost}";
-        }
-
-        // 2. Search Discovery
-        if (in_array(LaravelFeature::SCOUT->value, $features) || file_exists($k8sBasePath.'/meilisearch-deployment.yaml') || file_exists($k8sBasePath.'/typesense-deployment.yaml')) {
-            $driver = $config['scoutDriver'] ?? 'MEILISEARCH';
-            if ($driver === ScoutDriver::MEILISEARCH->value || $driver === 'MEILISEARCH' || file_exists($k8sBasePath.'/meilisearch-deployment.yaml')) {
-                $requiredHosts[] = "meilisearch.{$baseHost}";
-            }
-            if ($driver === ScoutDriver::TYPESENSE->value || $driver === 'TYPESENSE' || file_exists($k8sBasePath.'/typesense-deployment.yaml')) {
-                $requiredHosts[] = "typesense.{$baseHost}";
-            }
-        }
-
-        // 3. Monitoring Discovery
-        if (in_array(LaravelFeature::MONITORING->value, $features) || file_exists($k8sBasePath.'/monitoring-grafana.yaml')) {
-            $requiredHosts[] = "grafana.{$baseHost}";
-            $requiredHosts[] = "prometheus.{$baseHost}";
-        }
-
-        $requiredHosts = array_unique($requiredHosts);
+        $requiredHosts = array_keys($config->getAllHosts());
 
         // 🛡 SMART IP DETECTION
         // On Mac and Windows, Docker Desktop/OrbStack maps published ports to 127.0.0.1.
@@ -65,8 +32,8 @@ trait InteractsWithHosts
             }
         }
         $hostList = implode(' ', $requiredHosts);
-        $newEntry = "{$externalIp} {$hostList}";
-        $blockIdentifier = "# LaraKube: {$appName}";
+        $newEntry = "$externalIp $hostList";
+        $blockIdentifier = "# LaraKube: $appName";
         $fullBlock = "\n{$blockIdentifier}\n{$newEntry}\n";
 
         // 1. Check if update is actually needed
@@ -74,20 +41,31 @@ trait InteractsWithHosts
             return;
         }
 
+        // If running inside a container, we usually can't update the host's /etc/hosts
+        // without mapping it, which is risky. We'll skip it and warn the user.
+        if (getenv('LARAKUBE_HOST_PROJECT_PATH') && ! is_writable('/etc/hosts')) {
+            $this->warning('Running inside LaraKube daemon: skipping /etc/hosts sync.');
+            $this->line('  👉 Please ensure your host machine has these mappings:');
+            $this->line("     $newEntry");
+            $this->line('');
+
+            return;
+        }
+
         $currentHosts = file_get_contents('/etc/hosts');
 
         if (str_contains($currentHosts, $fullBlock)) {
-            return; // Perfectly matched, nothing to do
+            return;
         }
 
         $this->laraKubeInfo('Local domain mapping update required.');
-        $this->line("  <fg=gray>Target IP:</> <fg=blue>{$externalIp}</>");
+        $this->line("  <fg=gray>Target IP:</> <fg=blue>$externalIp</>");
         foreach ($requiredHosts as $host) {
             $this->line("  <fg=gray>●</> <fg=blue>{$host}</>");
         }
         $this->line('');
 
-        if (confirm('Would you like LaraKube to sync your /etc/hosts?', true)) {
+        if (confirm('Would you like LaraKube to sync your /etc/hosts?')) {
             $this->line('  <fg=gray>LaraKube requires sudo privileges to update /etc/hosts</>');
             passthru('sudo -v');
 
@@ -107,7 +85,7 @@ trait InteractsWithHosts
                 $tmpPath = sys_get_temp_dir().'/larakube_hosts';
                 file_put_contents($tmpPath, $newHosts);
 
-                exec("sudo cp {$tmpPath} /etc/hosts");
+                exec("sudo cp $tmpPath /etc/hosts");
                 @unlink($tmpPath);
 
                 return true;
