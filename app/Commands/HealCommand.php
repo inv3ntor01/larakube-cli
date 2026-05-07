@@ -77,6 +77,7 @@ class HealCommand extends Command
             $this->line('  - .infrastructure/traefik/certificates/');
             $this->line('  - Dockerfile.php');
             $this->line('  - Dockerfile.node');
+            $this->line('  - .dockerignore');
             $this->line('  - .env (Syncs architectural keys)');
             $this->newLine();
 

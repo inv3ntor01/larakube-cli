@@ -1,42 +1,42 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis
+  name: memcached
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis
+      app: memcached
   template:
     metadata:
       labels:
-        app: redis
+        app: memcached
     spec:
       containers:
-        - name: redis
+        - name: memcached
           image: {{ $driver->getDockerImage($config) }}
           ports:
-            - containerPort: {{ $driver->dbPort() }}
+            - containerPort: 11211
           readinessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
+            tcpSocket:
+              port: 11211
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
+            tcpSocket:
+              port: 11211
             initialDelaySeconds: 5
             periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis
+  name: memcached-server
 spec:
   selector:
-    app: redis
+    app: memcached
   ports:
     - protocol: TCP
-      port: {{ $driver->dbPort() }}
-      targetPort: {{ $driver->dbPort() }}
+      port: 11211
+      targetPort: 11211
   type: ClusterIP

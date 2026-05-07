@@ -66,7 +66,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         };
     }
 
-    public function getDockerImage(): string
+    public function getDockerImage(?ConfigData $config = null): string
     {
         return match ($this) {
             self::MINIO => 'minio/minio:RELEASE.2025-09-07T16-13-09Z',

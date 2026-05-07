@@ -12,6 +12,7 @@ use App\Contracts\HasJsDependencies;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\RequiresPhpExtensions;
 use App\Enums\Blueprint;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
@@ -49,6 +50,7 @@ class ConfigData implements Arrayable
         protected ?string $scoutDriver = null,
         protected ?string $packageManager = null,
         protected ?string $objectStorage = null,
+        protected ?string $cacheDriver = null,
         protected ?array $databases = [],
         protected ?array $environments = [],
         protected ?bool $githubActions = true,
@@ -317,6 +319,21 @@ class ConfigData implements Arrayable
         return $this->objectStorage ? StorageDriver::tryFrom($this->objectStorage) : null;
     }
 
+    public function setCacheDriver(?CacheDriver $driver): void
+    {
+        $this->cacheDriver = $driver?->value;
+    }
+
+    public function getCacheDriver(): ?CacheDriver
+    {
+        return $this->cacheDriver ? CacheDriver::tryFrom($this->cacheDriver) : null;
+    }
+
+    public function hasCacheDriver(): bool
+    {
+        return ! is_null($this->getCacheDriver());
+    }
+
     public function setDatabases(array $databases): void
     {
         $this->databases = array_unique(array_map(function (DatabaseDriver|string $database) {
@@ -349,12 +366,12 @@ class ConfigData implements Arrayable
      */
     public function getDatabases(): array
     {
-        return ! empty($this->databases) ? Arr::map($this->databases, fn (string $database) => DatabaseDriver::tryFrom($database)) : [];
+        return ! empty($this->databases) ? array_filter(Arr::map($this->databases, fn (string $database) => DatabaseDriver::tryFrom($database))) : [];
     }
 
     public function getPrimaryDatabase(): DatabaseDriver
     {
-        return Arr::first($this->getDatabases(), fn (DatabaseDriver $db) => $db->isPersistent()) ?? DatabaseDriver::MYSQL;
+        return Arr::first($this->getDatabases(), fn ($db) => $db instanceof DatabaseDriver && $db->isPersistent()) ?? DatabaseDriver::MYSQL;
     }
 
     /**
@@ -364,13 +381,10 @@ class ConfigData implements Arrayable
      */
     public function getCoreDependencies(): array
     {
-        $deps = [$this->getPrimaryDatabase()];
-
-        if ($this->hasDatabase(DatabaseDriver::REDIS)) {
-            $deps[] = DatabaseDriver::REDIS;
-        }
-
-        return $deps;
+        return array_filter([
+            $this->getPrimaryDatabase(),
+            $this->getCacheDriver(),
+        ], fn ($dep) => $dep instanceof AsDependency);
     }
 
     /**
@@ -387,6 +401,11 @@ class ConfigData implements Arrayable
         $checks = [];
         foreach ($dependencies as $dep) {
             foreach ($dep->getDependencyConfig($this) as $host => $port) {
+                // Skip invalid hosts or ports
+                if (empty($host) || empty($port)) {
+                    continue;
+                }
+
                 // If it's a local host (127.0.0.1), it's not a k8s dependency to wait for
                 if ($host !== '127.0.0.1') {
                     $checks[] = "nc -z -v -w 1 $host $port";
@@ -443,6 +462,7 @@ class ConfigData implements Arrayable
             $this->getBlueprint(),
             $this->getServerVariation(),
             ...$this->getDatabases(),
+            $this->getCacheDriver(),
             $this->getScoutDriver(),
             $this->getObjectStorage(),
             ...$this->getFeatures(),
@@ -472,6 +492,9 @@ class ConfigData implements Arrayable
                             $settled = false;
                         } elseif ($dependency instanceof DatabaseDriver && ! $this->hasDatabase($dependency)) {
                             $this->addDatabase($dependency);
+                            $settled = false;
+                        } elseif ($dependency instanceof CacheDriver && $this->getCacheDriver() !== $dependency) {
+                            $this->setCacheDriver($dependency);
                             $settled = false;
                         } elseif ($dependency instanceof StorageDriver && $this->getObjectStorage() !== $dependency) {
                             $this->setObjectStorage($dependency);
@@ -513,8 +536,11 @@ class ConfigData implements Arrayable
     {
         $hosts = [
             "{$this->getName()}.dev.test" => 'Application',
-            "vite.{$this->getName()}.dev.test" => 'Vite HMR',
         ];
+
+        if ($this->getFrontend()?->requiresNodePod()) {
+            $hosts["vite-{$this->getName()}.dev.test"] = 'Vite HMR';
+        }
 
         foreach ($this->getComponents() as $component) {
             if ($component instanceof HasHosts) {
@@ -559,6 +585,7 @@ class ConfigData implements Arrayable
             scoutDriver: $data['scoutDriver'] ?? null,
             packageManager: $data['packageManager'] ?? null,
             objectStorage: $data['objectStorage'] ?? 'none',
+            cacheDriver: $data['cacheDriver'] ?? null,
             databases: $data['databases'] ?? [],
             environments: $data['environments'] ?? ['local', 'production'],
             githubActions: $data['githubActions'] ?? true,
@@ -606,6 +633,7 @@ class ConfigData implements Arrayable
             'scoutDriver' => $this->scoutDriver,
             'packageManager' => $this->packageManager,
             'objectStorage' => $this->objectStorage,
+            'cacheDriver' => $this->cacheDriver,
             'databases' => $this->databases,
             'environments' => $this->environments,
             'githubActions' => $this->githubActions,
@@ -765,12 +793,19 @@ class ConfigData implements Arrayable
 
             $js = [...$jsCommands, $this->getPackageManager()->buildCommand()];
 
-            // Remove Wayfinder from config BEFORE running build
+            $this->runInContainer(implode(' && ', $js), $projectPath, 'node');
+        }
+    }
+
+    public function hardenViteConfig(): void
+    {
+        $projectPath = $this->getPath();
+        $appName = $this->getName();
+
+        if ($this->getFrontend()?->requiresNodePod()) {
             $this->removeWayfinderFromViteConfig($projectPath);
             $this->configureViteHmr($projectPath, $appName);
             $this->removeDuplicateReverbImports($projectPath);
-
-            $this->runInContainer(implode(' && ', $js), $projectPath, 'node');
         }
     }
 
@@ -788,9 +823,9 @@ class ConfigData implements Arrayable
                 // 1. Remove explicit wayfinder import
                 $cleanContent = preg_replace("/import\s*{\s*wayfinder\s*}\s*from\s*['\"]@laravel\/vite-plugin-wayfinder['\"];?\r?\n?/", '', $content);
 
-                // 2. Remove explicit wayfinder plugin call (including multi-line configuration blocks)
-                // This version handles the trailing comma more safely
-                $cleanContent = preg_replace("/\bwayfinder\s*\((?:[^()]+|(?R))*\),?\r?\n?/s", '', $cleanContent);
+                // 2. Remove explicit wayfinder plugin call
+                // This handles wayfinder({...}), wayfinder(), and potential trailing commas
+                $cleanContent = preg_replace("/\bwayfinder\s*\(\s*\{?.*?\s*\}?\s*\),?\r?\n?/s", '', $cleanContent);
 
                 if ($cleanContent !== $content) {
                     file_put_contents($path, $cleanContent);
@@ -803,23 +838,7 @@ class ConfigData implements Arrayable
     protected function configureViteHmr(string $projectPath, string $appName): void
     {
         $files = ['vite.config.ts', 'vite.config.js'];
-        $hmrConfig = <<<JS
-    server: {
-        host: '0.0.0.0',
-        strictPort: true,
-        port: 5173,
-        hmr: {
-            host: 'vite.{$appName}.dev.test',
-            clientPort: 443,
-            protocol: 'wss',
-        },
-        https: {
-            key: fs.readFileSync('/usr/src/app/.infrastructure/traefik/certificates/local-dev-key.pem'),
-            cert: fs.readFileSync('/usr/src/app/.infrastructure/traefik/certificates/local-dev.pem'),
-        },
-        cors: true,
-    },
-JS;
+        $hmrConfig = view('js.vite-hmr', ['appName' => $appName])->render();
 
         foreach ($files as $file) {
             $path = $projectPath.'/'.$file;
@@ -843,18 +862,22 @@ JS;
 
     protected function removeDuplicateReverbImports(string $projectPath): void
     {
-        $appTs = $projectPath.'/resources/js/app.ts';
-        if (file_exists($appTs)) {
-            $content = file_get_contents($appTs);
-            // Match the import line and only keep the first one
-            $pattern = "/import\s*{\s*configureEcho\s*}\s*from\s*['\"]@laravel\/echo-(vue|react)['\"];?\r?\n?/";
+        $files = ['resources/js/app.ts', 'resources/js/app.js'];
 
-            if (preg_match_all($pattern, $content, $matches) > 1) {
-                // Keep only the first occurrence of the import
-                $newContent = preg_replace($pattern, '', $content);
-                $newContent = $matches[0][0]."\n".$newContent;
-                file_put_contents($appTs, $newContent);
-                $this->laraKubeInfo('Deduplicated Reverb imports in app.ts');
+        foreach ($files as $file) {
+            $path = $projectPath.'/'.$file;
+            if (file_exists($path)) {
+                $content = file_get_contents($path);
+                // Match the import line and only keep the first one
+                $pattern = "/import\s*{\s*configureEcho\s*}\s*from\s*['\"]@laravel\/echo-(vue|react)['\"];?\r?\n?/";
+
+                if (preg_match_all($pattern, $content, $matches) > 1) {
+                    // Keep only the first occurrence of the import
+                    $newContent = preg_replace($pattern, '', $content);
+                    $newContent = $matches[0][0]."\n".$newContent;
+                    file_put_contents($path, $newContent);
+                    $this->laraKubeInfo("Deduplicated Reverb imports in {$file}");
+                }
             }
         }
     }

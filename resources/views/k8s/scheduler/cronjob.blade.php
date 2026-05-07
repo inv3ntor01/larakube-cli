@@ -30,6 +30,16 @@ spec:
                 - name: storage
                   mountPath: /var/www/html/storage/logs
                   subPath: logs
+          livenessProbe:
+            exec:
+              command: ["healthcheck-schedule"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["healthcheck-schedule"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
           restartPolicy: OnFailure
           volumes:
             - name: storage

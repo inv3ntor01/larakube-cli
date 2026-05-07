@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: meilisearch
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: 7700
           env:

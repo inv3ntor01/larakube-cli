@@ -5,10 +5,10 @@ namespace: {{ $namespace }}
 
 resources:
   - ../../base
-  - namespace.yaml
+  - infrastructure.yaml
+@if($config->getFrontend()?->requiresNodePod())
   - node-deployment.yaml
-  - mailpit.yaml
+@endif
 
 patches:
-  - path: deployment-patch.yaml
-  - path: ingress-patch.yaml
+  - path: patches.yaml

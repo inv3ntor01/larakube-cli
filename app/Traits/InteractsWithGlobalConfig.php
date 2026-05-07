@@ -42,7 +42,7 @@ trait InteractsWithGlobalConfig
 
     protected function getDefaultEmail(): string
     {
-        return 'example@email.com';
+        return 'admin@larakube.dev.test';
     }
 
     protected function setEmail(string $email): void

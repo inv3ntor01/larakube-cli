@@ -201,7 +201,7 @@ class NewCommand extends Command
             return true;
         });
 
-        // Add Package Manager & Frontend Stack
+        // Add Package Manager, Frontend Stack, and Boost
         if ($pmFlag = $config->getPackageManager()?->getOptionFlag()) {
             $extraArgs[] = $pmFlag;
         }
@@ -209,6 +209,8 @@ class NewCommand extends Command
         if ($frontendFlag = $config->getFrontend()?->getOptionFlag()) {
             $extraArgs[] = $frontendFlag;
         }
+
+        $extraArgs[] = $config->hasFeature(LaravelFeature::BOOST) ? '--boost' : '--no-boost';
 
         $extraFlags = implode(' ', $extraArgs);
 

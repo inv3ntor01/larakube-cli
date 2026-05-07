@@ -58,7 +58,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         };
     }
 
-    public function getDockerImage(): string
+    public function getDockerImage(?ConfigData $config = null): string
     {
         return match ($this) {
             self::MEILISEARCH => 'getmeili/meilisearch:v1.12',
@@ -112,8 +112,8 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         $appName = $config->getName();
 
         return match ($this) {
-            self::MEILISEARCH => ["meilisearch.$appName.dev.test" => 'Meilisearch Console'],
-            self::TYPESENSE => ["typesense.$appName.dev.test" => 'Typesense Console'],
+            self::MEILISEARCH => ["meilisearch-{$appName}.dev.test" => 'Meilisearch Console'],
+            self::TYPESENSE => ["typesense-{$appName}.dev.test" => 'Typesense Console'],
             default => [],
         };
     }

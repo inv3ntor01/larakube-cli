@@ -63,8 +63,19 @@ trait GeneratesProjectInfrastructure
         $phpDockerfile = view('docker.php', ['config' => $config])->render();
         file_put_contents("$projectPath/Dockerfile.php", $phpDockerfile);
 
-        $nodeDockerfile = view('docker.node', ['config' => $config])->render();
-        file_put_contents("$projectPath/Dockerfile.node", $nodeDockerfile);
+        if ($config->getFrontend()?->requiresNodePod()) {
+            $nodeDockerfile = view('docker.node', ['config' => $config])->render();
+            file_put_contents("$projectPath/Dockerfile.node", $nodeDockerfile);
+        }
+
+        $this->generateDockerIgnore($config);
+    }
+
+    protected function generateDockerIgnore(ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        $ignoreFile = view('docker.ignore', ['config' => $config])->render();
+        file_put_contents("$projectPath/.dockerignore", $ignoreFile);
     }
 
     protected function generateK8sManifests(ConfigData $config): void
@@ -86,13 +97,31 @@ trait GeneratesProjectInfrastructure
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');
 
-        // 1. Generate ALL core stubs first (Clean slate)
+        // 1. Generate consolidated core stubs (Stacked Architecture)
         $stubs = [
-            'base/kustomization.yaml', 'base/deployment.yaml', 'base/service.yaml', 'base/ingress.yaml',
-            'base/pvc.yaml', 'base/configmap.yaml',
-            'overlays/local/kustomization.yaml', 'overlays/local/namespace.yaml', 'overlays/local/node-deployment.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml', 'overlays/local/laravel-volumes.yaml',
-            'overlays/production/kustomization.yaml', 'overlays/production/namespace.yaml', 'overlays/production/deployment-patch.yaml',
+            'base/kustomization.yaml',
+            'base/laravel.yaml',
+            'base/config.yaml',
+            'overlays/local/kustomization.yaml',
+            'overlays/local/infrastructure.yaml',
+            'overlays/local/patches.yaml',
+            'overlays/production/kustomization.yaml',
+            'overlays/production/namespace.yaml',
+            'overlays/production/deployment-patch.yaml',
         ];
+
+        if ($config->getFrontend()?->requiresNodePod()) {
+            $stubs[] = 'overlays/local/node-deployment.yaml';
+        }
+
+        // Cleanup legacy files if they exist (Surgical)
+        $legacyFiles = [
+            'base/deployment.yaml', 'base/service.yaml', 'base/ingress.yaml', 'base/pvc.yaml', 'base/configmap.yaml', 'base/secrets.yaml',
+            'overlays/local/namespace.yaml', 'overlays/local/laravel-volumes.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml',
+        ];
+        foreach ($legacyFiles as $file) {
+            @unlink("$k8sPath/$file");
+        }
 
         foreach ($stubs as $stub) {
             $namespace = $appName;
@@ -123,8 +152,8 @@ trait GeneratesProjectInfrastructure
             'patches' => [],
         ];
 
-        // Add Features, Databases, Object Storage
-        $pods = array_filter([...$config->getFeatures(), ...$config->getDatabases(), $config->getObjectStorage(), $config->getScoutDriver()]);
+        // Add Features, Databases, Cache, Object Storage
+        $pods = array_filter([...$config->getFeatures(), ...$config->getDatabases(), $config->getCacheDriver(), $config->getObjectStorage(), $config->getScoutDriver()]);
 
         foreach ($pods as $pod) {
             if ($pod instanceof HasKubernetesFiles) {
@@ -176,6 +205,23 @@ trait GeneratesProjectInfrastructure
         }
 
         file_put_contents($kustomizationFile, $content);
+    }
+
+    protected function removeResourceFromKustomization(string $k8sPath, string $folder, string $filename): void
+    {
+        $kustomizationFile = "$k8sPath/$folder/kustomization.yaml";
+        if (! file_exists($kustomizationFile)) {
+            return;
+        }
+
+        $content = file_get_contents($kustomizationFile);
+
+        // Remove from resources list
+        $newContent = preg_replace("/^\s*-\s*".preg_quote($filename, '/')."\s*$/m", '', $content);
+
+        if ($newContent !== $content) {
+            file_put_contents($kustomizationFile, $newContent);
+        }
     }
 
     protected function setLaravelStoragePermissions(string $projectPath): void
@@ -250,9 +296,9 @@ trait GeneratesProjectInfrastructure
             $this->syncEnvFile($config->getPath(), $envChanges);
         }
 
-        // 3. Ensure HTTPS compatibility (Surgical)
         if (! $dryRun) {
             $this->ensureHttpsCompatibility($config);
+            $config->hardenViteConfig();
         }
 
         // 4. Generate Dockerfiles

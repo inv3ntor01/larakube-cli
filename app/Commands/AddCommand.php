@@ -6,6 +6,7 @@ use App\Contracts\HasHiddenComponents;
 use App\Contracts\HasLifecycleHooks;
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
@@ -106,6 +107,12 @@ class AddCommand extends Command
             }
         }
 
+        foreach (CacheDriver::cases() as $case) {
+            if ($this->option($case->value)) {
+                $config->setCacheDriver($case);
+            }
+        }
+
         foreach (StorageDriver::cases() as $case) {
             if ($case instanceof HasHiddenComponents && $case->isHidden()) {
                 continue;
@@ -140,6 +147,7 @@ class AddCommand extends Command
                 label: 'What would you like to add?',
                 options: [
                     'database' => 'Database Engine',
+                    'cache' => 'Cache Driver (Redis/Memcached)',
                     'feature' => 'Laravel Feature (Lego Bricks)',
                     'storage' => 'Object Storage (S3-compatible)',
                     'blueprint' => 'Architectural Blueprint (Specialized Foundation)',
@@ -163,6 +171,25 @@ class AddCommand extends Command
                     options: $availableDbs,
                     required: true
                 );
+            }
+
+            if ($type === 'cache') {
+                if ($config->hasCacheDriver()) {
+                    $this->laraKubeInfo("Cache driver '{$config->getCacheDriver()->value}' is already configured.");
+
+                    return 0;
+                }
+
+                $cacheName = select(
+                    label: 'Select cache driver:',
+                    options: collect(CacheDriver::cases())
+                        ->mapWithKeys(fn ($c) => [$c->value => $c->getLabel()])
+                        ->all()
+                );
+
+                $this->addCacheDriver(CacheDriver::from($cacheName), $config);
+
+                return 0;
             }
 
             if ($type === 'feature') {
@@ -225,6 +252,18 @@ class AddCommand extends Command
                     continue;
                 }
                 $this->addDatabase($database, $config);
+
+                continue;
+            }
+
+            $cache = CacheDriver::tryFrom($item);
+            if ($cache) {
+                if ($config->getCacheDriver() === $cache) {
+                    $this->laraKubeInfo("Cache driver '{$cache->value}' is already added. Skipping...");
+
+                    continue;
+                }
+                $this->addCacheDriver($cache, $config);
 
                 continue;
             }
@@ -420,6 +459,44 @@ class AddCommand extends Command
         }
     }
 
+    protected function addCacheDriver(CacheDriver $driver, ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+
+        // 1. Always show preview
+        $this->laraKubeInfo("Previewing Addition: Cache Driver '{$driver->value}'");
+        $this->line('  <fg=gray>[K8S]</> Would add cache driver manifests to .infrastructure/k8s/');
+
+        if ($this->option('dry-run')) {
+            return;
+        }
+
+        if (! $this->option('no-interaction')) {
+            if (! $this->confirm("Apply changes for '{$driver->value}'?", true)) {
+                return;
+            }
+        }
+
+        $this->withSpin("Adding cache driver '{$driver->value}' to cluster manifests...", function () use ($projectPath, $driver, $config) {
+            $driver->updateK8s($config);
+            $this->logActivity('Project cache driver added', ['driver' => $driver->value], $projectPath);
+        });
+
+        $config->setCacheDriver($driver);
+        $this->saveProjectConfig($projectPath, $config);
+
+        // Run onPostInstall to update .env
+        if ($driver instanceof HasLifecycleHooks) {
+            $driver->onPostInstall($projectPath, $config);
+        }
+
+        $this->laraKubeInfo("Cache driver '{$driver->value}' added successfully!");
+
+        if ($driver instanceof HasLifecycleHooks) {
+            $this->displayInstructions($driver->getPostInstallInstructions());
+        }
+    }
+
     protected function addDatabase(DatabaseDriver $engine, ConfigData $config): void
     {
         $projectPath = $config->getPath();
@@ -451,10 +528,8 @@ class AddCommand extends Command
             $config->installComponents();
         }
 
-        if ($engine !== DatabaseDriver::REDIS) {
-            if (confirm("Would you like to make {$engine->value} your primary database connection? (Updates your .env)", true)) {
-                $this->updateEnvironmentDatabase($projectPath, $engine);
-            }
+        if (confirm("Would you like to make {$engine->value} your primary database connection? (Updates your .env)", true)) {
+            $this->updateEnvironmentDatabase($projectPath, $engine);
         }
 
         $this->laraKubeInfo("Database '{$engine->value}' added successfully!");

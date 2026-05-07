@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: minio
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           args: {!! $driver->getK8sDeploymentArgs() !!}
           ports:
             - containerPort: 9000

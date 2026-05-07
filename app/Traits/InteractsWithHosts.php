@@ -10,14 +10,25 @@ trait InteractsWithHosts
 
     /**
      * Check and optionally update the /etc/hosts file based on project context.
+     *
+     * @param  array  $customHosts  Optional array of specific hosts to map. If empty, uses the current project's hosts.
+     * @param  string|null  $customAppName  Optional app name to group the block. Defaults to the current directory name.
      */
-    protected function ensureHostsAreSet(): void
+    protected function ensureHostsAreSet(array $customHosts = [], ?string $customAppName = null): void
     {
         $projectPath = getcwd();
-        $appName = basename($projectPath);
+        $appName = $customAppName ?? basename($projectPath);
 
-        $config = $this->getProjectConfig($projectPath);
-        $requiredHosts = array_keys($config->getAllHosts());
+        if (empty($customHosts)) {
+            $config = $this->getProjectConfig($projectPath);
+            $requiredHosts = array_keys($config->getAllHosts());
+        } else {
+            $requiredHosts = $customHosts;
+        }
+
+        if (empty($requiredHosts)) {
+            return;
+        }
 
         // 🛡 SMART IP DETECTION
         // On Mac and Windows, Docker Desktop/OrbStack maps published ports to 127.0.0.1.

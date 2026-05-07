@@ -2,7 +2,9 @@
 
 namespace App\Contracts;
 
+use App\Data\ConfigData;
+
 interface HasDockerImage
 {
-    public function getDockerImage(): string;
+    public function getDockerImage(?ConfigData $config = null): string;
 }

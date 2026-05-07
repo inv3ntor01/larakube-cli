@@ -4,6 +4,7 @@ namespace App\Traits;
 
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
@@ -54,14 +55,34 @@ trait GathersInfrastructureConfig
             }
         }
 
+        if (! $config->hasFeatures()) {
+            $options = LaravelFeature::getSelectOptions();
+            $features = multiselect(
+                label: 'Select Laravel features:',
+                options: $options,
+                scroll: count($options),
+                validate: function (array $values) {
+                    if (in_array(LaravelFeature::HORIZON->value, $values) && in_array(LaravelFeature::QUEUES->value, $values)) {
+                        return 'You cannot select both Horizon and Queues. Please choose one.';
+                    }
+
+                    return null;
+                }
+            );
+
+            $config->setFeatures(Arr::map($features, fn (string $feature) => LaravelFeature::from($feature)));
+        }
+
         if (! $config->getFrontend()) {
             $frontend = select(
                 label: 'Which frontend stack are you using?',
-                options: FrontendStack::getSelectOptions(),
+                options: array_merge(['none' => 'None (API or Custom)'], FrontendStack::getSelectOptions()),
                 default: FrontendStack::LIVEWIRE->value
             );
 
-            $config->setFrontend(FrontendStack::from($frontend));
+            if ($frontend !== 'none') {
+                $config->setFrontend(FrontendStack::from($frontend));
+            }
         }
 
         if (! $config->getPhpVersion()) {
@@ -102,22 +123,6 @@ trait GathersInfrastructureConfig
             $config->setAdditionalExtensions(array_filter(explode(',', str_replace(' ', '', $extensions))));
         }
 
-        $options = LaravelFeature::getSelectOptions();
-        $features = multiselect(
-            label: 'Select Laravel features:',
-            options: $options,
-            scroll: count($options),
-            validate: function (array $values) {
-                if (in_array(LaravelFeature::HORIZON->value, $values) && in_array(LaravelFeature::QUEUES->value, $values)) {
-                    return 'You cannot select both Horizon and Queues. Please choose one.';
-                }
-
-                return null;
-            }
-        );
-
-        $config->setFeatures(Arr::map($features, fn (string $feature) => LaravelFeature::from($feature)));
-
         if (in_array(LaravelFeature::SCOUT, $config->getFeatures()) && ! $config->getScoutDriver()) {
             $driver = select(
                 label: 'Which search driver would you like to use for Scout?',
@@ -126,18 +131,6 @@ trait GathersInfrastructureConfig
             );
 
             $config->setScoutDriver(ScoutDriver::from($driver));
-        }
-
-        if (! $config->getFrontend()) {
-            $frontend = select(
-                label: 'Which frontend stack are you using?',
-                options: array_merge(['none' => 'None'], FrontendStack::getSelectOptions()),
-                default: 'none',
-            );
-
-            if ($frontend = FrontendStack::tryFrom($frontend)) {
-                $config->setFrontend($frontend);
-            }
         }
 
         if (! $config->hasPackageManager()) {
@@ -163,33 +156,52 @@ trait GathersInfrastructureConfig
         }
 
         if (! $config->hasDatabases()) {
-            $defaultDatabases = [DatabaseDriver::MYSQL->value];
-            if ($config->hasFeature(LaravelFeature::HORIZON)) {
-                $defaultDatabases[] = DatabaseDriver::REDIS->value;
+            if ($config->hasFeature(LaravelFeature::AI)) {
+                $this->laraKubeInfo('AI SDK detected: Auto-selecting PostgreSQL (pgvector) for vector storage.');
+                $config->setDatabases([DatabaseDriver::POSTGRESQL]);
+            } else {
+                $defaultDb = $config->getServerVariation() === ServerVariation::FRANKENPHP ? DatabaseDriver::MYSQL->value : DatabaseDriver::SQLITE->value;
+
+                $databases = multiselect(
+                    label: 'What database engine(s) would you like to use?',
+                    options: DatabaseDriver::getSelectOptions(),
+                    default: [$defaultDb],
+                    validate: function (array $values) {
+                        if (empty($values)) {
+                            return 'You must select at least one database engine.';
+                        }
+
+                        $persistentDatabases = DatabaseDriver::getPersistentDatabases(asValues: true);
+
+                        if (array_any($values, fn ($value) => in_array($value, $persistentDatabases))) {
+                            return null;
+                        }
+
+                        $dbs = Arr::join($persistentDatabases, ', ', ' and ');
+
+                        return "You must select at least one persistent database like $dbs.";
+                    }
+                );
+
+                $config->setDatabases($databases);
             }
+        }
 
-            $databases = multiselect(
-                label: 'What database engine(s) would you like to use?',
-                options: DatabaseDriver::getSelectOptions(),
-                default: array_unique($defaultDatabases),
-                validate: function (array $values) {
-                    if (empty($values)) {
-                        return 'You must select at least one database engine.';
-                    }
+        if (! $config->hasCacheDriver()) {
+            if ($config->hasFeature(LaravelFeature::HORIZON)) {
+                $this->laraKubeInfo('Horizon detected: Auto-selecting Redis for caching and queues.');
+                $config->setCacheDriver(CacheDriver::REDIS);
+            } else {
+                $cache = select(
+                    label: 'Which cache driver would you like to use?',
+                    options: array_merge(['none' => 'None'], CacheDriver::getSelectOptions()),
+                    default: CacheDriver::REDIS->value
+                );
 
-                    $persistentDatabases = DatabaseDriver::getPersistentDatabases(asValues: true);
-
-                    if (array_any($values, fn ($value) => in_array($value, $persistentDatabases))) {
-                        return null;
-                    }
-
-                    $dbs = Arr::join($persistentDatabases, ', ', ' and ');
-
-                    return "You must select at least one persistent database like $dbs.";
+                if ($driver = CacheDriver::tryFrom($cache)) {
+                    $config->setCacheDriver($driver);
                 }
-            );
-
-            $config->setDatabases($databases);
+            }
         }
 
         if (! $config->hasGithubActions()) {

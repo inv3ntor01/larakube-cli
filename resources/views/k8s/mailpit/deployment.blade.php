@@ -59,7 +59,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: mailpit.{{ $config->getName() }}.dev.test
+    - host: mailpit-{{ $config->getName() }}.dev.test
       http:
         paths:
           - path: /
@@ -71,4 +71,4 @@ spec:
                   number: 8025
   tls:
     - hosts:
-        - mailpit.{{ $config->getName() }}.dev.test
+        - mailpit-{{ $config->getName() }}.dev.test

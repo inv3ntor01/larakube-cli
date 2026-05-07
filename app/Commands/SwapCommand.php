@@ -3,11 +3,13 @@
 namespace App\Commands;
 
 use App\Contracts\HasHiddenComponents;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
 use App\Enums\StorageDriver;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
@@ -20,12 +22,17 @@ use function Laravel\Prompts\select;
 
 class SwapCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'swap {--dry-run : Show what will be changed without applying}
+    protected $signature = 'swap {--db= : The database engine to switch to}
+                                 {--cache-driver= : The cache driver to switch to}
+                                 {--storage-driver= : The storage driver to switch to}
+                                 {--scout-driver= : The scout driver to switch to}
+                                 {--server-variation= : The server variation to switch to}
+                                 {--dry-run : Show what will be changed without applying}
                                  {--force : Skip confirmation}';
 
     /**
@@ -72,18 +79,23 @@ class SwapCommand extends Command
             $swaps['db'] = DatabaseDriver::from($db);
         }
 
-        // 2. Process Storage Swap
-        if ($storage = $this->option('storage')) {
+        // 2. Process Cache Swap
+        if ($cache = $this->option('cache-driver')) {
+            $swaps['cache'] = CacheDriver::from($cache);
+        }
+
+        // 3. Process Storage Swap
+        if ($storage = $this->option('storage-driver')) {
             $swaps['storage'] = StorageDriver::from($storage);
         }
 
-        // 3. Process Scout Swap
-        if ($scout = $this->option('scout')) {
+        // 4. Process Scout Swap
+        if ($scout = $this->option('scout-driver')) {
             $swaps['scout'] = ScoutDriver::from($scout);
         }
 
-        // 4. Process Server Swap
-        if ($server = $this->option('server')) {
+        // 5. Process Server Swap
+        if ($server = $this->option('server-variation')) {
             $swaps['server'] = ServerVariation::from($server);
         }
 
@@ -95,6 +107,11 @@ class SwapCommand extends Command
 
             if ($this->option($case->value)) {
                 $swaps['db'] = $case;
+            }
+        }
+        foreach (CacheDriver::cases() as $case) {
+            if ($this->option($case->value)) {
+                $swaps['cache'] = $case;
             }
         }
         foreach (StorageDriver::cases() as $case) {
@@ -131,6 +148,7 @@ class SwapCommand extends Command
                 label: 'What would you like to swap?',
                 options: [
                     'db' => 'Database Engine',
+                    'cache' => 'Cache Driver',
                     'storage' => 'Object Storage',
                     'scout' => 'Search Engine (Scout)',
                     'server' => 'Server Variation',
@@ -143,6 +161,12 @@ class SwapCommand extends Command
                     $this->info("Current Databases: {$current}");
                     $newDb = select('Switch primary database to:', collect(DatabaseDriver::cases())->mapWithKeys(fn ($e) => [$e->value => $e->value])->all());
                     $swaps['db'] = DatabaseDriver::from($newDb);
+                    break;
+                case 'cache':
+                    $current = $config->getCacheDriver()?->value ?? 'none';
+                    $this->info("Current Cache Driver: {$current}");
+                    $newCache = select('Switch cache driver to:', collect(CacheDriver::cases())->mapWithKeys(fn ($e) => [$e->value => $e->getLabel()])->all());
+                    $swaps['cache'] = CacheDriver::from($newCache);
                     break;
                 case 'storage':
                     $current = $config->getObjectStorage()?->value ?? 'none';
@@ -188,6 +212,13 @@ class SwapCommand extends Command
             $databases[] = $swaps['db'];
             $config->setDatabases(array_unique($databases));
             $logDetails['db'] = "{$primaryValue} -> {$swaps['db']->value}";
+        }
+
+        if (isset($swaps['cache'])) {
+            $current = $config->getCacheDriver()?->value ?? 'none';
+            $this->line("  <fg=blue>[SWAP]</> Cache: {$current} ➔ {$swaps['cache']->value}");
+            $config->setCacheDriver($swaps['cache']);
+            $logDetails['cache'] = "{$current} -> {$swaps['cache']->value}";
         }
 
         if (isset($swaps['storage'])) {

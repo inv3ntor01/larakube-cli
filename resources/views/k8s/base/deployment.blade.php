@@ -38,18 +38,19 @@ spec:
                 name: laravel-config
             - secretRef:
                 name: laravel-secrets
-          readinessProbe:
-            httpGet:
-              path: /
-              port: {{ $config->getServerVariation()->containerPort() }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /up
               port: {{ $config->getServerVariation()->containerPort() }}
             initialDelaySeconds: 30
             periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: {{ $config->getServerVariation()->containerPort() }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
           volumeMounts:
             - name: storage
               mountPath: /var/www/html/storage/logs
@@ -66,7 +67,16 @@ spec:
             - name: storage
               mountPath: /var/www/html/storage/app/public
               subPath: app/public
+@if($config->hasDatabase(\App\Enums\DatabaseDriver::SQLITE))
+            - name: data
+              mountPath: /var/lib/larakube
+@endif
       volumes:
         - name: storage
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-storage-pvc
+@if($config->hasDatabase(\App\Enums\DatabaseDriver::SQLITE))
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $config->getName() }}-laravel-data-pvc
+@endif

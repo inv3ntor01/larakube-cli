@@ -30,7 +30,7 @@ class PhpExtensionCommand extends Command
     {
         $this->renderHeader();
 
-        if (! $this->ensureIsProject()) {
+        if (! $this->isLaraKubeProject()) {
             return 1;
         }
 

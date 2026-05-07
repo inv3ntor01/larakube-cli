@@ -91,6 +91,12 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 'MAIL_PASSWORD' => 'null',
                 'MAIL_ENCRYPTION' => 'null',
             ],
+            self::BOOST => [
+                'BOOST_PHP_EXECUTABLE_PATH' => '"larakube php"',
+                'BOOST_COMPOSER_EXECUTABLE_PATH' => '"larakube composer"',
+                'BOOST_NPM_EXECUTABLE_PATH' => '"larakube npm"',
+                'BOOST_VENDOR_BIN_EXECUTABLE_PATH' => '"larakube art"',
+            ],
             default => [],
         };
     }
@@ -100,11 +106,11 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         $appName = $config->getName();
 
         return match ($this) {
-            self::REVERB => ["reverb.{$appName}.dev.test" => 'Reverb Console'],
-            self::MAILPIT => ["mailpit.{$appName}.dev.test" => 'Mailpit Dashboard'],
+            self::REVERB => ["reverb-{$appName}.dev.test" => 'Reverb Console'],
+            self::MAILPIT => ["mailpit-{$appName}.dev.test" => 'Mailpit Dashboard'],
             self::MONITORING => [
-                "grafana.{$appName}.dev.test" => 'Grafana Dashboard',
-                "prometheus.{$appName}.dev.test" => 'Prometheus Dashboard',
+                "grafana-{$appName}.dev.test" => 'Grafana Dashboard',
+                "prometheus-{$appName}.dev.test" => 'Prometheus Dashboard',
             ],
             default => [],
         };
@@ -113,8 +119,9 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getDependencies(ConfigData $config): array
     {
         return match ($this) {
-            self::HORIZON => array_merge($config->getCoreDependencies(), [$config->getServerVariation(), DatabaseDriver::REDIS]),
+            self::HORIZON => array_merge($config->getCoreDependencies(), [$config->getServerVariation(), CacheDriver::REDIS]),
             self::OCTANE => [ServerVariation::FRANKENPHP],
+            self::AI => [DatabaseDriver::POSTGRESQL],
             self::QUEUES, self::TASK_SCHEDULING, self::REVERB => array_merge($config->getCoreDependencies(), [$config->getServerVariation()]),
             default => [],
         };
@@ -149,6 +156,8 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::REVERB => '["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]',
             default => '[]',
         };
+    }
+
     public function getComposerDependencies(?ConfigData $context = null): array
     {
         return match ($this) {
@@ -176,6 +185,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             default => [],
         };
     }
+
     public function getArtisanCommands(?ConfigData $context = null): array
     {
         return match ($this) {
@@ -209,7 +219,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 
     public function onPostInstall(string $projectPath, ?ConfigData $context = null): void
     {
-        // TODO: Implement onPostInstall() method.
+        $this->syncEnvFile($projectPath, $this->getEnvironmentVariables($context));
     }
 
     public function getPostInstallInstructions(): array

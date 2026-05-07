@@ -8,6 +8,7 @@ use App\Contracts\HasCommandOptions;
 use App\Contracts\HasComposerDependencies;
 use App\Contracts\HasDockerImage;
 use App\Contracts\HasEnvironmentVariables;
+use App\Contracts\HasHiddenComponents;
 use App\Contracts\HasHosts;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
@@ -19,7 +20,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
+enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -27,7 +28,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     case MARIADB = 'mariadb';
     case POSTGRESQL = 'postgres';
     case MONGODB = 'mongodb';
-    case REDIS = 'redis';
+    case SQLITE = 'sqlite';
 
     public function getLabel(): ?string
     {
@@ -36,8 +37,20 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MARIADB => 'MariaDB',
             self::POSTGRESQL => 'PostgreSQL',
             self::MONGODB => 'MongoDB',
-            self::REDIS => 'Redis',
+            self::SQLITE => 'SQLite (Local File)',
         };
+    }
+
+    public function isHidden(): bool
+    {
+        // SQLite is hidden if the user has already chosen FrankenPHP (known issues)
+        if ($this === self::SQLITE) {
+            $config = app(ConfigData::class);
+
+            return $config->getServerVariation() === ServerVariation::FRANKENPHP;
+        }
+
+        return false;
     }
 
     public static function getCommandOptionArrays(): array
@@ -69,6 +82,10 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function updateK8s(ConfigData $config): void
     {
+        if ($this === self::SQLITE) {
+            return;
+        }
+
         $k8sPath = $config->getK8sPath();
 
         // Write workload
@@ -90,6 +107,15 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             $patch = view($viewName, ['config' => $config, 'driver' => $this])->render();
             file_put_contents("$k8sPath/{$this->getPatchYamlDestination()}", $patch);
         }
+
+        // Write companion manifests (Local only)
+        if ($this->hasCompanion()) {
+            $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/overlays/local/{$this->value}-companion.yaml", $content);
+
+            $ingress = view('k8s.companion.ingress', ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/overlays/local/{$this->value}-companion-ingress.yaml", $ingress);
+        }
     }
 
     public function getWorkloadViewName(): ?string
@@ -99,7 +125,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MARIADB => 'k8s.mariadb.deployment',
             self::POSTGRESQL => 'k8s.postgres.deployment',
             self::MONGODB => 'k8s.mongodb.statefulset',
-            self::REDIS => 'k8s.redis.deployment',
+            self::SQLITE => null,
         };
     }
 
@@ -110,7 +136,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MARIADB => 'base/mariadb-deployment.yaml',
             self::POSTGRESQL => 'base/postgres-deployment.yaml',
             self::MONGODB => 'base/mongodb-statefulset.yaml',
-            self::REDIS => 'base/redis-deployment.yaml',
+            self::SQLITE => null,
         };
     }
 
@@ -171,7 +197,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function getManifestFiles(): array
     {
-        return match ($this) {
+        $manifests = match ($this) {
             self::MYSQL => [
                 'base' => ['mysql-deployment.yaml'],
                 'local' => ['mysql-volumes.yaml'],
@@ -193,48 +219,79 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MONGODB => [
                 'base' => ['mongodb-statefulset.yaml'],
             ],
-            self::REDIS => [
-                'base' => ['redis-deployment.yaml'],
-            ],
+            self::SQLITE => [],
         };
+
+        if ($this->hasCompanion()) {
+            $manifests['local'][] = "{$this->value}-companion.yaml";
+            $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
+        }
+
+        return $manifests;
     }
 
-    public function getDockerImage(): string
+    public function getDockerImage(?ConfigData $config = null): string
     {
         return match ($this) {
             self::MYSQL => 'mysql:8.4',
             self::MARIADB => 'mariadb:11.8',
-            self::POSTGRESQL => 'postgres:17.9',
+            self::POSTGRESQL => ($config?->hasFeature(LaravelFeature::AI)) ? 'pgvector/pgvector:pg17' : 'postgres:17.9',
             self::MONGODB => 'mongo:7.0',
-            self::REDIS => 'redis:7.4',
+            self::SQLITE => '',
         };
+    }
+
+    public function getCompanionDockerImage(): ?string
+    {
+        return match ($this) {
+            self::MYSQL, self::MARIADB => 'phpmyadmin:latest',
+            self::POSTGRESQL => 'adminer:latest',
+            self::MONGODB => 'mongo-express:latest',
+            self::SQLITE => null,
+            default => null,
+        };
+    }
+
+    public function getCompanionPort(): int
+    {
+        return match ($this) {
+            self::MYSQL, self::MARIADB => 80,
+            self::POSTGRESQL => 8080,
+            self::MONGODB => 8081,
+            default => 80,
+        };
+    }
+
+    public function hasCompanion(): bool
+    {
+        return ! is_null($this->getCompanionDockerImage());
     }
 
     public function getEnvironmentVariables(?ConfigData $config = null): array
     {
-        return match ($this) {
-            self::REDIS => [
-                'REDIS_HOST' => 'redis',
-                'CACHE_STORE' => 'redis',
-                'SESSION_DRIVER' => 'redis',
-                'QUEUE_CONNECTION' => 'redis',
-                'APP_MAINTENANCE_DRIVER' => 'cache',
-                'APP_MAINTENANCE_STORE' => 'redis',
-            ],
-            self::MYSQL,
-            self::MARIADB,
-            self::POSTGRESQL,
-            self::MONGODB => [
-                'DB_CONNECTION' => $this->dbConnection(),
-                'DB_HOST' => $this->dbHost(),
-                'DB_PORT' => (string) $this->dbPort(),
-                'DB_DATABASE' => 'laravel',
-                'DB_USERNAME' => $this->dbUsername(),
-                'DB_PASSWORD' => 'larakubesecretpassword',
-                'DB_URI' => 'mongodb://root:larakubesecretpassword@mongodb:27017/laravel?authSource=admin',
+        $envs = [
+            'DB_CONNECTION' => $this->dbConnection(),
+            'DB_HOST' => $this->dbHost(),
+            'DB_PORT' => (string) $this->dbPort(),
+            'DB_DATABASE' => 'laravel',
+            'DB_USERNAME' => $this->dbUsername(),
+            'DB_PASSWORD' => 'larakubesecretpassword',
+        ];
+
+        if ($this === self::MONGODB) {
+            $envs['DB_URI'] = 'mongodb://root:larakubesecretpassword@mongodb:27017/laravel?authSource=admin';
+            $envs['AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK'] = 'true';
+        }
+
+        if ($this === self::SQLITE) {
+            return [
+                'DB_CONNECTION' => 'sqlite',
+                'DB_DATABASE' => '/var/lib/larakube/database.sqlite',
                 'AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK' => 'true',
-            ],
-        };
+            ];
+        }
+
+        return $envs;
     }
 
     public function getHosts(ConfigData $config): array
@@ -242,17 +299,21 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         $appName = $config->getName();
 
         return match ($this) {
-            self::REDIS => ["redis.{$appName}.dev.test" => 'Redis Console'],
-            self::MYSQL => ["mysql.{$appName}.dev.test" => 'MySQL Console'],
-            self::MARIADB => ["mariadb.{$appName}.dev.test" => 'MariaDB Console'],
-            self::POSTGRESQL => ["postgres.{$appName}.dev.test" => 'PostgreSQL Console'],
-            self::MONGODB => ["mongodb.{$appName}.dev.test" => 'MongoDB Console'],
+            self::MYSQL => ["mysql-{$appName}.dev.test" => 'MySQL Console'],
+            self::MARIADB => ["mariadb-{$appName}.dev.test" => 'MariaDB Console'],
+            self::POSTGRESQL => ["postgres-{$appName}.dev.test" => 'PostgreSQL Console'],
+            self::MONGODB => ["mongodb-{$appName}.dev.test" => 'MongoDB Console'],
+            self::SQLITE => [],
             default => [],
         };
     }
 
     public function getDependencyConfig(ConfigData $config): array
     {
+        if ($this === self::SQLITE) {
+            return [];
+        }
+
         return [$this->dbHost() => $this->dbPort()];
     }
 
@@ -262,7 +323,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MYSQL, self::MARIADB => 'mysql',
             self::POSTGRESQL => 'pgsql',
             self::MONGODB => 'mongodb',
-            self::REDIS => 'redis',
+            self::SQLITE => 'sqlite',
         };
     }
 
@@ -272,7 +333,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MYSQL, self::MARIADB => 'mysql',
             self::POSTGRESQL => 'postgres',
             self::MONGODB => 'mongodb',
-            self::REDIS => 'redis',
+            self::SQLITE => '',
         };
     }
 
@@ -282,7 +343,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MYSQL, self::MARIADB => 3306,
             self::POSTGRESQL => 5432,
             self::MONGODB => 27017,
-            self::REDIS => 6379,
+            self::SQLITE => 0,
         };
     }
 
@@ -292,16 +353,14 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MYSQL, self::MARIADB => 'laravel',
             self::POSTGRESQL => 'postgres',
             self::MONGODB => 'root',
+            self::SQLITE => null,
             default => null,
         };
     }
 
     public function isPersistent(): bool
     {
-        return match ($this) {
-            self::REDIS => false,
-            default => true,
-        };
+        return true;
     }
 
     public function getComposerDependencies(?ConfigData $context = null): array
@@ -372,7 +431,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MARIADB => 'mariadb',
             self::POSTGRESQL => 'postgres',
             self::MONGODB => 'mongodb',
-            self::REDIS => 'redis',
+            self::SQLITE => 'sqlite',
         };
     }
 

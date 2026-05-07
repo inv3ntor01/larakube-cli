@@ -98,6 +98,26 @@ class UpCommand extends Command
 
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
+
+        if ($environment === 'local') {
+            // 🔒 1. Handle missing .env
+            if (! file_exists($projectPath.'/.env')) {
+                if (file_exists($projectPath.'/.env.example')) {
+                    $this->laraKubeInfo('No .env file found. Creating from .env.example...');
+                    @copy($projectPath.'/.env.example', $projectPath.'/.env');
+                    passthru('php artisan key:generate --no-interaction');
+                } else {
+                    $this->laraKubeError('No .env or .env.example found! Deployment may fail.');
+                }
+            }
+
+            // 📦 2. Handle missing dependencies (Surgical)
+            if (! is_dir($projectPath.'/vendor') || ! is_dir($projectPath.'/node_modules')) {
+                $this->laraKubeInfo('Missing local dependencies. Orchestrating installation...');
+                $config->installComponents();
+            }
+        }
+
         $appName = $config->getName() ?? basename($projectPath);
         $path = ".infrastructure/k8s/overlays/{$environment}";
         $namespace = $this->getNamespace($environment, $appName);
@@ -110,6 +130,17 @@ class UpCommand extends Command
         }
 
         $this->laraKubeInfo("Targeting environment: {$environment}");
+
+        if ($environment === 'local') {
+            $this->withSpin('Ensuring local infrastructure directories exist...', function () use ($projectPath) {
+                @mkdir($projectPath.'/.infrastructure/volume_data', 0777, true);
+                $dbFile = $projectPath.'/.infrastructure/volume_data/database.sqlite';
+                if (! file_exists($dbFile)) {
+                    touch($dbFile);
+                }
+                chmod($dbFile, 0666); // User/Group/Others can read/write
+            });
+        }
 
         $this->logActivity('Project deployed to cluster', ['environment' => $environment]);
 

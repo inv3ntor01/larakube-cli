@@ -15,8 +15,9 @@ spec:
     spec:
       containers:
         - name: {{ $driver->value }}
-          image: {{ $driver->getDockerImage() }}
-          env:
+          image: {{ $driver->getDockerImage($config) }}
+          ports:
+
             - name: MONGO_INITDB_ROOT_USERNAME
               value: "{{ $driver->dbUsername() }}"
             - name: MONGO_INITDB_ROOT_PASSWORD

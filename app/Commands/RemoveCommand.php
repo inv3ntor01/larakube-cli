@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Contracts\HasHiddenComponents;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\LaravelFeature;
 use App\Enums\ScoutDriver;
@@ -97,7 +98,19 @@ class RemoveCommand extends Command
             }
         }
 
-        if ($config->hasFeature(LaravelFeature::HORIZON) && in_array(DatabaseDriver::REDIS, $databases)) {
+        $config->removeDatabase(...$databases);
+
+        // Cache Drivers
+
+        $cacheDrivers = [];
+
+        foreach (CacheDriver::cases() as $case) {
+            if ($this->option($case->value)) {
+                $cacheDrivers[] = $case;
+            }
+        }
+
+        if ($config->hasFeature(LaravelFeature::HORIZON) && in_array(CacheDriver::REDIS, $cacheDrivers)) {
             $this->line('  <fg=red>[CONFLICT]</> Horizon (active) requires Redis (being removed).');
             if (confirm('Would you like to remove Horizon as well?')) {
                 $config->removeFeature(LaravelFeature::HORIZON);
@@ -108,7 +121,9 @@ class RemoveCommand extends Command
             }
         }
 
-        $config->removeDatabase(...$databases);
+        foreach ($cacheDrivers as $driver) {
+            $config->setCacheDriver(null);
+        }
 
         if (! $config->hasPersistentDatabase()) {
             $this->newLine();

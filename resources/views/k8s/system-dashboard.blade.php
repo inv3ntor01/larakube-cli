@@ -17,11 +17,11 @@ metadata:
   name: larakube-dashboard-role
 rules:
   - apiGroups: [""]
-    resources: ["namespaces", "pods", "services"]
-    verbs: ["get", "list", "watch"]
+    resources: ["namespaces", "pods", "pods/log", "pods/exec", "services", "nodes", "events"]
+    verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "replicasets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch"]
@@ -37,7 +37,7 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: larakube-dashboard-role
-  apiClass: rbac.authorization.k8s.io
+  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1
 kind: Service
@@ -70,18 +70,49 @@ spec:
       serviceAccountName: larakube-dashboard
       containers:
         - name: dashboard
-          image: ghcr.io/larakube/dashboard:latest
+          # Primary: luchaveztech/larakube-dashboard:latest (Docker Hub)
+          # Fallback: ghcr.io/larakube/larakube-dashboard:latest
+          image: luchaveztech/larakube-dashboard:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
+            - name: APP_URL
+              value: https://larakube.dev.test
+            - name: ASSET_URL
+              value: https://larakube.dev.test
             - name: APP_ENV
               value: production
             - name: APP_DEBUG
-              value: "false"
+              value: "true"
             - name: APP_KEY
               value: base64:{{ base64_encode(random_bytes(32)) }}
             - name: KUBERNETES_HOST
               value: https://kubernetes.default.svc
+            - name: DB_CONNECTION
+              value: sqlite
+            - name: DB_DATABASE
+              value: /var/lib/larakube/database.sqlite
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: larakube-db
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: larakube-db
+          hostPath:
+            path: {{ $_SERVER['HOME'] }}/.larakube
+            type: DirectoryOrCreate
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -103,3 +134,6 @@ spec:
                 name: larakube-dashboard
                 port:
                   number: 80
+  tls:
+    - hosts:
+        - larakube.dev.test

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: typesense
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: 8108
           env:

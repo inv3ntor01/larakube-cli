@@ -54,4 +54,12 @@ enum FrontendStack: string implements HasCommandOptions, HasLabel, HasSelectOpti
     {
         return "--$this->value";
     }
+
+    public function requiresNodePod(): bool
+    {
+        return match ($this) {
+            self::LIVEWIRE => false,
+            default => true,
+        };
+    }
 }

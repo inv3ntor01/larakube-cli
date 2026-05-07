@@ -17,10 +17,16 @@ trait InteractsWithProjectConfig
         }
 
         if ($showError) {
+            $this->renderHeader();
             $this->laraKubeError('Not a LaraKube project.');
+
+            if (file_exists(getcwd().'/artisan')) {
+                $this->info('  💡 TIP: This looks like a valid Laravel project!');
+                $this->info('  Run <fg=yellow;options=bold>larakube init</> to orchestrate it for Kubernetes.');
+            }
         }
 
-        return true;
+        return false;
     }
 
     /**

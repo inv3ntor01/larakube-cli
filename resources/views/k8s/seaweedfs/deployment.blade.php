@@ -15,18 +15,19 @@ spec:
         app: seaweedfs
     spec:
       containers:
-        - name: master
-          image: {{ $driver->getDockerImage() }}
+        - name: seaweedfs
+          image: {{ $driver->getDockerImage($config) }}
           args: {!! $driver->getK8sDeploymentArgs() !!}
+
           ports:
             - containerPort: 9333
         - name: volume
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           args: ["volume", "-mserver=localhost:9333", "-port=8081"]
           ports:
             - containerPort: 8081
         - name: filer
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           args: ["filer", "-master=localhost:9333", "-s3"]
           env:
             - name: AWS_ACCESS_KEY_ID

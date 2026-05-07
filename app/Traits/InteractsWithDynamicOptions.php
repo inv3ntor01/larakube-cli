@@ -6,6 +6,7 @@ use App\Contracts\HasHiddenComponents;
 use App\Data\ConfigData;
 use App\Enums\AiProvider;
 use App\Enums\Blueprint;
+use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
@@ -31,6 +32,7 @@ trait InteractsWithDynamicOptions
             ...OperatingSystem::getCommandOptionArrays(),
             ...PhpVersion::getCommandOptionArrays(),
             ...DatabaseDriver::getCommandOptionArrays(),
+            ...CacheDriver::getCommandOptionArrays(),
             ...LaravelFeature::getCommandOptionArrays(),
             ...FrontendStack::getCommandOptionArrays(),
             ...PackageManager::getCommandOptionArrays(),
@@ -39,12 +41,17 @@ trait InteractsWithDynamicOptions
         ];
 
         foreach ($options as $option) {
-            // Options are already filtered by traits, but let's double check by name
-            $this->addOption(
-                name: Arr::get($option, 'name'),
-                mode: InputOption::VALUE_NONE,
-                description: Arr::get($option, 'description'),
-            );
+            $name = Arr::get($option, 'name');
+
+            try {
+                $this->addOption(
+                    name: $name,
+                    mode: InputOption::VALUE_NONE,
+                    description: Arr::get($option, 'description'),
+                );
+            } catch (\InvalidArgumentException $e) {
+                // Option already exists, skip it
+            }
         }
     }
 
@@ -93,7 +100,7 @@ trait InteractsWithDynamicOptions
         $config->setFeatures($features);
 
         if ($config->hasFeature(LaravelFeature::HORIZON)) {
-            $config->addDatabase(DatabaseDriver::REDIS);
+            $config->setCacheDriver(CacheDriver::REDIS);
         }
 
         // Server Variations
@@ -144,6 +151,14 @@ trait InteractsWithDynamicOptions
 
             if ($this->option($case->value)) {
                 $config->addDatabase($case);
+            }
+        }
+
+        // Cache Drivers
+        foreach (CacheDriver::cases() as $case) {
+            if ($this->option($case->value)) {
+                $config->setCacheDriver($case);
+                break;
             }
         }
 
@@ -221,8 +236,8 @@ trait InteractsWithDynamicOptions
                 $config->addDatabase(DatabaseDriver::MYSQL);
             }
 
-            if (! $config->hasDatabase(DatabaseDriver::REDIS)) {
-                $config->addDatabase(DatabaseDriver::REDIS);
+            if (! $config->hasCacheDriver()) {
+                $config->setCacheDriver(CacheDriver::REDIS);
             }
         }
 

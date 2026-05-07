@@ -65,7 +65,7 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
     {
         $separator = ($this === self::NPM) ? '' : ' --';
 
-        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().' --host"]';
+        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().$separator.' --host"]';
     }
 
     public function getOptionFlag(): string

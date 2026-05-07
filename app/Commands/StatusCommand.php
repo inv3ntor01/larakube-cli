@@ -44,6 +44,12 @@ class StatusCommand extends Command
         $output = shell_exec("kubectl get pods -n {$namespace} -o json 2>/dev/null");
 
         if (! $output) {
+            if ($this->isAiAgent()) {
+                return $this->renderJson([
+                    'status' => 'error',
+                    'message' => "No services found in namespace '{$namespace}'",
+                ]);
+            }
             $this->laraKubeError("No services found in namespace '{$namespace}'. Is the app deployed?");
 
             return 1;
@@ -51,12 +57,21 @@ class StatusCommand extends Command
 
         $pods = json_decode($output, true)['items'] ?? [];
         $rows = [];
+        $jsonPods = [];
 
         foreach ($pods as $pod) {
             $name = $pod['metadata']['labels']['app'] ?? $pod['metadata']['name'];
             $status = $this->getPodStatus($pod);
             $restarts = $this->getPodRestarts($pod);
             $age = $this->getPodAge($pod);
+
+            $jsonPods[] = [
+                'name' => $name,
+                'status' => $status,
+                'restarts' => $restarts,
+                'age' => $age,
+                'ready' => $status === 'Running',
+            ];
 
             $statusLabel = $status === 'Running' ? 'Ready 🟢' : "{$status} 🔴";
 
@@ -66,6 +81,14 @@ class StatusCommand extends Command
                 (string) $restarts,
                 $age,
             ];
+        }
+
+        if ($this->isAiAgent()) {
+            return $this->renderJson([
+                'namespace' => $namespace,
+                'pods' => $jsonPods,
+                'hosts' => $config->getAllHosts(),
+            ]);
         }
 
         if (empty($rows)) {

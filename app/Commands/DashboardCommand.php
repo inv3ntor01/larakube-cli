@@ -3,12 +3,17 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithHosts;
+use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithSslTrust;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
+use function Laravel\Prompts\confirm;
+
 class DashboardCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithSslTrust, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -18,14 +23,17 @@ class DashboardCommand extends Command
     protected $signature = 'dashboard {environment? : The environment to monitor (local or production)} 
                             {--simple : Use simple kubectl view instead of k9s}
                             {--traefik : Open the Traefik network dashboard}
-                            {--cli : Force CLI-based monitoring (K9s/kubectl)}';
+                            {--cli : Force CLI-based monitoring (K9s/kubectl)}
+                            {--web : Open the LaraKube System Web Dashboard}
+                            {--down : Remove the LaraKube System Dashboard from the cluster}
+                            {--update : Force update the System Dashboard manifests}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Open a dashboard to monitor your Kubernetes cluster or network';
+    protected $description = 'Open a dashboard (K9s or Web) to monitor your cluster';
 
     /**
      * Execute the console command.
@@ -34,15 +42,40 @@ class DashboardCommand extends Command
     {
         $this->renderHeader();
 
+        if ($this->option('down')) {
+            return $this->removeSystemDashboard();
+        }
+
         if ($this->option('traefik')) {
             return $this->showTraefikDashboard();
         }
 
-        // If no --cli flag and no environment specified, try to open the System Dashboard
-        if (! $this->option('cli') && ! $this->argument('environment')) {
+        // If --web is requested, show the System Dashboard
+        if ($this->option('web')) {
             return $this->showSystemDashboard();
         }
 
+        // If an environment is specified or --cli is forced, go to K9s/CLI view
+        if ($this->option('cli') || $this->argument('environment')) {
+            return $this->showCliDashboard();
+        }
+
+        // Default behavior: Ask the user or promote K9s
+        $this->info('  LaraKube offers two ways to monitor your cluster:');
+        $this->line('  1. <fg=cyan;options=bold>K9s</> (Recommended) - Powerful, real-time terminal UI.');
+        $this->line('  2. <fg=yellow;options=bold>Web UI</> - Clean, web-based monitoring at larakube.dev.test.');
+        $this->newLine();
+
+        $choice = $this->choice('Which dashboard would you like to open?', [
+            'k9s' => 'K9s Terminal UI (Fast & Powerful)',
+            'web' => 'LaraKube Web Dashboard (Visual)',
+        ], 'k9s');
+
+        return $choice === 'k9s' ? $this->showCliDashboard() : $this->showSystemDashboard();
+    }
+
+    protected function showCliDashboard(): int
+    {
         $environment = $this->argument('environment') ?? 'local';
         $namespace = $this->getNamespace($environment);
 
@@ -92,32 +125,41 @@ class DashboardCommand extends Command
         return 0;
     }
 
-    /**
-     * Open (and install if missing) the LaraKube System Dashboard.
-     */
     protected function showSystemDashboard(): int
     {
         $this->laraKubeInfo('Launching LaraKube System Dashboard...');
 
+        // 🛡 Automated Host Mapping & SSL Trust
+        $this->ensureHostsAreSet(['larakube.dev.test'], 'larakube-system');
+
+        if (! $this->isSslTrusted()) {
+            $this->newLine();
+            $this->warn(' 🔒 The System Dashboard requires a trusted LaraKube Local CA for HTTPS.');
+            if (confirm('Would you like to install the trust now? (Requires sudo/admin)', true)) {
+                $this->call('trust');
+            }
+        }
+
         $exists = shell_exec('kubectl get namespace larakube-system --no-headers 2>/dev/null');
 
-        if (! $exists) {
-            if (! $this->confirm('The LaraKube System Dashboard is not installed. Would you like to install it now?', true)) {
-                return 1;
+        if (! $exists || $this->option('update')) {
+            $label = $this->option('update') ? 'Updating System Dashboard...' : 'The LaraKube System Dashboard is not installed. Would you like to install it now?';
+
+            if (! $exists || $this->confirm($label, true)) {
+                $this->withSpin($this->option('update') ? 'Updating manifests...' : 'Installing System Dashboard...', function () {
+                    $manifest = view('k8s.system-dashboard')->render();
+                    $tmp = sys_get_temp_dir().'/larakube-dashboard.yaml';
+                    file_put_contents($tmp, $manifest);
+                    passthru("kubectl apply -f {$tmp}");
+                    unlink($tmp);
+                });
+
+                $this->laraKubeInfo($this->option('update') ? '✅ System Dashboard updated.' : '✅ System Dashboard installed.');
             }
-
-            $this->withSpin('Installing System Dashboard...', function () {
-                $manifest = view('k8s.system-dashboard')->render();
-                $tmp = sys_get_temp_dir() . '/larakube-dashboard.yaml';
-                file_put_contents($tmp, $manifest);
-                passthru("kubectl apply -f {$tmp}");
-                unlink($tmp);
-            });
-
-            $this->laraKubeInfo('✅ System Dashboard installed.');
         }
 
         $url = 'https://larakube.dev.test';
+
         $this->laraKubeInfo("Opening: {$url}");
 
         $command = match (PHP_OS_FAMILY) {
@@ -127,6 +169,21 @@ class DashboardCommand extends Command
         };
 
         passthru("{$command} {$url}");
+
+        return 0;
+    }
+
+    protected function removeSystemDashboard(): int
+    {
+        if (! $this->confirm('Are you sure you want to remove the LaraKube System Dashboard?', true)) {
+            return 0;
+        }
+
+        $this->withSpin('Removing System Dashboard resources...', function () {
+            passthru('kubectl delete namespace larakube-system --wait=false');
+        });
+
+        $this->laraKubeInfo('✅ System Dashboard removal initiated.');
 
         return 0;
     }

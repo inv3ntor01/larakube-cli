@@ -58,7 +58,12 @@ COPY --chown=www-data:www-data . /var/www/html
 # Ensure storage and bootstrap are owned by www-data
 # Sub-paths will be handled by K8s volume mounts
 RUN mkdir -p storage bootstrap/cache && \
+@if($config->hasDatabase(\App\Enums\DatabaseDriver::SQLITE))
+    mkdir -p .infrastructure/volume_data/sqlite && \
+    chown -R www-data:www-data storage bootstrap/cache .infrastructure/volume_data/sqlite && \
+@else
     chown -R www-data:www-data storage bootstrap/cache && \
+@endif
     chmod -R 775 storage bootstrap/cache
 
 # Drop privileges back to www-data

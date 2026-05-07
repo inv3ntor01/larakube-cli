@@ -16,7 +16,7 @@ trait LaraKubeOutput
      */
     protected function renderHeader(): void
     {
-        if (State::$headerRendered) {
+        if ($this->isAiAgent() || State::$headerRendered) {
             return;
         }
 
@@ -61,12 +61,37 @@ trait LaraKubeOutput
      */
     protected function laraKubeInfo(string $message): void
     {
+        if ($this->isAiAgent()) {
+            return;
+        }
+
         render(<<<HTML
             <div class="flex mx-2 mt-1">
                 <span class="px-1 bg-blue-500 text-white font-bold uppercase">LaraKube</span>
                 <span class="ml-1 text-blue-500">{$message}</span>
             </div>
         HTML);
+    }
+
+    /**
+     * Determine if the CLI is running inside an AI agent environment.
+     */
+    protected function isAiAgent(): bool
+    {
+        return env('AI_AGENT') === 'true' ||
+               env('CURSOR') === 'true' ||
+               env('GEMINI_CLI') === 'true' ||
+               env('LARAKUBE_JSON') === '1';
+    }
+
+    /**
+     * Render a JSON response for AI agents.
+     */
+    protected function renderJson(array $data): int
+    {
+        echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n";
+
+        return 0;
     }
 
     /**

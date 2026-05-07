@@ -33,6 +33,17 @@ class ProjectListCommand extends Command
 
         $projects = Project::all();
 
+        if ($this->isAiAgent()) {
+            return $this->renderJson([
+                'projects' => $projects->map(fn ($p) => [
+                    'name' => $p->name,
+                    'blueprint' => $p->blueprint?->value,
+                    'path' => $p->path,
+                    'updated_at' => $p->updated_at->toIso8601String(),
+                ])->toArray(),
+            ]);
+        }
+
         if ($projects->isEmpty()) {
             $this->laraKubeInfo('No LaraKube projects are currently tracked.');
 

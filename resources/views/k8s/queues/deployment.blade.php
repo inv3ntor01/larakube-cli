@@ -33,6 +33,16 @@ spec:
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
+          livenessProbe:
+            exec:
+              command: ["healthcheck-queue"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["healthcheck-queue"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
       volumes:
         - name: storage
           persistentVolumeClaim:

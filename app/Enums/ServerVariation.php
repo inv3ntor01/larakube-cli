@@ -75,18 +75,12 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
 
     public function containerPort(): int
     {
-        return match ($this) {
-            self::FRANKENPHP => 8080,
-            default => 8443,
-        };
+        return 8080;
     }
 
     public function traefikScheme(): string
     {
-        return match ($this) {
-            self::FRANKENPHP => 'http',
-            default => 'https',
-        };
+        return 'http';
     }
 
     public function getArtisanCommands(?ConfigData $context = null): array

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: {{ $driver->value }}
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: {{ $driver->dbPort() }}
           env:

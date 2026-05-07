@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: garage
-          image: {{ $driver->getDockerImage() }}
+          image: {{ $driver->getDockerImage($config) }}
           args: ["/garage", "server"]
           env:
             - name: GARAGE_RPC_SECRET
