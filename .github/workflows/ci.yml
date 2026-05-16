@@ -1,4 +1,4 @@
-name: Build LaraKube CLI
+name: CI
 
 on:
   push:
@@ -14,8 +14,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
-    name: Build Standalone Binaries
+  test-and-build:
+    name: Test and Build
     runs-on: ubuntu-latest
     
     steps:
@@ -27,11 +27,14 @@ jobs:
       with:
         php-version: '8.4'
         tools: composer:v2
-        extensions: pcntl, posix, mbstring, openssl, phar
+        extensions: pcntl, posix, mbstring, openssl, phar, dom, xml, libxml
         ini-values: phar.readonly=0
 
     - name: Install Dependencies
-      run: composer install --no-dev --optimize-autoloader
+      run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+    - name: Run Pest Tests
+      run: ./vendor/bin/pest
 
     - name: Build All Platforms
       run: ./build --all ${{ github.sha }}

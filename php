@@ -46,19 +46,24 @@ execute() {
 
     # If it's a known native tool or an executable file, run it directly
     if [[ "$first_cmd" == "composer" || "$first_cmd" == "docker" || "$first_cmd" == "kubectl" || "$first_cmd" == "larakube" ]] || command -v "$first_cmd" >/dev/null 2>&1; then
+        local larakube_binary="/larakube/larakube"
+        if [ "$GITHUB_ACTIONS" = "true" ]; then
+            larakube_binary="$CLI_DIR/larakube"
+        fi
+
         if [[ "$first_cmd" == "php" ]]; then
             # If we are running 'php larakube ...', we need to fix the path
             local final_args=()
             for arg in "${cmd_args[@]:1}"; do
                 if [[ "$arg" == "larakube" ]]; then
-                    final_args+=("/larakube/larakube")
+                    final_args+=("$larakube_binary")
                 else
                     final_args+=("$arg")
                 fi
             done
             php "${php_flags[@]}" "${final_args[@]}"
         elif [[ "$first_cmd" == "larakube" ]]; then
-             php "${php_flags[@]}" /larakube/larakube "${cmd_args[@]:1}"
+             php "${php_flags[@]}" "$larakube_binary" "${cmd_args[@]:1}"
         else
             "${cmd_args[@]}"
         fi

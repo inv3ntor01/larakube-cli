@@ -14,7 +14,12 @@ trait InteractsWithLaraKubeCli
             return 'php /larakube/larakube';
         }
 
-        // 2. Use the current executing binary path (Self-referential)
+        // 2. If we are in the source directory (e.g. CI or local dev without Docker), use the local source
+        if (file_exists(base_path('larakube'))) {
+            return 'php '.base_path('larakube');
+        }
+
+        // 3. Use the current executing binary path (Self-referential)
         // This ensures the standalone binary (e.g. /usr/local/bin/larakube) calls itself correctly.
         $self = $_SERVER['argv'][0] ?? 'larakube';
 
