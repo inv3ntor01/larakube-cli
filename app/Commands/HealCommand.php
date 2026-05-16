@@ -4,7 +4,7 @@ namespace App\Commands;
 
 use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
-use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Str;
@@ -16,7 +16,7 @@ use function Laravel\Prompts\text;
 
 class HealCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -95,7 +95,10 @@ class HealCommand extends Command
 
         $this->withSpin('Regenerating infrastructure manifests...', function () use ($config) {
             $this->orchestrateProjectScaffolding($config, false, false);
-            $this->logActivity('Project healed and manifests regenerated');
+
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'heal', 'Project healed and manifests regenerated.');
+            }
 
             return true;
         });

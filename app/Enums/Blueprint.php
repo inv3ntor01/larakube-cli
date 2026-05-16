@@ -24,7 +24,7 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
     case FILAMENT = 'filament';
     case STATAMIC = 'statamic';
 
-    public function isHidden(): bool
+    public function isHidden(?ConfigData $config = null): bool
     {
         return $this === self::STATAMIC;
     }
@@ -119,7 +119,7 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
         };
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
         return match ($this) {
             self::STATAMIC => [

@@ -18,5 +18,5 @@ spec:
         args:
         - tunnel
         - --url
-        - http://laravel-web:80
+        - http://web:80
         - --no-autoupdate

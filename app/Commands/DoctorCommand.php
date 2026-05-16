@@ -2,29 +2,25 @@
 
 namespace App\Commands;
 
-use App\Ai\Agents\ClusterDoctorAgent;
 use App\Traits\CheckPrerequisites;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use Exception;
-use Laravel\Ai\Streaming\Events\TextDelta;
-use Laravel\Ai\Streaming\Events\ToolCall;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\info;
 
 class DoctorCommand extends Command
 {
-    use CheckPrerequisites, InteractsWithEnvironments, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, HasConsoleInteraction, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'doctor {--environment=local : The environment to diagnose} {--ai : Use AI to analyze issues}';
+    protected $signature = 'doctor {--environment=local : The environment to diagnose}';
 
     /**
      * The console command description.
@@ -46,10 +42,14 @@ class DoctorCommand extends Command
         $this->laraKubeInfo("Diagnosing LaraKube environment: {$environment}...");
 
         $issues = $this->runDiagnostics($namespace);
+        $config = $this->getProjectConfig();
 
         if (empty($issues)) {
             $this->laraKubeInfo('✅ No critical issues detected! Your cluster health is looking like a masterpiece.');
-            $this->logActivity('Doctor scan completed: Healthy', ['environment' => $environment]);
+
+            if ($config && $config->getId()) {
+                $this->logToConsole($config->getId(), 'doctor', 'Doctor scan completed: Healthy', ['environment' => $environment]);
+            }
         } else {
             $this->laraKubeError('Issues detected:');
             foreach ($issues as $issue) {
@@ -59,17 +59,16 @@ class DoctorCommand extends Command
                 }
             }
 
-            $this->logActivity('Doctor scan completed: Issues found', [
-                'environment' => $environment,
-                'issue_count' => count($issues),
-            ]);
-
-            if ($this->option('ai')) {
-                $this->performAiDiagnosis($issues);
-            } else {
-                $this->line('');
-                info('Pro Tip: Run larakube doctor --ai for an automated recovery plan.');
+            if ($config && $config->getId()) {
+                $this->logToConsole($config->getId(), 'doctor', 'Doctor scan completed: Issues found', [
+                    'environment' => $environment,
+                    'issue_count' => count($issues),
+                    'issues' => $issues,
+                ]);
             }
+
+            $this->line('');
+            info('Pro Tip: Open the LaraKube Console for an automated recovery plan.');
         }
 
         return 0;
@@ -117,42 +116,5 @@ class DoctorCommand extends Command
         }
 
         return $issues;
-    }
-
-    protected function performAiDiagnosis(array $issues): void
-    {
-        $this->line('');
-        $this->laraKubeInfo('🧠 LaraKube AI is analyzing cluster telemetry...');
-
-        $provider = $this->getAiProvider();
-        $apiKey = $this->getAiApiKey($provider);
-
-        if (! $apiKey) {
-            $this->laraKubeError('AI API Key not found. Cannot perform AI diagnosis.');
-
-            return;
-        }
-
-        config(['ai.default' => $provider]);
-        config(["ai.providers.{$provider}.key" => $apiKey]);
-
-        $agent = ClusterDoctorAgent::make();
-        $query = 'Here are the current cluster issues: '.json_encode($issues).'. Please analyze and provide a recovery plan.';
-
-        $this->output->write('🤖 Recovery Plan: ');
-
-        try {
-            $stream = $agent->stream($query);
-            foreach ($stream as $event) {
-                if ($event instanceof TextDelta) {
-                    $this->output->write($event->delta);
-                } elseif ($event instanceof ToolCall) {
-                    $this->line("\n  <fg=gray>🛠 Fixing:</> <fg=yellow>{$event->toolCall->name}</>");
-                }
-            }
-            $this->line("\n");
-        } catch (Exception $e) {
-            $this->error('AI Error: '.$e->getMessage());
-        }
     }
 }

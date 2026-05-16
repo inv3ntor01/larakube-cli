@@ -72,7 +72,7 @@ class TestCommand extends Command
 
             if (! $success) {
                 $this->laraKubeError('FAILED. Could not reach your application after several attempts.');
-                $this->line("Check your /etc/hosts and ensure your pods are running with 'larakube dashboard'.");
+                $this->line("Check your /etc/hosts and ensure your pods are running with 'larakube console'.");
 
                 return 1;
             }

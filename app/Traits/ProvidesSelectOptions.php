@@ -12,7 +12,7 @@ trait ProvidesSelectOptions
         $options = [];
 
         foreach (self::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 

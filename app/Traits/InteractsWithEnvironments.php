@@ -63,7 +63,15 @@ trait InteractsWithEnvironments
      */
     protected function getNamespace(string $environment, ?string $appName = null): string
     {
-        $appName = $appName ?? basename(getcwd());
+        // Use current working directory if appName not provided
+        $projectPath = getcwd();
+
+        // Load config
+        $config = method_exists($this, 'getProjectConfigObject')
+            ? $this->getProjectConfigObject($projectPath)
+            : null;
+
+        $appName = $appName ?? $config?->getName() ?? basename($projectPath);
 
         return "$appName-$environment";
     }

@@ -6,9 +6,9 @@
 # https://serversideup.net/open-source/docker-php/
 FROM serversideup/php:{{ $config->getPhpVersion()->value }}-{{ $config->getServerVariation()->value }}{{ $config->getOsSuffix() }} AS base
 
-@if($config->hasAdditionalExtensions())
+@if($config->hasPhpExtensions())
 USER root
-RUN install-php-extensions {{ implode(' ', $config->getAdditionalExtensions()) }}
+RUN install-php-extensions {{ implode(' ', $config->getAllPhpExtensions()) }}
 USER www-data
 @endif
 

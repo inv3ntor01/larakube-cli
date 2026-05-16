@@ -2,9 +2,11 @@
 
 namespace App\Commands;
 
+use App\Contracts\HasLifecycleHooks;
 use App\Traits\CheckPrerequisites;
 use App\Traits\GathersInfrastructureConfig;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithProjectConfig;
@@ -18,7 +20,7 @@ use function Laravel\Prompts\info;
 
 class InitCommand extends Command
 {
-    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -26,6 +28,7 @@ class InitCommand extends Command
      * @var string
      */
     protected $signature = 'init {--fast : Skip the wizard and use ideal defaults}
+                                 {--production-image= : The container registry image to use for production}
                                  {--dry-run : Show what will be done without making any changes}';
 
     /**
@@ -75,9 +78,20 @@ class InitCommand extends Command
             return 1;
         }
 
-        $config = $this->gatherConfig($this->buildConfigFromFlags());
+        $config = $this->buildConfigFromFlags();
+        $config->setIsScaffolding(false);
+        $config = $this->gatherConfig($config);
         $config->setPath(getcwd());
-        $config->setName(Str::slug(basename($config->getPath())));
+
+        $name = Str::slug(basename($config->getPath()));
+        if ($name === 'console') {
+            $this->laraKubeError('The directory name "console" is reserved for the LaraKube Console.');
+            $this->line('  Please rename your directory or initialize in a different folder.');
+
+            return 1;
+        }
+
+        $config->setName($name);
         $config->setEnvironments(['local', 'production']);
 
         $this->laraKubeInfo("Initializing LaraKube for project: {$config->getName()}...");
@@ -107,6 +121,38 @@ class InitCommand extends Command
         $this->orchestrateProjectScaffolding($config, $installFeatures);
 
         $this->laraKubeInfo("LaraKube initialized successfully for {$config->getName()}!");
+
+        // Collect instructions from all components
+        $allInstructions = [];
+        foreach ($config->getComponents() as $component) {
+            if ($component instanceof HasArtisanCommands && ! $config->isScaffolding()) {
+                foreach ($component->getArtisanCommands($config) as $cmd) {
+                    $allInstructions[] = "Run: <fg=blue>larakube art $cmd</>";
+                }
+            }
+
+            if ($component instanceof HasLifecycleHooks) {
+                $allInstructions = array_merge($allInstructions, $component->getPostInstallInstructions($config));
+            }
+        }
+
+        if (! empty($allInstructions)) {
+            $this->newLine();
+            $this->warn('Perform these one-time architectural steps:');
+            foreach ($allInstructions as $line) {
+                $this->line("  $line");
+            }
+        }
+
+        // Register with Console
+        $this->registerWithConsole([
+            'uuid' => $config->getId(),
+            'name' => $config->getName(),
+            'path' => $config->getPath(),
+            'blueprints' => $config->getBlueprints(),
+            'config' => $config->toArray(),
+        ]);
+
         info('Next steps: larakube up');
 
         return 0;

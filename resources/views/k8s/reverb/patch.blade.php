@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: laravel-reverb
+  name: reverb
 spec:
   template:
     spec:
@@ -11,6 +11,10 @@ spec:
           volumeMounts:
             - name: code
               mountPath: /var/www/html
+@if($config->isSystem())
+            - name: larakube-config
+              mountPath: /var/lib/larakube
+@endif
             - name: storage
               $patch: delete
       volumes:
@@ -18,5 +22,11 @@ spec:
           hostPath:
             path: {{ $config->getPath() }}
             type: Directory
+@if($config->isSystem())
+        - name: larakube-config
+          hostPath:
+            path: {{ home_path() }}/.larakube
+            type: DirectoryOrCreate
+@endif
         - name: storage
           $patch: delete

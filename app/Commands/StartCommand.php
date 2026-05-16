@@ -2,14 +2,15 @@
 
 namespace App\Commands;
 
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;
-use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class StartCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
+    use HasConsoleInteraction, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -27,6 +28,7 @@ class StartCommand extends Command
     public function handle(): int
     {
         $this->renderHeader();
+        $config = $this->getProjectConfig();
 
         $environment = $this->argument('environment');
         $namespace = $this->getNamespace($environment);
@@ -41,9 +43,11 @@ class StartCommand extends Command
             return true;
         });
 
-        $this->logActivity('Services resumed (scaled up)', ['environment' => $environment]);
+        if ($config && $config->getId()) {
+            $this->logToConsole($config->getId(), 'start', 'Services resumed (scaled up)', ['environment' => $environment]);
+        }
 
-        $this->laraKubeInfo('All services are resuming. Use larakube status to monitor progress.');
+        $this->laraKubeInfo('All services are resuming. Use larakube console to monitor progress.');
 
         return 0;
     }

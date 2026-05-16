@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ $driver->value }}
+  name: {{ $driver->getPodName($config) }}
 spec:
-  serviceName: {{ $driver->value }}
+  serviceName: {{ $driver->getPodName($config) }}
   replicas: 1
   selector:
     matchLabels:
-      app: {{ $driver->value }}
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: {{ $driver->value }}
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: {{ $driver->value }}
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           ports:
 
@@ -39,10 +39,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $driver->value }}
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: {{ $driver->value }}
+    app: {{ $driver->getPodName($config) }}
   ports:
     - protocol: TCP
       port: {{ $driver->dbPort() }}

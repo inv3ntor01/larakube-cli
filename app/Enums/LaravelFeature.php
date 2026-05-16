@@ -14,6 +14,7 @@ use App\Contracts\HasJsDependencies;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -21,7 +22,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
+enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -38,6 +39,26 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     case AI = 'ai';
     case MCP = 'mcp';
     case BOOST = 'boost';
+
+    public static function fromPodName(string $podName): ?self
+    {
+        return match ($podName) {
+            'scheduler' => self::TASK_SCHEDULING,
+            'horizon' => self::HORIZON,
+            'queues' => self::QUEUES,
+            'reverb' => self::REVERB,
+            default => self::tryFrom($podName),
+        };
+    }
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return match ($this) {
+            self::TASK_SCHEDULING => 'scheduler',
+            self::QUEUES => 'queues',
+            default => $this->value,
+        };
+    }
 
     public function getLabel(): string
     {
@@ -57,8 +78,18 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    public function isHidden(): bool
+    public function isHidden(?ConfigData $config = null): bool
     {
+        // Octane is hidden if the user already chose FrankenPHP (it's mandatory)
+        if ($this === self::OCTANE) {
+            return $config?->getServerVariation() === ServerVariation::FRANKENPHP;
+        }
+
+        // Scout is hidden if the user already chose a search driver via flags
+        if ($this === self::SCOUT) {
+            return ! is_null($config?->getScoutDriver());
+        }
+
         return match ($this) {
             self::MONITORING, self::METALLB, self::MAILPIT => true,
             default => false,
@@ -85,11 +116,14 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             ],
             self::MAILPIT => [
                 'MAIL_MAILER' => 'smtp',
-                'MAIL_HOST' => 'mailpit',
+                'MAIL_HOST' => $this->getPodName(),
                 'MAIL_PORT' => '1025',
                 'MAIL_USERNAME' => 'null',
                 'MAIL_PASSWORD' => 'null',
                 'MAIL_ENCRYPTION' => 'null',
+            ],
+            self::QUEUES => [
+                'QUEUE_CONNECTION' => 'database',
             ],
             self::BOOST => [
                 'BOOST_PHP_EXECUTABLE_PATH' => '"larakube php"',
@@ -121,28 +155,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         return match ($this) {
             self::HORIZON => array_merge($config->getCoreDependencies(), [$config->getServerVariation(), CacheDriver::REDIS]),
             self::OCTANE => [ServerVariation::FRANKENPHP],
-            self::AI => [DatabaseDriver::POSTGRESQL],
             self::QUEUES, self::TASK_SCHEDULING, self::REVERB => array_merge($config->getCoreDependencies(), [$config->getServerVariation()]),
-            default => [],
-        };
-    }
-
-    public function composerDependencies(): array
-    {
-        return match ($this) {
-            self::HORIZON => ['laravel/horizon'],
-            self::OCTANE => ['laravel/octane --with-all-dependencies'],
-            self::SCOUT => ['laravel/scout'],
-            default => [],
-        };
-    }
-
-    public function artisanInstallCommands(): array
-    {
-        return match ($this) {
-            self::HORIZON => ['php artisan horizon:install'],
-            self::OCTANE => ['php artisan octane:install --server=frankenphp'],
-            self::REVERB => ['php artisan install:broadcasting --reverb --without-node'],
             default => [],
         };
     }
@@ -173,9 +186,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::REVERB => [
                 'laravel/reverb',
             ],
-            self::AI => [
-                'laravel/ai',
-            ],
             self::MCP => [
                 'laravel/mcp',
             ],
@@ -192,11 +202,28 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::HORIZON => [
                 'horizon:install',
             ],
+            self::OCTANE => [
+                'octane:install --server=frankenphp',
+            ],
+            self::QUEUES => [
+                'make:queue-batches-table',
+                'make:queue-failed-table',
+                'make:queue-table',
+            ],
             self::REVERB => [
                 'install:broadcasting --reverb --without-node',
             ],
             self::SCOUT => [
                 'vendor:publish --provider="Laravel\Scout\ScoutServiceProvider"',
+            ],
+            self::AI => [
+                'vendor:publish --provider="Laravel\Ai\AiServiceProvider"',
+            ],
+            self::MCP => [
+                'vendor:publish --tag=ai-routes',
+            ],
+            self::BOOST => [
+                'boost:install --guidelines --skills --mcp',
             ],
             default => [],
         };
@@ -222,22 +249,66 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         $this->syncEnvFile($projectPath, $this->getEnvironmentVariables($context));
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
-        return [];
+        if (! $config) {
+            return [];
+        }
+
+        return match ($this) {
+            self::AI => $this->getAiInstructions($config),
+            default => [],
+        };
+    }
+
+    protected function getAiInstructions(ConfigData $config): array
+    {
+        $hasPostgres = $config->getDatabase() === DatabaseDriver::POSTGRESQL ||
+                       in_array(DatabaseDriver::POSTGRESQL, $config->getDatabases(), true);
+
+        if ($hasPostgres) {
+            return [];
+        }
+
+        return [
+            '<fg=yellow;options=bold>💡 RECOMMENDATION:</> The Laravel AI SDK works best with PostgreSQL and <fg=cyan;options=bold>pgvector</>.',
+            '   Consider adding it to your project: <fg=blue>larakube add postgres</>',
+        ];
     }
 
     public function updateK8s(ConfigData $config): void
     {
         $k8sPath = $config->getK8sPath();
+        $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
+        $workspacePath = dirname($config->getPath());
 
         if ($viewName = $this->getWorkloadViewName()) {
-            $content = view($viewName, ['config' => $config, 'feature' => $this])->render();
+            $content = view($viewName, [
+                'config' => $config,
+                'feature' => $this,
+                'binaryPath' => $binaryPath,
+                'workspacePath' => $workspacePath,
+            ])->render();
             file_put_contents("$k8sPath/{$this->getWorkloadYamlDestination()}", $content);
         }
 
+        if ($viewName = $this->getNetworkViewName()) {
+            $network = view($viewName, [
+                'config' => $config,
+                'feature' => $this,
+                'binaryPath' => $binaryPath,
+                'workspacePath' => $workspacePath,
+            ])->render();
+            file_put_contents("$k8sPath/{$this->getNetworkYamlDestination()}", $network);
+        }
+
         if ($viewName = $this->getPatchViewName()) {
-            $patch = view($viewName, ['config' => $config, 'feature' => $this])->render();
+            $patch = view($viewName, [
+                'config' => $config,
+                'feature' => $this,
+                'binaryPath' => $binaryPath,
+                'workspacePath' => $workspacePath,
+            ])->render();
             file_put_contents("$k8sPath/{$this->getPatchYamlDestination()}", $patch);
         }
     }
@@ -250,6 +321,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::QUEUES => 'k8s.queues.deployment',
             self::REVERB => 'k8s.reverb.deployment',
             self::MAILPIT => 'k8s.mailpit.deployment',
+            self::MONITORING => 'k8s.monitoring.prometheus',
             default => null,
         };
     }
@@ -259,21 +331,28 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         return match ($this) {
             self::TASK_SCHEDULING => 'base/scheduler-cronjob.yaml',
             self::HORIZON => 'base/horizon-deployment.yaml',
-            self::QUEUES => 'base/queue-deployment.yaml',
+            self::QUEUES => 'base/queues-deployment.yaml',
             self::REVERB => 'base/reverb-deployment.yaml',
             self::MAILPIT => 'overlays/local/mailpit.yaml',
+            self::MONITORING => 'base/prometheus.yaml',
             default => null,
         };
     }
 
     public function getNetworkViewName(): ?string
     {
-        return null;
+        return match ($this) {
+            self::MONITORING => 'k8s.monitoring.grafana',
+            default => null,
+        };
     }
 
     public function getNetworkYamlDestination(): ?string
     {
-        return null;
+        return match ($this) {
+            self::MONITORING => 'base/grafana.yaml',
+            default => null,
+        };
     }
 
     public function getStorageViewName(): ?string
@@ -289,8 +368,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getPatchViewName(): ?string
     {
         return match ($this) {
-            self::HORIZON => 'k8s.horizon.patch',
-            self::REVERB => 'k8s.reverb.patch',
             default => null,
         };
     }
@@ -298,8 +375,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getPatchYamlDestination(): ?string
     {
         return match ($this) {
-            self::HORIZON => 'overlays/local/horizon-patch.yaml',
-            self::REVERB => 'overlays/local/reverb-patch.yaml',
             default => null,
         };
     }
@@ -323,17 +398,18 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             ],
             self::HORIZON => [
                 'base' => ['horizon-deployment.yaml'],
-                'patches' => ['horizon-patch.yaml'],
             ],
             self::QUEUES => [
-                'base' => ['queue-deployment.yaml'],
+                'base' => ['queues-deployment.yaml'],
             ],
             self::REVERB => [
                 'base' => ['reverb-deployment.yaml'],
-                'patches' => ['reverb-patch.yaml'],
             ],
             self::MAILPIT => [
                 'local' => ['mailpit.yaml'],
+            ],
+            self::MONITORING => [
+                'base' => ['prometheus.yaml', 'grafana.yaml'],
             ],
             default => [],
         };

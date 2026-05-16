@@ -13,6 +13,7 @@ use App\Contracts\HasHosts;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -20,7 +21,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
+enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -29,6 +30,11 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     case POSTGRESQL = 'postgres';
     case MONGODB = 'mongodb';
     case SQLITE = 'sqlite';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return $this->value;
+    }
 
     public function getLabel(): ?string
     {
@@ -41,16 +47,9 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         };
     }
 
-    public function isHidden(): bool
+    public function isHidden(?ConfigData $config = null): bool
     {
-        // SQLite is hidden if the user has already chosen FrankenPHP (known issues)
-        if ($this === self::SQLITE) {
-            $config = app(ConfigData::class);
-
-            return $config->getServerVariation() === ServerVariation::FRANKENPHP;
-        }
-
-        return false;
+        return $this === self::SQLITE && $config?->getServerVariation() === ServerVariation::FRANKENPHP;
     }
 
     public static function getCommandOptionArrays(): array
@@ -67,14 +66,12 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         return $options;
     }
 
-    public static function getPersistentDatabases(bool $asValues = false): array
+    public static function getDatabases(bool $asValues = false): array
     {
         $databases = [];
 
         foreach (self::cases() as $case) {
-            if ($case->isPersistent()) {
-                $databases[] = $asValues ? $case->value : $case;
-            }
+            $databases[] = $asValues ? $case->value : $case;
         }
 
         return $databases;
@@ -329,12 +326,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function dbHost(): string
     {
-        return match ($this) {
-            self::MYSQL, self::MARIADB => 'mysql',
-            self::POSTGRESQL => 'postgres',
-            self::MONGODB => 'mongodb',
-            self::SQLITE => '',
-        };
+        return $this->getPodName();
     }
 
     public function dbPort(): int
@@ -358,9 +350,9 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         };
     }
 
-    public function isPersistent(): bool
+    public function isExternal(): bool
     {
-        return true;
+        return $this !== self::SQLITE;
     }
 
     public function getComposerDependencies(?ConfigData $context = null): array
@@ -410,7 +402,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         }
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
         return match ($this) {
             self::MONGODB => [

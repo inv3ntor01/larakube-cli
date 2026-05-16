@@ -11,5 +11,5 @@ interface HasLifecycleHooks
     /**
      * @return string[]
      */
-    public function getPostInstallInstructions(): array;
+    public function getPostInstallInstructions(?ConfigData $config = null): array;
 }

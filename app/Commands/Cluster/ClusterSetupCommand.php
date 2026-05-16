@@ -2,7 +2,6 @@
 
 namespace App\Commands\Cluster;
 
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -12,7 +11,7 @@ use function Laravel\Prompts\text;
 
 class ClusterSetupCommand extends Command
 {
-    use InteractsWithInternalDatabase, LaraKubeOutput;
+    use LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -142,8 +141,6 @@ class ClusterSetupCommand extends Command
 
         passthru($command);
 
-        $this->logActivity('Local cluster setup completed', ['engine' => 'k3d', 'cluster_name' => $clusterName, 'workspace' => $workspace]);
-
         $this->laraKubeInfo('✅ Local cluster is ready!');
         $this->info('You can now use larakube up to deploy your projects.');
 
@@ -163,8 +160,6 @@ class ClusterSetupCommand extends Command
 
         $this->laraKubeInfo('Waiting for node to be ready...');
         passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=60s');
-
-        $this->logActivity('Local cluster setup completed', ['engine' => 'k3s_native']);
 
         return 0;
     }

@@ -12,6 +12,7 @@ use App\Contracts\HasHosts;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -19,13 +20,18 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions, RequiresPhpExtensions
+enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case REDIS = 'redis';
     case MEMCACHED = 'memcached';
     case DATABASE = 'database';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return $this->value;
+    }
 
     public function getLabel(): ?string
     {
@@ -204,7 +210,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
                 'APP_MAINTENANCE_STORE' => 'redis',
             ],
             self::MEMCACHED => [
-                'MEMCACHED_HOST' => 'memcached-server',
+                'MEMCACHED_HOST' => 'memcached',
                 'CACHE_STORE' => 'memcached',
                 'SESSION_DRIVER' => 'memcached',
             ],
@@ -247,11 +253,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
 
     public function dbHost(): string
     {
-        return match ($this) {
-            self::REDIS => 'redis',
-            self::MEMCACHED => 'memcached-server',
-            default => '',
-        };
+        return $this->getPodName();
     }
 
     public function dbPort(): int
@@ -281,7 +283,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         $this->syncEnvFile($projectPath, $this->getEnvironmentVariables($context));
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
         return [];
     }

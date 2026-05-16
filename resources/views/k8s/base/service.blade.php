@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-web
+  name: {{ $config->getServerVariation()->getPodName($config) }}
 spec:
   selector:
-    app: laravel-web
+    app: {{ $config->getServerVariation()->getPodName($config) }}
   ports:
     - protocol: TCP
       port: 80

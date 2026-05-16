@@ -4,7 +4,7 @@ metadata:
   name: {{ $config->getName() }}-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
@@ -16,7 +16,7 @@ metadata:
   name: {{ $config->getName() }}-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi

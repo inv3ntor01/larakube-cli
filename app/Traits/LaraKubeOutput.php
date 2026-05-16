@@ -74,6 +74,32 @@ trait LaraKubeOutput
     }
 
     /**
+     * Render a blank line.
+     */
+    protected function laraKubeNewLine(int $count = 1): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            echo "\n";
+        }
+    }
+
+    /**
+     * Render a raw line of text.
+     */
+    protected function laraKubeLine(string $message): void
+    {
+        echo "  $message\n";
+    }
+
+    /**
+     * Render a warning line.
+     */
+    protected function laraKubeWarn(string $message): void
+    {
+        render("<div class='mx-2 mt-1 text-yellow-500'>$message</div>");
+    }
+
+    /**
      * Determine if the CLI is running inside an AI agent environment.
      */
     protected function isAiAgent(): bool
@@ -81,7 +107,8 @@ trait LaraKubeOutput
         return env('AI_AGENT') === 'true' ||
                env('CURSOR') === 'true' ||
                env('GEMINI_CLI') === 'true' ||
-               env('LARAKUBE_JSON') === '1';
+               env('LARAKUBE_JSON') === '1' ||
+               str_contains(implode(' ', $_SERVER['argv'] ?? []), 'mcp:start');
     }
 
     /**
@@ -105,9 +132,12 @@ trait LaraKubeOutput
 
         if (! $lastShown || $lastShown->diffInWeeks() > 1) {
             $this->newLine();
-            $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube CLI?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
+            $this->line('  <fg=yellow;options=bold>⭐ Enjoying LaraKube?</> If this tool helped you build a masterpiece, please consider starring us on GitHub:');
             $this->line('  <fg=gray>● CLI:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-cli</>');
+            $this->line('  <fg=gray>● Console:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-console</>');
             $this->line('  <fg=gray>● Docs:</> <fg=blue;options=underscore>https://github.com/luchavez-technologies/larakube-docs</>');
+            $this->newLine();
+            $this->line('  <fg=magenta;options=bold>💖 Support the project:</> <fg=blue;options=underscore>https://github.com/sponsors/luchavez-technologies</>');
             $this->newLine();
 
             $config->setLastStarPromptAt(Carbon::now());

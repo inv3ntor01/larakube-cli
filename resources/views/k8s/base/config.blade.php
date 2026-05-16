@@ -4,7 +4,3 @@
 ---
 {{-- 2. Configuration --}}
 @include('k8s.base.configmap')
-
----
-{{-- 3. Secrets --}}
-@include('k8s.base.secrets')

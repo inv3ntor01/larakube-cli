@@ -8,15 +8,15 @@ use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
-use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
 use App\Enums\ScoutDriver;
+use App\Enums\ServerVariation;
 use App\Enums\StorageDriver;
 use App\Traits\CheckPrerequisites;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithDynamicOptions;
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Str;
@@ -29,7 +29,7 @@ use function Laravel\Prompts\select;
 
 class AddCommand extends Command
 {
-    use CheckPrerequisites, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -42,7 +42,7 @@ class AddCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Add databases, Laravel features, blueprints, or storage to an existing project';
+    protected $description = 'Add or swap databases, Laravel features, blueprints, or storage';
 
     /**
      * Configure the command to ignore validation errors so we can forward arbitrary flags.
@@ -82,81 +82,133 @@ class AddCommand extends Command
             $config->setName($name);
         }
 
-        $k8sPath = $config->getK8sPath();
-
         $selectedItems = $this->argument('items');
 
         // 1. Collect items from flags
         foreach (DatabaseDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
             if ($this->option($case->value)) {
-                $config->addDatabase($case);
+                $selectedItems[] = $case->value;
             }
         }
 
         foreach (LaravelFeature::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
             if ($this->option($case->value)) {
-                $config->addFeature($case);
+                $selectedItems[] = $case->value;
             }
         }
 
         foreach (CacheDriver::cases() as $case) {
             if ($this->option($case->value)) {
-                $config->setCacheDriver($case);
+                $selectedItems[] = $case->value;
             }
         }
 
         foreach (StorageDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
             if ($this->option($case->value)) {
-                $config->setObjectStorage($case);
-                break;
+                $selectedItems[] = $case->value;
             }
         }
 
         foreach (ScoutDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
             if ($this->option($case->value)) {
-                $config->setScoutDriver($case);
-                break;
+                $selectedItems[] = $case->value;
+            }
+        }
+
+        foreach (Blueprint::cases() as $case) {
+            if ($case === Blueprint::LARAVEL) {
+                continue;
+            }
+            if ($this->option($case->value)) {
+                $selectedItems[] = $case->value;
             }
         }
 
         if (empty($selectedItems)) {
-            $currentBlueprint = $config->getBlueprint()?->value ?? Blueprint::LARAVEL->value;
-            $currentDbs = array_map(fn ($db) => $db->value, $config->getDatabases());
-            $currentFeatures = array_map(fn ($f) => $f->value, $config->getFeatures());
-            $currentStorage = $config->getObjectStorage()?->value ?? 'none';
-
             $this->laraKubeInfo('Welcome to the Architectural Evolution wizard.');
 
             $type = select(
-                label: 'What would you like to add?',
+                label: 'What would you like to evolve?',
                 options: [
-                    'database' => 'Database Engine',
-                    'cache' => 'Cache Driver (Redis/Memcached)',
-                    'feature' => 'Laravel Feature (Lego Bricks)',
-                    'storage' => 'Object Storage (S3-compatible)',
-                    'blueprint' => 'Architectural Blueprint (Specialized Foundation)',
+                    'feature' => 'Laravel Feature (Horizon, Reverb, etc.)',
+                    'database' => 'Database Engine (MySQL, Postgres, etc.)',
+                    'cache' => 'Cache Driver (Redis, Memcached)',
+                    'storage' => 'Object Storage (MinIO, Garage)',
+                    'php_version' => 'PHP Version (8.4, 8.5, etc.)',
+                    'server' => 'Server Variation (FrankenPHP, Nginx, Apache)',
+                    'os' => 'Operating System (Alpine, Debian)',
+                    'extension' => 'PHP Extension (gd, bcmath, etc.)',
+                    'blueprint' => 'Specialized Blueprint (Filament, etc.)',
                 ]
             );
 
+            if ($type === 'extension') {
+                $ext = text(
+                    label: 'Enter the name of the PHP extension to add:',
+                    placeholder: 'imagick',
+                    required: true
+                );
+
+                $this->call('ext:add', ['extension' => $ext]);
+
+                return 0;
+            }
+
+            if ($type === 'php_version') {
+                $version = select(
+                    label: 'Select your new PHP version:',
+                    options: PhpVersion::getSelectOptions($config),
+                    default: $config->getPhpVersion()->value
+                );
+
+                $this->updatePhpVersion(PhpVersion::from($version), $config);
+
+                return 0;
+            }
+
+            if ($type === 'server') {
+                $variation = select(
+                    label: 'Select your new server variation:',
+                    options: ServerVariation::getSelectOptions($config),
+                    default: $config->getServerVariation()?->value
+                );
+
+                $this->updateServerVariation(ServerVariation::from($variation), $config);
+
+                return 0;
+            }
+
+            if ($type === 'os') {
+                $os = select(
+                    label: 'Select your new base operating system:',
+                    options: OperatingSystem::getSelectOptions($config),
+                    default: $config->getOs()->value
+                );
+
+                $this->updateOs(OperatingSystem::from($os), $config);
+
+                return 0;
+            }
+
             if ($type === 'database') {
                 $availableDbs = collect(DatabaseDriver::cases())
-                    ->filter(fn ($db) => ! in_array($db->value, $currentDbs))
+                    ->filter(fn ($db) => ! in_array($db, $config->getDatabases()))
                     ->mapWithKeys(fn ($db) => [$db->value => $db->value])
                     ->toArray();
 
@@ -166,35 +218,27 @@ class AddCommand extends Command
                     return 0;
                 }
 
-                $selectedItems = multiselect(
-                    label: 'Select databases to add:',
-                    options: $availableDbs,
-                    required: true
-                );
+                $selectedItems = multiselect(label: 'Select databases to add:', options: $availableDbs, required: true);
             }
 
             if ($type === 'cache') {
-                if ($config->hasCacheDriver()) {
-                    $this->laraKubeInfo("Cache driver '{$config->getCacheDriver()->value}' is already configured.");
+                $available = collect(CacheDriver::cases())
+                    ->filter(fn ($d) => ! in_array($d, $config->getCacheDrivers()))
+                    ->mapWithKeys(fn ($c) => [$c->value => $c->getLabel()])
+                    ->all();
+
+                if (empty($available)) {
+                    $this->laraKubeInfo('All supported cache drivers are already installed.');
 
                     return 0;
                 }
 
-                $cacheName = select(
-                    label: 'Select cache driver:',
-                    options: collect(CacheDriver::cases())
-                        ->mapWithKeys(fn ($c) => [$c->value => $c->getLabel()])
-                        ->all()
-                );
-
-                $this->addCacheDriver(CacheDriver::from($cacheName), $config);
-
-                return 0;
+                $selectedItems = multiselect(label: 'Select cache drivers to add:', options: $available, required: true);
             }
 
             if ($type === 'feature') {
                 $availableFeatures = collect(LaravelFeature::cases())
-                    ->filter(fn ($f) => ! in_array($f->value, $currentFeatures))
+                    ->filter(fn ($f) => ! in_array($f, $config->getFeatures()))
                     ->mapWithKeys(fn ($f) => [$f->value => $f->value])
                     ->toArray();
 
@@ -204,339 +248,431 @@ class AddCommand extends Command
                     return 0;
                 }
 
-                $selectedItems = multiselect(
-                    label: 'Select features to add:',
-                    options: $availableFeatures,
-                    required: true
-                );
+                $selectedItems = multiselect(label: 'Select features to add:', options: $availableFeatures, required: true);
             }
 
             if ($type === 'storage') {
-                if ($currentStorage !== 'none') {
-                    $this->laraKubeInfo("Object storage '{$currentStorage}' is already configured.");
+                $available = collect(StorageDriver::cases())
+                    ->filter(fn ($d) => ! in_array($d, $config->getObjectStorages()))
+                    ->mapWithKeys(fn ($s) => [$s->value => $s->getLabel()])
+                    ->all();
+
+                if (empty($available)) {
+                    $this->laraKubeInfo('All supported storage engines are already installed.');
 
                     return 0;
                 }
 
-                $storageName = select(
-                    label: 'Select object storage engine:',
-                    options: collect(StorageDriver::cases())->mapWithKeys(fn ($s) => [$s->name => $s->getLabel()])->all()
-                );
-
-                $this->addStorage(StorageDriver::from($storageName), $config);
-
-                return 0;
+                $selectedItems = multiselect(label: 'Select object storage engines to add:', options: $available, required: true);
             }
 
             if ($type === 'blueprint') {
-                $blueprintValue = select(
-                    label: 'Select specialized blueprint:',
-                    options: [
-                        Blueprint::FILAMENT->value => Blueprint::FILAMENT->getLabel(),
-                        Blueprint::STATAMIC->value => Blueprint::STATAMIC->getLabel(),
-                    ]
-                );
+                $available = collect(Blueprint::cases())
+                    ->filter(fn ($b) => $b !== Blueprint::LARAVEL && ! in_array($b, $config->getBlueprints()))
+                    ->mapWithKeys(fn ($b) => [$b->value => $b->getLabel()])
+                    ->all();
 
-                $this->addBlueprint(Blueprint::from($blueprintValue), $config);
+                if (empty($available)) {
+                    $this->laraKubeInfo('All supported blueprints are already installed.');
 
-                return 0;
+                    return 0;
+                }
+
+                $selectedItems = multiselect(label: 'Select specialized blueprints:', options: $available, required: true);
             }
         }
 
-        foreach ($selectedItems as $item) {
+        $addedCount = 0;
+        foreach (array_unique($selectedItems) as $item) {
+            $matched = false;
+
             $database = DatabaseDriver::tryFrom($item);
             if ($database) {
-                if (in_array($database, $config->getDatabases())) {
-                    $this->laraKubeInfo("Database '{$database->value}' is already added to this project. Skipping...");
-
-                    continue;
-                }
                 $this->addDatabase($database, $config);
+                $addedCount++;
 
                 continue;
             }
 
             $cache = CacheDriver::tryFrom($item);
             if ($cache) {
-                if ($config->getCacheDriver() === $cache) {
-                    $this->laraKubeInfo("Cache driver '{$cache->value}' is already added. Skipping...");
-
-                    continue;
-                }
                 $this->addCacheDriver($cache, $config);
+                $addedCount++;
 
                 continue;
             }
 
             $feature = LaravelFeature::tryFrom($item);
             if ($feature) {
-                if (in_array($feature, $config->getFeatures())) {
-                    $this->laraKubeInfo("Feature '{$feature->value}' is already added to this project. Skipping...");
-
-                    continue;
-                }
                 $this->addFeature($feature, $config);
+                $addedCount++;
 
                 continue;
             }
 
             $scout = ScoutDriver::tryFrom($item);
             if ($scout) {
-                if ($config->getScoutDriver() === $scout) {
-                    $this->laraKubeInfo("Scout driver '{$scout->value}' is already added. Skipping...");
-
-                    continue;
-                }
-                $config->setScoutDriver($scout);
-                $this->saveProjectConfig($projectPath, $config);
-                $this->addFeature(LaravelFeature::SCOUT, $config);
+                $this->addScoutDriver($scout, $config);
+                $addedCount++;
 
                 continue;
             }
 
             $storage = StorageDriver::tryFrom($item);
             if ($storage) {
-                if ($config->getObjectStorage() === $storage) {
-                    $this->laraKubeInfo("Storage '{$storage->value}' is already added. Skipping...");
-
-                    continue;
-                }
                 $this->addStorage($storage, $config);
+                $addedCount++;
+
+                continue;
+            }
+
+            $blueprint = Blueprint::tryFrom($item);
+            if ($blueprint) {
+                $this->addBlueprint($blueprint, $config);
+                $addedCount++;
+
+                continue;
+            }
+
+            if (! $matched) {
+                $this->laraKubeError("Unrecognized item: '{$item}'. Use larakube add (without arguments) for an interactive list.");
+            }
+        }
+
+        if ($addedCount > 0) {
+            $this->laraKubeInfo('Architectural updates complete. Please run "larakube up" to sync your cluster.');
+
+            // Collect instructions from all added components
+            $allInstructions = [];
+            foreach (array_unique($selectedItems) as $item) {
+                $component = DatabaseDriver::tryFrom($item)
+                    ?? CacheDriver::tryFrom($item)
+                    ?? LaravelFeature::tryFrom($item)
+                    ?? ScoutDriver::tryFrom($item)
+                    ?? StorageDriver::tryFrom($item)
+                    ?? Blueprint::tryFrom($item);
+
+                if ($component instanceof HasArtisanCommands && ! $config->isScaffolding()) {
+                    foreach ($component->getArtisanCommands($config) as $cmd) {
+                        $allInstructions[] = "Run: <fg=blue>larakube art $cmd</>";
+                    }
+                }
+
+                if ($component instanceof HasLifecycleHooks) {
+                    $allInstructions = array_merge($allInstructions, $component->getPostInstallInstructions($config));
+                }
+            }
+
+            if (! empty($allInstructions)) {
+                $this->newLine();
+                $this->warn('Perform these one-time architectural steps:');
+                foreach ($allInstructions as $line) {
+                    $this->line("  $line");
+                }
             }
         }
 
         return 0;
+
     }
 
-    /**
-     * @throws RandomException
-     */
-    protected function addBlueprint(Blueprint $blueprint, ConfigData $config): void
+    protected function addDatabase(DatabaseDriver $engine, ConfigData $config): void
     {
         $projectPath = $config->getPath();
+        $existingDbs = $config->getDatabases();
 
-        // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Blueprint '{$blueprint->value}'");
-        $this->line('  <fg=gray>[PHP]</> Would install required packages and extensions.');
+        if (in_array($engine, $existingDbs)) {
+            $this->laraKubeInfo("Database '{$engine->value}' is already added. Skipping...");
 
-        if ($this->option('dry-run')) {
             return;
         }
 
-        if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply blueprint '$blueprint->value'?", true)) {
-                return;
+        // FrankenPHP + SQLite Guard
+        if ($engine === DatabaseDriver::SQLITE && $config->getServerVariation() === ServerVariation::FRANKENPHP) {
+            $this->laraKubeError('Architectural Incompatibility: SQLite + FrankenPHP.');
+
+            return;
+        }
+
+        $primaryDb = $config->getDatabase();
+        $isMain = is_null($primaryDb);
+        $migrateFirst = false;
+
+        if ($primaryDb && $engine->value !== $primaryDb->value) {
+            $this->warn(" ⚠ A primary database ({$primaryDb->value}) is already configured.");
+            $isMain = confirm("Would you like to swap '{$engine->value}' as your NEW primary database?", true);
+            if ($isMain) {
+                $migrateFirst = confirm("Do you need to migrate data from '{$primaryDb->value}' to '{$engine->value}' first?", true);
             }
         }
 
-        // 1. Merge and persist PHP extensions in config first
-        $config->setBlueprint($blueprint);
+        $this->laraKubeInfo("Previewing Addition: Database '{$engine->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply changes for '{$engine->value}'?", true)) {
+            return;
+        }
+
+        $this->withSpin("Adding database '$engine->value'...", function () use ($engine, $config) {
+            $engine->updateK8s($config);
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'add', "Added database '{$engine->value}'");
+            }
+        });
+
+        if ($isMain) {
+            $config->setDatabase($engine);
+            if ($migrateFirst) {
+                $this->syncEnvFile($projectPath, $engine->getEnvironmentVariables($config), true);
+            } else {
+                $this->syncEnvFile($projectPath, $engine->getEnvironmentVariables($config));
+            }
+        } else {
+            $config->addDatabase($engine);
+        }
+
         $this->saveProjectConfig($projectPath, $config);
+        $config->installComponent($engine);
+    }
 
-        // 3. Update K8s structure
-        $this->orchestrateProjectScaffolding($config, false, false);
+    protected function addCacheDriver(CacheDriver $driver, ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        if (in_array($driver, $config->getCacheDrivers())) {
+            $this->laraKubeInfo("Cache driver '{$driver->value}' is already added. Skipping...");
 
-        // 4. Update Dockerfile for extensions
-        $this->generateDockerfiles($config);
-
-        // 5. Build local image
-        $this->buildImage($config);
-
-        // 6. Install packages
-        $config->installComponents();
-
-        $this->logActivity('Project blueprint updated', ['blueprint' => $blueprint->value], $projectPath);
-
-        $this->laraKubeInfo("Blueprint '{$blueprint->value}' applied successfully!");
-
-        if ($instructions = $blueprint->getPostInstallInstructions()) {
-            $this->line('');
-            $this->warn('Blueprint Next Steps:');
-            foreach ($instructions as $line) {
-                $this->line("  $line");
-            }
+            return;
         }
+
+        $primary = $config->getCacheDriver();
+        $isMain = is_null($primary);
+        if ($primary && $driver->value !== $primary->value) {
+            $this->warn(" ⚠ A primary cache driver ({$primary->value}) is already configured.");
+            $isMain = confirm("Would you like to swap '{$driver->value}' as your NEW primary cache driver?", true);
+        }
+
+        $this->laraKubeInfo("Previewing Addition: Cache Driver '{$driver->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply changes for '{$driver->value}'?", true)) {
+            return;
+        }
+
+        $this->withSpin("Adding cache driver '{$driver->value}'...", function () use ($driver, $config) {
+            $driver->updateK8s($config);
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'add', "Added cache driver '{$driver->value}'");
+            }
+        });
+
+        if ($isMain) {
+            $config->setCacheDriver($driver);
+            $this->syncEnvFile($projectPath, $driver->getEnvironmentVariables($config));
+        } else {
+            $config->addCacheDriver($driver);
+        }
+
+        $this->saveProjectConfig($projectPath, $config);
+        $config->installComponent($driver);
     }
 
     protected function addStorage(StorageDriver $storage, ConfigData $config): void
     {
         $projectPath = $config->getPath();
+        if (in_array($storage, $config->getObjectStorages())) {
+            $this->laraKubeInfo("Storage '{$storage->value}' is already added. Skipping...");
 
-        // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Storage '{$storage->value}'");
-        $this->line('  <fg=gray>[K8S]</> Would add storage manifests to .infrastructure/k8s/');
-        $this->line('  <fg=gray>[PHP]</> Would install league/flysystem-aws-s3-v3');
-
-        if ($this->option('dry-run')) {
             return;
         }
 
-        if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply changes for '{$storage->value}'?", true)) {
-                return;
-            }
+        $primary = $config->getObjectStorage();
+        $isMain = is_null($primary);
+        if ($primary && $storage->value !== $primary->value) {
+            $this->warn(" ⚠ A primary storage engine ({$primary->value}) is already configured.");
+            $isMain = confirm("Would you like to swap '{$storage->value}' as your NEW primary storage?", true);
         }
 
-        $this->withSpin("Adding storage '{$storage->value}' to cluster manifests...", function () use ($projectPath, $storage, $config) {
+        $this->laraKubeInfo("Previewing Addition: Storage '{$storage->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply changes for '{$storage->value}'?", true)) {
+            return;
+        }
+
+        $this->withSpin("Adding storage '{$storage->value}'...", function () use ($storage, $config) {
             $storage->updateK8s($config);
-            $this->logActivity('Project storage added', ['storage' => $storage->value], $projectPath);
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'add', "Added storage '{$storage->value}'");
+            }
         });
 
-        $config->setObjectStorage($storage);
-        $this->saveProjectConfig($projectPath, $config);
-
-        // Use shared trait for installation
-        $config->installComponents();
-
-        // Run onPostInstall to update .env
-        if ($storage instanceof HasLifecycleHooks) {
-            $storage->onPostInstall($projectPath, $config);
+        if ($isMain) {
+            $config->setObjectStorage($storage);
+            $this->syncEnvFile($projectPath, $storage->getEnvironmentVariables($config));
+        } else {
+            $config->addObjectStorage($storage);
         }
 
-        $this->laraKubeInfo("Storage '{$storage->value}' added successfully!");
+        $this->saveProjectConfig($projectPath, $config);
+        $config->installComponent($storage);
+    }
 
-        if ($storage instanceof HasLifecycleHooks) {
-            $this->displayInstructions($storage->getPostInstallInstructions());
+    protected function addScoutDriver(ScoutDriver $scout, ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        if (in_array($scout, $config->getScoutDrivers())) {
+            $this->laraKubeInfo("Scout driver '{$scout->value}' is already added. Skipping...");
+
+            return;
+        }
+
+        $primary = $config->getScoutDriver();
+        $isMain = is_null($primary);
+        if ($primary && $scout->value !== $primary->value) {
+            $this->warn(" ⚠ A primary search driver ({$primary->value}) is already configured.");
+            $isMain = confirm("Would you like to swap '{$scout->value}' as your NEW primary search driver?", true);
+        }
+
+        $this->laraKubeInfo("Previewing Addition: Scout Driver '{$scout->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply changes for '{$scout->value}'?", true)) {
+            return;
+        }
+
+        if ($isMain) {
+            $config->setScoutDriver($scout);
+            $this->syncEnvFile($projectPath, $scout->getEnvironmentVariables($config));
+        } else {
+            $config->addScoutDriver($scout);
+        }
+
+        $this->saveProjectConfig($projectPath, $config);
+        $this->addFeature(LaravelFeature::SCOUT, $config); // This handles the K8s manifests
+    }
+
+    protected function addBlueprint(Blueprint $blueprint, ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        if (in_array($blueprint, $config->getBlueprints())) {
+            $this->laraKubeInfo("Blueprint '{$blueprint->value}' is already added. Skipping...");
+
+            return;
+        }
+
+        $this->laraKubeInfo("Previewing Addition: Blueprint '{$blueprint->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply blueprint '{$blueprint->value}'?", true)) {
+            return;
+        }
+
+        $config->addBlueprint($blueprint);
+        $this->saveProjectConfig($projectPath, $config);
+        $this->orchestrateProjectScaffolding($config, false, false);
+        $this->generateDockerfiles($config);
+        $this->buildImage($config);
+        $config->installComponent($blueprint);
+
+        if ($config->getId()) {
+            $this->logToConsole($config->getId(), 'add', "Applied blueprint '{$blueprint->value}'");
         }
     }
 
     protected function addFeature(LaravelFeature $feature, ConfigData $config): void
     {
         $projectPath = $config->getPath();
+        if (in_array($feature, $config->getFeatures())) {
+            $this->laraKubeInfo("Feature '{$feature->value}' is already added. Skipping...");
 
-        if ($feature === LaravelFeature::REVERB && ! $config->getFrontend()) {
-            $frontend = select(
-                label: 'Which frontend stack are you using?',
-                options: FrontendStack::getSelectOptions(),
-                default: FrontendStack::LIVEWIRE->value
-            );
-            $config->setFrontend(FrontendStack::from($frontend));
-        }
-
-        if ($feature === LaravelFeature::SCOUT && ! $config->getScoutDriver()) {
-            $driver = select(
-                label: 'Which search driver would you like to use for Scout?',
-                options: ScoutDriver::getSelectOptions(),
-                default: ScoutDriver::MEILISEARCH->value
-            );
-
-            $config->setScoutDriver(ScoutDriver::from($driver));
-        }
-
-        // Save changes
-        $config->saveToFile($projectPath);
-
-        // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Feature '$feature->value'");
-        $this->line('  <fg=gray>[K8S]</> Would add feature manifests and patches to .infrastructure/k8s/');
-
-        if ($this->option('dry-run')) {
             return;
         }
 
-        if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply changes for '$feature->value'?", true)) {
-                return;
-            }
+        $this->laraKubeInfo("Previewing Addition: Feature '{$feature->value}'");
+        if ($this->option('dry-run')) {
+            return;
+        }
+        if (! $this->option('no-interaction') && ! confirm("Apply feature '{$feature->value}'?", true)) {
+            return;
         }
 
-        $this->withSpin("Adding feature '$feature->value' to cluster manifests...", function () use ($feature, $projectPath, $config) {
+        $this->withSpin("Adding feature '{$feature->value}'...", function () use ($feature, $config) {
             $feature->updateK8s($config);
-            $this->logActivity('Project feature added', ['feature' => $feature->value], $projectPath);
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'add', "Added feature '{$feature->value}'");
+            }
         });
 
         $config->addFeature($feature);
-
-        // Use shared trait for installation
-        $config->installComponents();
-
-        $this->updateProjectConfig($projectPath, 'features', [$feature->value]);
-
-        $this->laraKubeInfo("Feature '{$feature->value}' added successfully!");
-
-        if ($feature instanceof HasLifecycleHooks) {
-            $this->displayInstructions($feature->getPostInstallInstructions());
-        }
+        $this->saveProjectConfig($projectPath, $config);
+        $config->installComponent($feature);
     }
 
-    protected function addCacheDriver(CacheDriver $driver, ConfigData $config): void
+    protected function updatePhpVersion(PhpVersion $version, ConfigData $config): void
     {
         $projectPath = $config->getPath();
+        if ($config->getPhpVersion() === $version) {
+            $this->laraKubeInfo("PHP Version is already '{$version->value}'. Skipping...");
 
-        // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Cache Driver '{$driver->value}'");
-        $this->line('  <fg=gray>[K8S]</> Would add cache driver manifests to .infrastructure/k8s/');
-
-        if ($this->option('dry-run')) {
             return;
         }
 
-        if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply changes for '{$driver->value}'?", true)) {
-                return;
-            }
-        }
+        $this->laraKubeInfo("Pivoting PHP Version to: {$version->getLabel()}");
 
-        $this->withSpin("Adding cache driver '{$driver->value}' to cluster manifests...", function () use ($projectPath, $driver, $config) {
-            $driver->updateK8s($config);
-            $this->logActivity('Project cache driver added', ['driver' => $driver->value], $projectPath);
-        });
-
-        $config->setCacheDriver($driver);
-        $this->saveProjectConfig($projectPath, $config);
-
-        // Run onPostInstall to update .env
-        if ($driver instanceof HasLifecycleHooks) {
-            $driver->onPostInstall($projectPath, $config);
-        }
-
-        $this->laraKubeInfo("Cache driver '{$driver->value}' added successfully!");
-
-        if ($driver instanceof HasLifecycleHooks) {
-            $this->displayInstructions($driver->getPostInstallInstructions());
-        }
+        $config->setPhpVersion($version);
+        $this->finishArchitecturalPivot($config);
     }
 
-    protected function addDatabase(DatabaseDriver $engine, ConfigData $config): void
+    protected function updateServerVariation(ServerVariation $variation, ConfigData $config): void
     {
         $projectPath = $config->getPath();
+        if ($config->getServerVariation() === $variation) {
+            $this->laraKubeInfo("Server Variation is already '{$variation->value}'. Skipping...");
 
-        // 1. Always show preview
-        $this->laraKubeInfo("Previewing Addition: Database '{$engine->value}'");
-        $this->line('  <fg=gray>[K8S]</> Would add database deployment and volumes to .infrastructure/k8s/');
-
-        if ($this->option('dry-run')) {
             return;
         }
 
-        if (! $this->option('no-interaction')) {
-            if (! $this->confirm("Apply changes for '{$engine->value}'?", true)) {
-                return;
-            }
+        $this->laraKubeInfo("Pivoting Server Variation to: {$variation->getLabel()}");
+
+        $config->setServerVariation($variation);
+        $this->finishArchitecturalPivot($config);
+    }
+
+    protected function updateOs(OperatingSystem $os, ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        if ($config->getOs() === $os) {
+            $this->laraKubeInfo("Operating System is already '{$os->value}'. Skipping...");
+
+            return;
         }
 
-        $this->withSpin("Adding database '$engine->value' to cluster manifests...", function () use ($engine, $projectPath, $config) {
-            $engine->updateK8s($config);
-            $this->logActivity('Project database added', ['database' => $engine->value], $projectPath);
+        $this->laraKubeInfo("Pivoting Base OS to: {$os->getLabel()}");
+
+        $config->setOs($os);
+        $this->finishArchitecturalPivot($config);
+    }
+
+    protected function finishArchitecturalPivot(ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+
+        $this->withSpin('Updating project DNA and manifests...', function () use ($config, $projectPath) {
+            $this->saveProjectConfig($projectPath, $config);
+            $this->orchestrateProjectScaffolding($config, false, false);
+            $this->generateDockerfiles($config);
         });
 
-        $config->addDatabase($engine);
-        $this->saveProjectConfig($projectPath, $config);
-
-        // Use shared trait for installation if it's a feature database (like MongoDB)
-        if (! empty($engine->getComposerDependencies($config))) {
-            $config->installComponents();
+        if (confirm('Architectural pivot requires an image rebuild. Would you like to build now?', true)) {
+            $this->buildImage($config);
         }
 
-        if (confirm("Would you like to make {$engine->value} your primary database connection? (Updates your .env)", true)) {
-            $this->updateEnvironmentDatabase($projectPath, $engine);
-        }
-
-        $this->laraKubeInfo("Database '{$engine->value}' added successfully!");
-
-        if ($engine instanceof HasLifecycleHooks) {
-            $this->displayInstructions($engine->getPostInstallInstructions());
-        }
+        $this->laraKubeInfo('Evolution complete! Run "larakube up" to deploy the new architecture.');
     }
 
     protected function displayInstructions(array $instructions): void
@@ -544,22 +680,11 @@ class AddCommand extends Command
         if (empty($instructions)) {
             return;
         }
-
         $this->newLine();
         $this->warn('Next Steps:');
         foreach ($instructions as $line) {
             $this->line("  $line");
         }
         $this->newLine();
-    }
-
-    protected function updateEnvironmentDatabase(string $projectPath, DatabaseDriver $engine): void
-    {
-        $this->syncEnvFile($projectPath, [
-            'DB_CONNECTION' => $engine->dbConnection(),
-            'DB_HOST' => $engine->dbHost(),
-            'DB_PORT' => $engine->dbPort(),
-            'DB_USERNAME' => $engine->dbUsername(),
-        ]);
     }
 }

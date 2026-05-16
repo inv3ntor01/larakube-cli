@@ -9,12 +9,12 @@ use Random\RandomException;
 
 trait GeneratesProjectInfrastructure
 {
-    use InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * Sync values to the .env file.
      */
-    protected function syncEnvFile(string $projectPath, array $values): void
+    protected function syncEnvFile(string $projectPath, array $values, bool $commented = false): void
     {
         $envPath = $projectPath.'/.env';
         if (! file_exists($envPath)) {
@@ -29,7 +29,8 @@ trait GeneratesProjectInfrastructure
             $matched = false;
             foreach ($values as $key => $value) {
                 if (preg_match("/^#?\s*{$key}=.*/", $line)) {
-                    $newLines[] = "{$key}={$value}";
+                    $prefix = $commented ? '# ' : '';
+                    $newLines[] = "{$prefix}{$key}={$value}";
                     $processedKeys[] = $key;
                     $matched = true;
                     break;
@@ -44,7 +45,8 @@ trait GeneratesProjectInfrastructure
         // Add keys that didn't exist in the original file
         foreach ($values as $key => $value) {
             if (! in_array($key, $processedKeys)) {
-                $newLines[] = "{$key}={$value}";
+                $prefix = $commented ? '# ' : '';
+                $newLines[] = "{$prefix}{$key}={$value}";
             }
         }
 
@@ -60,15 +62,47 @@ trait GeneratesProjectInfrastructure
     {
         $projectPath = $config->getPath();
 
-        $phpDockerfile = view('docker.php', ['config' => $config])->render();
-        file_put_contents("$projectPath/Dockerfile.php", $phpDockerfile);
+        if (! $config->isLocked('Dockerfile.php')) {
+            $phpDockerfile = view('docker.php', ['config' => $config])->render();
+            file_put_contents("$projectPath/Dockerfile.php", $phpDockerfile);
+        }
 
-        if ($config->getFrontend()?->requiresNodePod()) {
+        if ($config->getFrontend()?->requiresNodePod() && ! $config->isLocked('Dockerfile.node')) {
             $nodeDockerfile = view('docker.node', ['config' => $config])->render();
             file_put_contents("$projectPath/Dockerfile.node", $nodeDockerfile);
         }
 
         $this->generateDockerIgnore($config);
+        $this->hardenGitIgnore($config);
+    }
+
+    protected function hardenGitIgnore(ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        $gitIgnorePath = "$projectPath/.gitignore";
+
+        if (! file_exists($gitIgnorePath)) {
+            return;
+        }
+
+        $content = file_get_contents($gitIgnorePath);
+        $rules = [
+            '# LaraKube Local Infrastructure (Dynamic paths)',
+            '.infrastructure/k8s/overlays/local',
+        ];
+
+        $toAdd = [];
+        foreach ($rules as $rule) {
+            if (! str_contains($content, $rule)) {
+                $toAdd[] = $rule;
+            }
+        }
+
+        if (! empty($toAdd)) {
+            $this->laraKubeInfo('Hardening .gitignore to exclude local infrastructure paths...');
+            $newContent = trim($content)."\n\n".implode("\n", $toAdd)."\n";
+            file_put_contents($gitIgnorePath, $newContent);
+        }
     }
 
     protected function generateDockerIgnore(ConfigData $config): void
@@ -114,15 +148,6 @@ trait GeneratesProjectInfrastructure
             $stubs[] = 'overlays/local/node-deployment.yaml';
         }
 
-        // Cleanup legacy files if they exist (Surgical)
-        $legacyFiles = [
-            'base/deployment.yaml', 'base/service.yaml', 'base/ingress.yaml', 'base/pvc.yaml', 'base/configmap.yaml', 'base/secrets.yaml',
-            'overlays/local/namespace.yaml', 'overlays/local/laravel-volumes.yaml', 'overlays/local/deployment-patch.yaml', 'overlays/local/ingress-patch.yaml',
-        ];
-        foreach ($legacyFiles as $file) {
-            @unlink("$k8sPath/$file");
-        }
-
         foreach ($stubs as $stub) {
             $namespace = $appName;
             if (str_contains($stub, 'overlays/local')) {
@@ -132,16 +157,23 @@ trait GeneratesProjectInfrastructure
             }
 
             // Calculate environment-aware command
-            $command = $config->getServerVariation()->getStartCommand(str_contains($stub, 'overlays/local'));
+            $command = $config->getServerVariation()?->getStartCommand(str_contains($stub, 'overlays/local')) ?? '[]';
+            $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
+            $workspacePath = dirname($config->getPath());
 
             $viewName = 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub);
             $content = view($viewName, [
                 'config' => $config,
                 'namespace' => $namespace,
                 'command' => $command,
+                'binaryPath' => $binaryPath,
+                'workspacePath' => $workspacePath,
             ])->render();
 
-            file_put_contents("$k8sPath/$stub", $content);
+            $fullPath = "$k8sPath/$stub";
+            if (! $config->isLocked(".infrastructure/k8s/{$stub}")) {
+                file_put_contents($fullPath, $content);
+            }
         }
 
         // 2. APPLY ACTIONS & COLLECT CATEGORIZED MANIFESTS
@@ -193,14 +225,14 @@ trait GeneratesProjectInfrastructure
 
         if ($type === 'resources') {
             if (! str_contains($content, "  - $filename") && ! str_contains($content, "- $filename")) {
-                $content = preg_replace('/resources:\n/', "resources:\n  - $filename\n", $content, 1);
+                $content = preg_replace('/resources:\s*\n/', "resources:\n  - $filename\n", $content, 1);
             }
         } elseif ($type === 'patches') {
             if (! str_contains($content, "path: $filename")) {
                 if (! str_contains($content, 'patches:')) {
                     $content .= "\npatches:\n";
                 }
-                $content = preg_replace('/patches:\n/', "patches:\n  - path: $filename\n", $content, 1);
+                $content = preg_replace('/patches:\s*\n/', "patches:\n  - path: $filename\n", $content, 1);
             }
         }
 
@@ -271,6 +303,41 @@ trait GeneratesProjectInfrastructure
             $this->laraKubeInfo("Architectural Preview for '{$config->getName()}':");
         }
 
+        // --- 🛡 SECURITY GUARD: SYSTEM PROJECTS ---
+        if ($config->isSystem()) {
+            $globalConfigPath = $_SERVER['HOME'].'/.larakube/config.json';
+            $globalConfig = file_exists($globalConfigPath) ? json_decode(file_get_contents($globalConfigPath), true) : [];
+            $trusted = $globalConfig['trusted_system_uuids'] ?? [];
+
+            if (! in_array($config->getId(), $trusted)) {
+                $shouldTrust = false;
+
+                if ($this->hasOption('force') && $this->option('force')) {
+                    $shouldTrust = true;
+                } else {
+                    $this->newLine();
+                    $this->warn(' ⚠ SECURITY WARNING: This project is requesting "System" status.');
+                    $this->warn('   It will have READ/WRITE access to your global LaraKube project registry and logs.');
+                    $this->newLine();
+
+                    if (\Laravel\Prompts\confirm("Do you trust this project ({$config->getName()}) and want to grant system access?", false)) {
+                        $shouldTrust = true;
+                    }
+                }
+
+                if ($shouldTrust) {
+                    $trusted[] = $config->getId();
+                    $globalConfig['trusted_system_uuids'] = array_unique($trusted);
+                    @mkdir($_SERVER['HOME'].'/.larakube', 0755, true);
+                    file_put_contents($globalConfigPath, json_encode($globalConfig, JSON_PRETTY_PRINT));
+                    $this->laraKubeInfo('Project UUID added to global trusted list.');
+                } else {
+                    $this->laraKubeError('Access Denied. Disabling system status for this run.');
+                    $config->setIsSystem(false);
+                }
+            }
+        }
+
         // 0. Persist configuration for self-healing
         if ($dryRun) {
             $this->line('  <fg=gray>[FILE]</> Would create .larakube.json with project blueprint.');
@@ -279,9 +346,10 @@ trait GeneratesProjectInfrastructure
             $this->saveProjectConfig($config->getPath(), $config);
         }
 
-        // 1. Handle Blueprint extensions
-        if (! $config->hasBlueprint()) {
-            $config->setBlueprint(Blueprint::LARAVEL);
+        // 1. Handle Blueprint extensions (Laravel is the implicit base)
+        if (! $config->hasBlueprints()) {
+            // Optional: You can keep it empty or add LARAVEL as a marker
+            // $config->addBlueprint(Blueprint::LARAVEL);
         }
 
         // 2. Sync .env (Source of Truth)

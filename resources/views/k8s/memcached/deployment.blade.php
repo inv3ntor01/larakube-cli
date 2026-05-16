@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: memcached
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: memcached
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: memcached
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: memcached
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: 11211
@@ -31,10 +31,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: memcached-server
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: memcached
+    app: {{ $driver->getPodName($config) }}
   ports:
     - protocol: TCP
       port: 11211

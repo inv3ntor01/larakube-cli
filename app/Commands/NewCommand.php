@@ -17,10 +17,9 @@ use App\Enums\StorageDriver;
 use App\Traits\CheckPrerequisites;
 use App\Traits\GathersInfrastructureConfig;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithDynamicOptions;
-use App\Traits\InteractsWithInternalDatabase;
-use App\Traits\InteractsWithMcpConfig;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Console\Scheduling\Schedule;
@@ -34,7 +33,7 @@ use function Laravel\Prompts\text;
 
 class NewCommand extends Command
 {
-    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithInternalDatabase, InteractsWithMcpConfig, InteractsWithProjectConfig, LaraKubeOutput;
+    use CheckPrerequisites, GathersInfrastructureConfig, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithDocker, InteractsWithDynamicOptions, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -92,10 +91,31 @@ class NewCommand extends Command
         $inputName = $this->argument('name') ?? text(
             label: 'What is the name of your app?',
             placeholder: 'my-laravel-app',
-            required: true
+            required: true,
+            validate: fn (string $value) => match (true) {
+                strtolower($value) === 'console' => 'The name "console" is reserved for the LaraKube Console.',
+                default => null,
+            }
         );
 
-        $config = $this->gatherConfig($this->buildConfigFromFlags());
+        $config = $this->buildConfigFromFlags();
+        $config->setIsScaffolding(true);
+        $config = $this->gatherConfig($config);
+
+        // Architectural Guard: FrankenPHP + SQLite
+        if ($config->getServerVariation() === ServerVariation::FRANKENPHP && in_array(DatabaseDriver::SQLITE, $config->getDatabases())) {
+            $this->laraKubeError('Architectural Incompatibility Detected:');
+            $this->line('  FrankenPHP keeps persistent workers that lock SQLite files, causing issues for other pods.');
+            $this->newLine();
+
+            if (confirm('Would you like to switch to MySQL instead?', true)) {
+                $config->setDatabases([DatabaseDriver::MYSQL]);
+            } else {
+                $this->laraKubeInfo('Action cancelled. Please choose a different database or server.');
+
+                return 1;
+            }
+        }
 
         $config->setName(Str::slug($inputName));
 
@@ -121,18 +141,28 @@ class NewCommand extends Command
             copy("$projectPath/.env", "$projectPath/.env.production");
         }
 
-        $this->withSpin('Orchestrating infrastructure manifests...', function () use ($config, $projectPath, $appName) {
+        $this->withSpin('Orchestrating infrastructure manifests...', function () use ($config) {
             $this->orchestrateProjectScaffolding($config);
-            $this->scaffoldMcpConfigs($projectPath);
 
-            $this->logActivity('New architectural masterpiece created', [
-                'name' => $appName,
-                'blueprint' => $config->getBlueprint()?->value,
-                'server' => $config->getServerVariation()?->value,
-            ], $projectPath);
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'new', 'New architectural masterpiece created', [
+                    'name' => $config->getName(),
+                    'blueprints' => $config->getBlueprints(),
+                    'server' => $config->getServerVariation()?->value,
+                ]);
+            }
         });
 
         $this->laraKubeInfo("Project $appName created successfully!");
+
+        // Register with Console
+        $this->registerWithConsole([
+            'uuid' => $config->getId(),
+            'name' => $appName,
+            'path' => $projectPath,
+            'blueprints' => $config->getBlueprints(), // Note: I should check if ConfigData has a getter for array or just use raw property if accessible
+            'config' => $config->toArray(),
+        ]);
 
         $this->newLine();
         info('First, start your application:');
@@ -142,7 +172,7 @@ class NewCommand extends Command
         $allInstructions = [];
         foreach ($config->getComponents() as $component) {
             if ($component instanceof HasLifecycleHooks) {
-                $allInstructions = array_merge($allInstructions, $component->getPostInstallInstructions());
+                $allInstructions = array_merge($allInstructions, $component->getPostInstallInstructions($config));
             }
         }
 
@@ -201,7 +231,7 @@ class NewCommand extends Command
             return true;
         });
 
-        // Add Package Manager, Frontend Stack, and Boost
+        // Add Package Manager & Frontend Stack
         if ($pmFlag = $config->getPackageManager()?->getOptionFlag()) {
             $extraArgs[] = $pmFlag;
         }
@@ -210,7 +240,13 @@ class NewCommand extends Command
             $extraArgs[] = $frontendFlag;
         }
 
-        $extraArgs[] = $config->hasFeature(LaravelFeature::BOOST) ? '--boost' : '--no-boost';
+        // Laravel Boost should be disabled during "laravel new"
+        // This will be taken care of by the orchestration process
+        $extraArgs[] = '--no-boost';
+
+        // Set default database to SQLite temporarily during "laravel new"
+        // The database will be configured later in the orchestration process\
+        $extraArgs[] = '--database=sqlite';
 
         $extraFlags = implode(' ', $extraArgs);
 

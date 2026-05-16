@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: laravel-web
+  name: {{ $config->getServerVariation()->getPodName($config) }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
@@ -15,7 +15,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: laravel-web
+                name: {{ $config->getServerVariation()->getPodName($config) }}
                 port:
                   number: 80
   tls:

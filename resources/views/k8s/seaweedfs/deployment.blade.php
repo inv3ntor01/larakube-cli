@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: seaweedfs
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: seaweedfs
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: seaweedfs
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: seaweedfs
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           args: {!! $driver->getK8sDeploymentArgs() !!}
 
@@ -54,10 +54,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-seaweedfs
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: seaweedfs
+    app: {{ $driver->getPodName($config) }}
   ports:
     - name: master
       protocol: TCP

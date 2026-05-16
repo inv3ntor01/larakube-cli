@@ -41,7 +41,7 @@ class ConfigCommand extends Command
 
         $this->line('');
         $this->info('👉 To update AI settings: larakube config:ai --gemini=KEY');
-        $this->info('👉 To register global MCP: larakube config:mcp --all');
+        $this->info('👉 To register global MCP: larakube mcp:register --all');
         $this->info('👉 To update email: larakube config --email=example@email.com');
 
         return 0;

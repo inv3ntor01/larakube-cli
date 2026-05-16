@@ -9,6 +9,13 @@ class PhpCommand extends Command
 {
     use LaraKubeOutput;
 
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
+
     /**
      * The name and signature of the console command.
      *
@@ -28,11 +35,34 @@ class PhpCommand extends Command
      */
     public function handle()
     {
-        $phpCommand = implode(' ', $this->argument('commands'));
+        // Capture everything from the original command line after 'php'
+        $rawArgs = $_SERVER['argv'];
+        $cmdIndex = array_search('php', $rawArgs);
+
+        if ($cmdIndex !== false) {
+            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
+
+            $commands = [];
+            $env = $this->option('environment');
+
+            foreach ($passedArgs as $arg) {
+                if (str_starts_with($arg, '--environment=')) {
+                    $env = str_replace('--environment=', '', $arg);
+
+                    continue;
+                }
+                $commands[] = $arg;
+            }
+
+            $phpCommand = implode(' ', $commands);
+        } else {
+            $phpCommand = implode(' ', $this->argument('commands'));
+            $env = $this->option('environment');
+        }
 
         return $this->call('exec', [
             'commands' => ["php {$phpCommand}"],
-            '--environment' => $this->option('environment'),
+            '--environment' => $env,
             '--service' => 'web',
         ]);
     }

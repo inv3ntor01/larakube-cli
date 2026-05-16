@@ -2,7 +2,6 @@
 
 namespace App\Commands\Cluster;
 
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
@@ -11,7 +10,7 @@ use function Laravel\Prompts\select;
 
 class ClusterDestroyCommand extends Command
 {
-    use InteractsWithInternalDatabase, LaraKubeOutput;
+    use LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -56,7 +55,6 @@ class ClusterDestroyCommand extends Command
     protected function destroyK3d(): int
     {
         $this->withSpin('Deleting k3d cluster...', fn () => passthru('k3d cluster delete larakube'));
-        $this->logActivity('Local cluster destroyed', ['engine' => 'k3d']);
         $this->laraKubeInfo('✅ k3d cluster destroyed.');
 
         return 0;
@@ -71,7 +69,6 @@ class ClusterDestroyCommand extends Command
         }
 
         $this->withSpin('Uninstalling k3s...', fn () => passthru('/usr/local/bin/k3s-uninstall.sh'));
-        $this->logActivity('Local cluster destroyed', ['engine' => 'k3s_native']);
         $this->laraKubeInfo('✅ k3s service uninstalled.');
 
         return 0;

@@ -12,7 +12,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
   hostPath:
-    path: {{ $config->getPath() }}/storage
+    path: "{{ $config->getPath() }}/storage"
     type: DirectoryOrCreate
 @if($config->hasDatabase(\App\Enums\DatabaseDriver::SQLITE))
 ---
@@ -30,6 +30,6 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
   hostPath:
-    path: {{ $config->getPath() }}/.infrastructure/volume_data
+    path: "{{ $config->getPath() }}/.infrastructure/volume_data"
     type: DirectoryOrCreate
 @endif

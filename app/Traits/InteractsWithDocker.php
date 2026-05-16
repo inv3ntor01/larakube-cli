@@ -11,10 +11,10 @@ trait InteractsWithDocker
     /**
      * Get the base Docker run command for a specific type (php or node).
      */
-    protected function getDockerCommand(string $path, string $type = 'php'): string
+    protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
     {
         if ($type === 'node') {
-            return "docker run --rm --init -v $path:/usr/src/app -w /usr/src/app --user root -e npm_config_cache=/tmp/.npm node:22-alpine ";
+            return "docker run --rm --init -v $path:/usr/src/app -w /usr/src/app --user root $envs -e npm_config_cache=/tmp/.npm node:22-alpine ";
         }
 
         $appName = basename($path);
@@ -24,7 +24,9 @@ trait InteractsWithDocker
         $imageExists = shell_exec("docker images -q {$localImage} 2>/dev/null");
         $image = $imageExists ? $localImage : $this->getProjectConfig($path)->getPhpImage(true);
 
-        return "docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1 {$image} ";
+        $baseEnvs = '-e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1';
+
+        return "docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root $baseEnvs $envs {$image} ";
     }
 
     /**
@@ -88,9 +90,9 @@ trait InteractsWithDocker
     /**
      * Run a command inside a Docker container.
      */
-    protected function runInContainer(string $command, string $path, string $type = 'php'): void
+    protected function runInContainer(string $command, string $path, string $type = 'php', string $envs = ''): void
     {
-        $base = $this->getDockerCommand($path, $type);
+        $base = $this->getDockerCommand($path, $type, $envs);
         passthru($base."sh -c '$command'");
     }
 

@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: typesense
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: typesense
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: typesense
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: typesense
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: 8108
@@ -50,10 +50,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-typesense
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: typesense
+    app: {{ $driver->getPodName($config) }}
   ports:
     - protocol: TCP
       port: 8108

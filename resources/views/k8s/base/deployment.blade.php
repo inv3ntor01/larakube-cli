@@ -1,19 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: laravel-web
+  name: {{ $config->getServerVariation()->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: laravel-web
+      app: {{ $config->getServerVariation()->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: laravel-web
+        app: {{ $config->getServerVariation()->getPodName($config) }}
     spec:
+@if($config->isSystem())
+      serviceAccountName: larakube-dashboard
+@endif
 @if($waitCmd = $config->buildWaitForCommand($config->getCoreDependencies()))
       initContainers:
         - name: wait-for-deps
@@ -33,6 +36,10 @@ spec:
               value: "true"
             - name: AUTORUN_LARAVEL_MIGRATION
               value: "true"
+@if($config->isSystem())
+            - name: LARAKUBE_HOST_WORKSPACE
+              value: {{ $workspacePath }}
+@endif
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -42,19 +49,24 @@ spec:
             httpGet:
               path: /up
               port: {{ $config->getServerVariation()->containerPort() }}
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: /up
               port: {{ $config->getServerVariation()->containerPort() }}
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
 
           volumeMounts:
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
             - name: storage
               mountPath: /var/www/html/storage/framework/sessions
               subPath: framework/sessions
@@ -71,6 +83,13 @@ spec:
             - name: data
               mountPath: /var/lib/larakube
 @endif
+@if($config->isSystem())
+            - name: larakube-config
+              mountPath: /var/lib/larakube-config
+            - name: larakube-workspace
+              mountPath: /var/lib/larakube-workspace
+              readOnly: true
+@endif
       volumes:
         - name: storage
           persistentVolumeClaim:
@@ -79,4 +98,14 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-data-pvc
+@endif
+@if($config->isSystem())
+        - name: larakube-config
+          hostPath:
+            path: {{ $_SERVER['HOME'] }}/.larakube
+            type: DirectoryOrCreate
+        - name: larakube-workspace
+          hostPath:
+            path: {{ $workspacePath }}
+            type: Directory
 @endif

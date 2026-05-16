@@ -11,19 +11,25 @@ use App\Contracts\HasHosts;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions
+enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case MINIO = 'minio';
     case SEAWEEDFS = 'seaweedfs';
     case GARAGE = 'garage';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return $this->value;
+    }
 
     public function getLabel(): string
     {
@@ -216,14 +222,14 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
             'AWS_SECRET_ACCESS_KEY' => 'larakubesecretpassword',
             'AWS_DEFAULT_REGION' => 'us-east-1',
             'AWS_BUCKET' => 'laravel',
-            'AWS_URL' => "https://s3.{$appName}.dev.test",
+            'AWS_URL' => "https://s3-{$appName}.dev.test",
             'AWS_USE_PATH_STYLE_ENDPOINT' => 'true',
         ];
 
         $endpoint = match ($this) {
-            self::SEAWEEDFS => 'http://laravel-seaweedfs:8333',
-            self::MINIO => 'http://laravel-minio:9000',
-            self::GARAGE => 'http://laravel-garage:3900',
+            self::SEAWEEDFS => "http://{$this->getPodName()}:8333",
+            self::MINIO => "http://{$this->getPodName()}:9000",
+            self::GARAGE => "http://{$this->getPodName()}:3900",
         };
 
         $envs['AWS_ENDPOINT'] = $endpoint;
@@ -237,28 +243,28 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
         return match ($this) {
             self::MINIO => [
-                "s3.{$appName}.dev.test" => 'MinIO S3 API',
-                "s3-console.{$appName}.dev.test" => 'MinIO Console',
+                "s3-{$appName}.dev.test" => 'MinIO S3 API',
+                "s3-console-{$appName}.dev.test" => 'MinIO Console',
             ],
             self::SEAWEEDFS => [
-                "s3.{$appName}.dev.test" => 'SeaweedFS S3 API',
-                "s3-admin.{$appName}.dev.test" => 'SeaweedFS Filer UI',
+                "s3-{$appName}.dev.test" => 'SeaweedFS S3 API',
+                "s3-admin-{$appName}.dev.test" => 'SeaweedFS Filer UI',
             ],
             self::GARAGE => [
-                "s3.{$appName}.dev.test" => 'Garage S3 API',
-                "s3-web.{$appName}.dev.test" => 'Garage Static Web',
+                "s3-{$appName}.dev.test" => 'Garage S3 API',
+                "s3-web-{$appName}.dev.test" => 'Garage Static Web',
             ],
         };
     }
 
     public function getDependencyConfig(ConfigData $config): array
     {
-        return [$this->value => $this->port()];
+        return [$this->getPodName($config) => $this->port()];
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
-        $appName = basename(getcwd());
+        $appName = $config?->getName() ?? basename(getcwd());
 
         return match ($this) {
             self::MINIO => [

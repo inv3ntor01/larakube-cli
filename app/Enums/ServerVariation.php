@@ -10,17 +10,23 @@ use App\Contracts\HasEnvironmentVariables;
 use App\Contracts\HasHosts;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasDependencies, HasEnvironmentVariables, HasHosts, HasLabel, HasLifecycleHooks, HasSelectOptions
+enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasDependencies, HasEnvironmentVariables, HasHosts, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
     case FPM_NGINX = 'fpm-nginx';
     case FRANKENPHP = 'frankenphp';
     case FPM_APACHE = 'fpm-apache';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return 'web';
+    }
 
     public function getLabel(): string
     {
@@ -70,7 +76,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
 
     public function getDependencyConfig(ConfigData $config): array
     {
-        return ['laravel-web' => 80];
+        return ['web' => 80];
     }
 
     public function containerPort(): int
@@ -98,7 +104,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
         // TODO: Implement onPostInstall() method.
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
         return [];
     }

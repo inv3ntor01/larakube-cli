@@ -68,6 +68,10 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          # Use kustomize to set the new image tag
+          # 1. Create/Update ConfigMap and Secret from .env
+          kubectl create configmap laravel-config -n {{ $config->getName() }}-production --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic laravel-secrets -n {{ $config->getName() }}-production --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+
+          # 2. Use kustomize to set the new image tag and deploy
           cd .infrastructure/k8s/overlays/production
           kubectl kustomize . | sed "s|image: {{ $config->getName() }}:latest|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" | kubectl apply -f -

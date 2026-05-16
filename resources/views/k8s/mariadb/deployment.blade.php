@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $driver->value }}
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: {{ $driver->value }}
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: {{ $driver->value }}
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: {{ $driver->value }}
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: {{ $driver->dbPort() }}
@@ -61,10 +61,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $driver->value }}
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: {{ $driver->value }}
+    app: {{ $driver->getPodName($config) }}
   ports:
     - protocol: TCP
       port: {{ $driver->dbPort() }}

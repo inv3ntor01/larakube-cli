@@ -41,11 +41,9 @@ trait InteractsWithDynamicOptions
         ];
 
         foreach ($options as $option) {
-            $name = Arr::get($option, 'name');
-
             try {
                 $this->addOption(
-                    name: $name,
+                    name: Arr::get($option, 'name'),
                     mode: InputOption::VALUE_NONE,
                     description: Arr::get($option, 'description'),
                 );
@@ -79,8 +77,7 @@ trait InteractsWithDynamicOptions
         // Blueprints
         foreach (Blueprint::cases() as $case) {
             if ($this->option($case->value)) {
-                $config->setBlueprint($case);
-                break;
+                $config->addBlueprint($case);
             }
         }
 
@@ -88,7 +85,7 @@ trait InteractsWithDynamicOptions
         $features = [];
 
         foreach (LaravelFeature::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -105,7 +102,7 @@ trait InteractsWithDynamicOptions
 
         // Server Variations
         foreach (ServerVariation::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -121,7 +118,7 @@ trait InteractsWithDynamicOptions
 
         // Operating Systems
         foreach (OperatingSystem::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -133,7 +130,7 @@ trait InteractsWithDynamicOptions
 
         // PHP Versions
         foreach (PhpVersion::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -145,7 +142,7 @@ trait InteractsWithDynamicOptions
 
         // Database Drivers
         foreach (DatabaseDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -164,7 +161,7 @@ trait InteractsWithDynamicOptions
 
         // Storage Drivers
         foreach (StorageDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -176,7 +173,7 @@ trait InteractsWithDynamicOptions
 
         // Scout Drivers
         foreach (ScoutDriver::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -188,7 +185,7 @@ trait InteractsWithDynamicOptions
 
         // Frontend Stacks
         foreach (FrontendStack::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -200,7 +197,7 @@ trait InteractsWithDynamicOptions
 
         // Package Managers
         foreach (PackageManager::cases() as $case) {
-            if ($case instanceof HasHiddenComponents && $case->isHidden()) {
+            if ($case instanceof HasHiddenComponents && $case->isHidden($config)) {
                 continue;
             }
 
@@ -210,10 +207,14 @@ trait InteractsWithDynamicOptions
             }
         }
 
+        if ($this->hasOption('production-image') && $this->option('production-image')) {
+            $config->setProductionImage($this->option('production-image'));
+        }
+
         // Default to fast-mode compatible values if not provided
         if ($this->option('fast')) {
-            if (! $config->hasBlueprint()) {
-                $config->setBlueprint(Blueprint::LARAVEL);
+            if (! $config->hasBlueprints()) {
+                $config->addBlueprint(Blueprint::LARAVEL);
             }
 
             if (! $config->hasServerVariation()) {
@@ -232,7 +233,7 @@ trait InteractsWithDynamicOptions
                 $config->setPackageManager(PackageManager::NPM);
             }
 
-            if (! $config->hasPersistentDatabase()) {
+            if (empty($config->getDatabases())) {
                 $config->addDatabase(DatabaseDriver::MYSQL);
             }
 

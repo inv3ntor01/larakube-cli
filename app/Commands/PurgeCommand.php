@@ -2,8 +2,8 @@
 
 namespace App\Commands;
 
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
@@ -13,7 +13,7 @@ use function Laravel\Prompts\text;
 
 class PurgeCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithInternalDatabase, InteractsWithProjectConfig, LaraKubeOutput;
+    use HasConsoleInteraction, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -114,8 +114,10 @@ class PurgeCommand extends Command
             return true;
         });
 
-        $this->withSpin('Purging LaraKube footprint...', function () use ($projectPath, $foundFiles) {
-            $this->logActivity('LaraKube project purged', ['files_removed' => $foundFiles], $projectPath);
+        $this->withSpin('Purging LaraKube footprint...', function () use ($projectPath, $foundFiles, $config) {
+            if ($config->getId()) {
+                $this->logToConsole($config->getId(), 'purge', 'LaraKube project purged', ['files_removed' => $foundFiles]);
+            }
 
             foreach ($foundFiles as $file) {
                 $path = $projectPath.'/'.$file;
@@ -125,9 +127,6 @@ class PurgeCommand extends Command
                     @unlink($path);
                 }
             }
-
-            // Remove from the internal list
-            $this->unregisterProject($projectPath);
 
             return true;
         });

@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: minio
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: minio
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: minio
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: minio
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           args: {!! $driver->getK8sDeploymentArgs() !!}
           ports:
@@ -49,10 +49,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-minio
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: minio
+    app: {{ $driver->getPodName($config) }}
   ports:
     - name: api
       protocol: TCP

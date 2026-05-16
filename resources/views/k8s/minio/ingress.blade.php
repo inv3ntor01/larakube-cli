@@ -7,27 +7,27 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3.{{ $config->getName() }}.dev.test
+    - host: s3-{{ $config->getName() }}.dev.test
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: laravel-minio
+                name: minio
                 port:
                   number: 9000
-    - host: s3-console.{{ $config->getName() }}.dev.test
+    - host: s3-console-{{ $config->getName() }}.dev.test
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: laravel-minio
+                name: minio
                 port:
                   number: 9001
   tls:
     - hosts:
-        - s3.{{ $config->getName() }}.dev.test
-        - s3-console.{{ $config->getName() }}.dev.test
+        - s3-{{ $config->getName() }}.dev.test
+        - s3-console-{{ $config->getName() }}.dev.test

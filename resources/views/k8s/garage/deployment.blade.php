@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: garage
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: garage
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: garage
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: garage
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           args: ["/garage", "server"]
           env:
@@ -59,11 +59,11 @@ data:
     [s3_api]
     s3_region = "us-east-1"
     api_bind_addr = "[::]:3900"
-    root_domain = ".s3.{{ $config->getName() }}.dev.test"
+    root_domain = ".s3-{{ $config->getName() }}.dev.test"
 
     [s3_web]
     bind_addr = "[::]:3902"
-    root_domain = ".s3.{{ $config->getName() }}.dev.test"
+    root_domain = ".s3-{{ $config->getName() }}.dev.test"
     index = "index.html"
 
     [admin]
@@ -72,10 +72,10 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-garage
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: garage
+    app: {{ $driver->getPodName($config) }}
   ports:
     - name: s3
       protocol: TCP

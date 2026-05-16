@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: meilisearch
+  name: {{ $driver->getPodName($config) }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: meilisearch
+      app: {{ $driver->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: meilisearch
+        app: {{ $driver->getPodName($config) }}
     spec:
       containers:
-        - name: meilisearch
+        - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           ports:
             - containerPort: 7700
@@ -27,6 +27,8 @@ spec:
                   key: MEILISEARCH_KEY
             - name: MEILI_ENV
               value: "production"
+            - name: MEILI_DB_PATH
+              value: "/meili_data"
           readinessProbe:
             httpGet:
               path: /health
@@ -50,10 +52,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-meilisearch
+  name: {{ $driver->getPodName($config) }}
 spec:
   selector:
-    app: meilisearch
+    app: {{ $driver->getPodName($config) }}
   ports:
     - protocol: TCP
       port: 7700

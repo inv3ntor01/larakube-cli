@@ -2,16 +2,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: laravel-node
+  name: node
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: laravel-node
+      app: node
   template:
     metadata:
       labels:
-        app: laravel-node
+        app: node
     spec:
       containers:
         - name: node
@@ -45,10 +45,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: laravel-node
+  name: node
 spec:
   selector:
-    app: laravel-node
+    app: node
   ports:
     - protocol: TCP
       port: 5173
@@ -58,7 +58,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: laravel-node
+  name: node
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
@@ -71,7 +71,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: laravel-node
+                name: node
                 port:
                   number: 5173
   tls:

@@ -7,18 +7,18 @@ use LaravelZero\Framework\Commands\Command;
 class WebCommand extends Command
 {
     /**
-     * The name and signature of the console command.
+     * The signature of the command.
      *
      * @var string
      */
-    protected $signature = 'web {--down : Remove the LaraKube System Dashboard from the cluster}';
+    protected $signature = 'web {--down : Remove the LaraKube Console from the cluster}';
 
     /**
-     * The console command description.
+     * The description of the command.
      *
      * @var string
      */
-    protected $description = 'Open the LaraKube System Web Dashboard';
+    protected $description = 'Open the LaraKube Console';
 
     /**
      * Execute the console command.
@@ -26,9 +26,9 @@ class WebCommand extends Command
     public function handle(): int
     {
         if ($this->option('down')) {
-            return $this->call('dashboard', ['--down' => true]);
+            return $this->call('console', ['--down' => true]);
         }
 
-        return $this->call('dashboard', ['--web' => true]);
+        return $this->call('console', ['--web' => true]);
     }
 }

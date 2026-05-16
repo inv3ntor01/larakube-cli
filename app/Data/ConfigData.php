@@ -25,7 +25,6 @@ use App\Enums\StorageDriver;
 use App\Traits\InteractsWithDocker;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Contracts\Support\Arrayable;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -39,7 +38,7 @@ class ConfigData implements Arrayable
         protected ?string $id = null,
         protected ?string $name = null,
         protected ?string $path = null,
-        protected ?string $blueprint = null,
+        protected ?array $blueprints = [],
         protected ?string $serverVariation = null,
         protected ?string $frontend = null,
         protected ?string $phpVersion = null,
@@ -48,14 +47,54 @@ class ConfigData implements Arrayable
         protected ?array $additionalExtensions = [],
         protected ?array $features = [],
         protected ?string $scoutDriver = null,
+        protected ?array $scoutDrivers = [],
         protected ?string $packageManager = null,
         protected ?string $objectStorage = null,
+        protected ?array $objectStorages = [],
         protected ?string $cacheDriver = null,
+        protected ?array $cacheDrivers = [],
+        protected ?string $database = null,
         protected ?array $databases = [],
         protected ?array $environments = [],
+        protected ?string $productionImage = null,
         protected ?bool $githubActions = true,
+        protected ?bool $isSystem = false,
+        protected bool $isScaffolding = false,
+        protected ?array $lockedFiles = [],
     ) {
         $this->id = $id ?? (string) Str::uuid();
+    }
+
+    public function getLockedFiles(): array
+    {
+        return $this->lockedFiles ?? [];
+    }
+
+    public function isLocked(string $path): bool
+    {
+        $relative = str_replace($this->getPath().'/', '', $path);
+
+        return in_array($relative, $this->getLockedFiles());
+    }
+
+    public function isSystem(): bool
+    {
+        return $this->isSystem ?? false;
+    }
+
+    public function setIsSystem(bool $isSystem): void
+    {
+        $this->isSystem = $isSystem;
+    }
+
+    public function isScaffolding(): bool
+    {
+        return $this->isScaffolding;
+    }
+
+    public function setIsScaffolding(bool $isScaffolding): void
+    {
+        $this->isScaffolding = $isScaffolding;
     }
 
     public function getId(): ?string
@@ -95,33 +134,47 @@ class ConfigData implements Arrayable
         return $this->path ? "{$this->getInfrastructurePath()}/k8s" : null;
     }
 
-    public function setBlueprint(Blueprint $blueprint): void
+    public function setBlueprints(array $blueprints): void
     {
-        $this->blueprint = $blueprint->value;
+        $this->blueprints = array_values(array_unique(array_map(fn ($b) => $b instanceof Blueprint ? $b->value : $b, $blueprints)));
     }
 
-    public function hasBlueprint(): bool
+    /**
+     * @return Blueprint[]
+     */
+    public function getBlueprints(): array
     {
-        return ! is_null($this->blueprint);
+        return ! empty($this->blueprints) ? array_filter(array_map(fn (string $b) => Blueprint::tryFrom($b), $this->blueprints)) : [];
     }
 
-    public function getBlueprint(): ?Blueprint
+    public function hasBlueprints(): bool
     {
-        return $this->blueprint ? Blueprint::tryFrom($this->blueprint) : null;
+        return ! empty($this->blueprints);
     }
 
-    public function getDefaultBlueprint(): Blueprint
+    public function hasBlueprint(Blueprint $blueprint): bool
     {
-        return Blueprint::LARAVEL;
+        return in_array($blueprint->value, $this->blueprints, true);
     }
 
-    public function setServerVariation(ServerVariation $serverVariation): void
+    public function addBlueprint(Blueprint $blueprint): void
     {
-        $this->serverVariation = $serverVariation->value;
+        $this->blueprints = array_values(array_unique(array_merge($this->blueprints, [$blueprint->value])));
+    }
 
-        if ($serverVariation === ServerVariation::FRANKENPHP) {
-            $this->addFeature(LaravelFeature::OCTANE);
-        }
+    public function removeBlueprint(Blueprint $blueprint): void
+    {
+        $this->blueprints = array_values(array_diff($this->blueprints, [$blueprint->value]));
+    }
+
+    public function setServerVariation(?ServerVariation $serverVariation): void
+    {
+        $this->serverVariation = $serverVariation?->value;
+    }
+
+    public function getServerVariation(): ?ServerVariation
+    {
+        return $this->serverVariation ? ServerVariation::from($this->serverVariation) : null;
     }
 
     public function hasServerVariation(): bool
@@ -129,24 +182,14 @@ class ConfigData implements Arrayable
         return ! is_null($this->serverVariation);
     }
 
-    public function getServerVariation(): ?ServerVariation
+    public function setFrontend(?FrontendStack $frontend): void
     {
-        return $this->serverVariation ? ServerVariation::tryFrom($this->serverVariation) : null;
-    }
-
-    public function getDefaultServerVariation(): ServerVariation
-    {
-        return ServerVariation::FPM_NGINX;
-    }
-
-    public function setFrontend(FrontendStack $frontend): void
-    {
-        $this->frontend = $frontend->value;
+        $this->frontend = $frontend?->value;
     }
 
     public function getFrontend(): ?FrontendStack
     {
-        return $this->frontend ? FrontendStack::tryFrom($this->frontend) : null;
+        return $this->frontend ? FrontendStack::from($this->frontend) : null;
     }
 
     public function setPhpVersion(PhpVersion $phpVersion): void
@@ -154,15 +197,14 @@ class ConfigData implements Arrayable
         $this->phpVersion = $phpVersion->value;
     }
 
+    public function getPhpVersion(): PhpVersion
+    {
+        return $this->phpVersion ? PhpVersion::from($this->phpVersion) : PhpVersion::PHP_8_5;
+    }
+
     public function hasPhpVersion(): bool
     {
         return ! is_null($this->phpVersion);
-
-    }
-
-    public function getPhpVersion(): PhpVersion
-    {
-        return $this->phpVersion ? PhpVersion::tryFrom($this->phpVersion) : PhpVersion::PHP_8_5;
     }
 
     public function setOs(OperatingSystem $os): void
@@ -170,14 +212,14 @@ class ConfigData implements Arrayable
         $this->os = $os->value;
     }
 
+    public function getOs(): OperatingSystem
+    {
+        return $this->os ? OperatingSystem::from($this->os) : OperatingSystem::ALPINE;
+    }
+
     public function hasOs(): bool
     {
         return ! is_null($this->os);
-    }
-
-    public function getOs(): OperatingSystem
-    {
-        return $this->os ? OperatingSystem::tryFrom($this->os) : OperatingSystem::ALPINE;
     }
 
     public function setEmail(string $email): void
@@ -185,24 +227,29 @@ class ConfigData implements Arrayable
         $this->email = $email;
     }
 
-    public function hasEmail(): bool
-    {
-        return ! is_null($this->email);
-    }
-
     public function getEmail(): ?string
     {
         return $this->email;
     }
 
-    public function setAdditionalExtensions(array $additionalExtensions): void
+    public function hasEmail(): bool
     {
-        $this->additionalExtensions = $additionalExtensions;
+        return ! is_null($this->email);
+    }
+
+    public function setAdditionalExtensions(array $extensions): void
+    {
+        $this->additionalExtensions = array_values(array_unique($extensions));
+    }
+
+    public function getAdditionalExtensions(): array
+    {
+        return $this->additionalExtensions ?? [];
     }
 
     public function hasAdditionalExtensions(): bool
     {
-        return count($this->getAdditionalExtensions()) > 0;
+        return $this->additionalExtensions && count($this->additionalExtensions) > 0;
     }
 
     public function addAdditionalExtension(string ...$extension): void
@@ -210,30 +257,26 @@ class ConfigData implements Arrayable
         $this->additionalExtensions = array_values(array_unique(array_merge($this->additionalExtensions, $extension)));
     }
 
-    public function getAdditionalExtensions(): array
+    public function removeAdditionalExtension(string ...$extension): void
     {
-        $extensions = $this->additionalExtensions ?? [];
-
-        foreach ($this->getComponents() as $component) {
-            if ($component instanceof RequiresPhpExtensions) {
-                $extensions = array_merge($extensions, $component->getPhpExtensions());
-            }
-        }
-
-        return array_values(array_unique($extensions));
+        $this->additionalExtensions = array_values(array_diff($this->additionalExtensions, $extension));
     }
 
-    /**
-     * @param  LaravelFeature[]  $features
-     */
     public function setFeatures(array $features): void
     {
-        $this->features = Arr::map($features, fn ($feature) => $feature instanceof LaravelFeature ? $feature->value : $feature);
+        $this->features = array_values(array_unique(array_map(function (LaravelFeature|string $feature) {
+            return $feature instanceof LaravelFeature ? $feature->value : LaravelFeature::tryFrom($feature)?->value;
+        }, $features)));
+    }
+
+    public function getFeatures(): array
+    {
+        return ! empty($this->features) ? array_filter(array_map(fn (string $feature) => LaravelFeature::tryFrom($feature), $this->features)) : [];
     }
 
     public function hasFeatures(): bool
     {
-        return count($this->features) > 0;
+        return $this->features && count($this->features) > 0;
     }
 
     public function hasFeature(LaravelFeature $feature): bool
@@ -243,44 +286,56 @@ class ConfigData implements Arrayable
 
     public function addFeature(LaravelFeature ...$feature): void
     {
-        $this->features = array_values(array_unique(array_merge($this->features, array_map(fn (LaravelFeature $f) => $f->value, $feature))));
+        $this->features = array_values(array_unique(array_merge($this->features, array_map(fn ($f) => $f->value, $feature))));
     }
 
     public function removeFeature(LaravelFeature ...$feature): void
     {
         $this->features = array_values(array_diff($this->features, array_map(fn ($f) => $f->value, $feature)));
-
     }
 
-    /**
-     * @return LaravelFeature[]
-     */
-    public function getFeatures(): array
+    public function setScoutDriver(?ScoutDriver $scoutDriver): void
     {
-        $selected = array_map(fn (string $feature) => LaravelFeature::tryFrom($feature), array_unique($this->features ?? []));
-
-        return array_values(array_filter(array_unique(array_merge($selected, LaravelFeature::getAutoUsedComponents()), SORT_REGULAR)));
-    }
-
-    public function setScoutDriver(ScoutDriver $driver): void
-    {
-        $this->scoutDriver = $driver->value;
-    }
-
-    public function removeScoutDriver(ScoutDriver $driver): bool
-    {
-        if ($this->getScoutDriver() === $driver) {
-            $this->scoutDriver = null;
-
-            return true;
-        }
-
-        return false;
+        $this->scoutDriver = $scoutDriver?->value;
     }
 
     public function getScoutDriver(): ?ScoutDriver
     {
-        return $this->scoutDriver ? ScoutDriver::tryFrom($this->scoutDriver) : null;
+        return $this->scoutDriver ? ScoutDriver::from($this->scoutDriver) : null;
+    }
+
+    public function setScoutDrivers(array $drivers): void
+    {
+        $this->scoutDrivers = array_values(array_unique(array_map(fn ($d) => $d instanceof ScoutDriver ? $d->value : ScoutDriver::tryFrom($d)?->value, $drivers)));
+    }
+
+    public function addScoutDriver(ScoutDriver ...$driver): void
+    {
+        foreach ($driver as $d) {
+            if (is_null($this->scoutDriver)) {
+                $this->scoutDriver = $d->value;
+            } elseif ($this->scoutDriver !== $d->value) {
+                $this->scoutDrivers = array_values(array_unique(array_merge($this->scoutDrivers, [$d->value])));
+            }
+        }
+    }
+
+    /**
+     * @return ScoutDriver[]
+     */
+    public function getScoutDrivers(): array
+    {
+        $all = [];
+        if ($primary = $this->getScoutDriver()) {
+            $all[] = $primary;
+        }
+        foreach ($this->scoutDrivers as $d) {
+            if ($driver = ScoutDriver::tryFrom($d)) {
+                $all[] = $driver;
+            }
+        }
+
+        return array_unique($all, SORT_REGULAR);
     }
 
     public function setPackageManager(PackageManager $packageManager): void
@@ -288,30 +343,19 @@ class ConfigData implements Arrayable
         $this->packageManager = $packageManager->value;
     }
 
+    public function getPackageManager(): ?PackageManager
+    {
+        return $this->packageManager ? PackageManager::from($this->packageManager) : null;
+    }
+
     public function hasPackageManager(): bool
     {
         return ! is_null($this->packageManager);
     }
 
-    public function getPackageManager(): PackageManager
+    public function setObjectStorage(?StorageDriver $objectStorage): void
     {
-        return $this->packageManager ? PackageManager::tryFrom($this->packageManager) : PackageManager::NPM;
-    }
-
-    public function setObjectStorage(StorageDriver $storage): void
-    {
-        $this->objectStorage = $storage->value;
-    }
-
-    public function removeObjectStorage(StorageDriver $storage): bool
-    {
-        if ($this->getObjectStorage() === $storage) {
-            $this->objectStorage = null;
-
-            return true;
-        }
-
-        return false;
+        $this->objectStorage = $objectStorage?->value;
     }
 
     public function getObjectStorage(): ?StorageDriver
@@ -319,59 +363,166 @@ class ConfigData implements Arrayable
         return $this->objectStorage ? StorageDriver::tryFrom($this->objectStorage) : null;
     }
 
-    public function setCacheDriver(?CacheDriver $driver): void
+    public function setObjectStorages(array $storages): void
     {
-        $this->cacheDriver = $driver?->value;
+        $this->objectStorages = array_values(array_unique(array_map(fn ($s) => $s instanceof StorageDriver ? $s->value : StorageDriver::tryFrom($s)?->value, $storages)));
     }
 
-    public function getCacheDriver(): ?CacheDriver
+    public function addObjectStorage(StorageDriver ...$storage): void
     {
-        return $this->cacheDriver ? CacheDriver::tryFrom($this->cacheDriver) : null;
+        foreach ($storage as $s) {
+            if (is_null($this->objectStorage)) {
+                $this->objectStorage = $s->value;
+            } elseif ($this->objectStorage !== $s->value) {
+                $this->objectStorages = array_values(array_unique(array_merge($this->objectStorages, [$s->value])));
+            }
+        }
+    }
+
+    /**
+     * @return StorageDriver[]
+     */
+    public function getObjectStorages(): array
+    {
+        $all = [];
+        if ($primary = $this->getObjectStorage()) {
+            $all[] = $primary;
+        }
+        foreach ($this->objectStorages as $s) {
+            if ($driver = StorageDriver::tryFrom($s)) {
+                $all[] = $driver;
+            }
+        }
+
+        return array_unique($all, SORT_REGULAR);
+    }
+
+    public function setCacheDriver(CacheDriver $cacheDriver): void
+    {
+        $this->cacheDriver = $cacheDriver->value;
+    }
+
+    public function getCacheDriver(): CacheDriver
+    {
+        return $this->cacheDriver ? CacheDriver::from($this->cacheDriver) : CacheDriver::DATABASE;
+    }
+
+    public function setCacheDrivers(array $drivers): void
+    {
+        $this->cacheDrivers = array_values(array_unique(array_map(fn ($d) => $d instanceof CacheDriver ? $d->value : CacheDriver::tryFrom($d)?->value, $drivers)));
+    }
+
+    public function addCacheDriver(CacheDriver ...$driver): void
+    {
+        foreach ($driver as $d) {
+            if (is_null($this->cacheDriver)) {
+                $this->cacheDriver = $d->value;
+            } elseif ($this->cacheDriver !== $d->value) {
+                $this->cacheDrivers = array_values(array_unique(array_merge($this->cacheDrivers, [$d->value])));
+            }
+        }
+    }
+
+    /**
+     * @return CacheDriver[]
+     */
+    public function getCacheDrivers(): array
+    {
+        $all = [];
+        if ($primary = $this->getCacheDriver()) {
+            $all[] = $primary;
+        }
+        foreach ($this->cacheDrivers as $d) {
+            if ($driver = CacheDriver::tryFrom($d)) {
+                $all[] = $driver;
+            }
+        }
+
+        return array_unique($all, SORT_REGULAR);
     }
 
     public function hasCacheDriver(): bool
     {
-        return ! is_null($this->getCacheDriver());
+        return ! is_null($this->cacheDriver) || count($this->cacheDrivers) > 0;
+    }
+
+    public function setDatabase(DatabaseDriver $database): void
+    {
+        $this->database = $database->value;
+    }
+
+    public function getDatabase(): DatabaseDriver
+    {
+        return $this->database ? DatabaseDriver::from($this->database) : DatabaseDriver::SQLITE;
     }
 
     public function setDatabases(array $databases): void
     {
-        $this->databases = array_unique(array_map(function (DatabaseDriver|string $database) {
+        $this->databases = array_values(array_unique(array_map(function (DatabaseDriver|string $database) {
             return $database instanceof DatabaseDriver ? $database->value : DatabaseDriver::tryFrom($database)?->value;
-        }, $databases));
+        }, $databases)));
     }
 
     public function hasDatabases(): bool
     {
-        return $this->databases && count($this->databases) > 0;
+        return ! is_null($this->database) || ($this->databases && count($this->databases) > 0);
     }
 
     public function hasDatabase(DatabaseDriver $database): bool
     {
+        if ($this->database === $database->value) {
+            return true;
+        }
+
         return in_array($database->value, $this->databases, true);
     }
 
     public function addDatabase(DatabaseDriver ...$database): void
     {
-        $this->databases = array_values(array_unique(array_merge($this->databases, array_map(fn ($d) => $d->value, $database))));
+        foreach ($database as $db) {
+            if (is_null($this->database)) {
+                $this->database = $db->value;
+            } elseif ($this->database !== $db->value) {
+                $this->databases = array_values(array_unique(array_merge($this->databases, [$db->value])));
+            }
+        }
     }
 
     public function removeDatabase(DatabaseDriver ...$database): void
     {
+        foreach ($database as $db) {
+            if ($this->database === $db->value) {
+                $this->database = null;
+            }
+        }
         $this->databases = array_values(array_diff($this->databases, array_map(fn ($d) => $d->value, $database)));
     }
 
     /**
+     * Get ALL databases (Primary + Additional)
+     *
      * @return DatabaseDriver[]
      */
     public function getDatabases(): array
     {
-        return ! empty($this->databases) ? array_filter(Arr::map($this->databases, fn (string $database) => DatabaseDriver::tryFrom($database))) : [];
+        $databases = array_unique(array_filter([$this->database, ...($this->databases ?? [])]));
+        $all = [];
+
+        foreach ($databases as $db) {
+            if ($driver = DatabaseDriver::tryFrom($db)) {
+                $all[] = $driver;
+            }
+        }
+
+        return $all;
     }
 
+    /**
+     * Alias for getDatabase() with a fallback.
+     */
     public function getPrimaryDatabase(): DatabaseDriver
     {
-        return Arr::first($this->getDatabases(), fn ($db) => $db instanceof DatabaseDriver && $db->isPersistent()) ?? DatabaseDriver::MYSQL;
+        return $this->getDatabase() ?? DatabaseDriver::MYSQL;
     }
 
     /**
@@ -406,8 +557,8 @@ class ConfigData implements Arrayable
                     continue;
                 }
 
-                // If it's a local host (127.0.0.1), it's not a k8s dependency to wait for
-                if ($host !== '127.0.0.1') {
+                // If it's explicitly the host machine or a known local-only file driver
+                if ($host !== '127.0.0.1' && $host !== 'localhost' && $host !== 'sqlite') {
                     $checks[] = "nc -z -v -w 1 $host $port";
                 }
             }
@@ -422,15 +573,9 @@ class ConfigData implements Arrayable
         return "[\"sh\", \"-c\", \"until $cmd; do echo 'Waiting for dependencies...'; sleep 2; done;\"]";
     }
 
-    public function hasPersistentDatabase(): bool
+    public function hasPrimaryDatabase(): bool
     {
-        foreach ($this->getDatabases() as $database) {
-            if ($database->isPersistent()) {
-                return true;
-            }
-        }
-
-        return false;
+        return ! is_null($this->database);
     }
 
     public function setGithubActions(bool $githubActions): void
@@ -448,124 +593,24 @@ class ConfigData implements Arrayable
         return $this->githubActions ?? true;
     }
 
-    public function getAppUrl(): string
+    public function setEnvironments(array $environments): void
     {
-        return "https://{$this->getName()}.dev.test";
-    }
-
-    /**
-     * Get all active architectural components.
-     */
-    public function getComponents(): array
-    {
-        return array_filter([
-            $this->getBlueprint(),
-            $this->getServerVariation(),
-            ...$this->getDatabases(),
-            $this->getCacheDriver(),
-            $this->getScoutDriver(),
-            $this->getObjectStorage(),
-            ...$this->getFeatures(),
-        ]);
-    }
-
-    /**
-     * Recursively resolve and apply all component dependencies to the configuration state.
-     * Only loops as long as the state is actually modified, safely handling circular dependencies.
-     */
-    public function resolveDependencies(): void
-    {
-        $settled = false;
-
-        while (! $settled) {
-            $settled = true;
-            $components = $this->getComponents();
-
-            foreach ($components as $component) {
-                if ($component instanceof HasDependencies) {
-                    foreach ($component->getDependencies($this) as $dependency) {
-                        if ($dependency instanceof ServerVariation && $this->getServerVariation() !== $dependency) {
-                            $this->setServerVariation($dependency);
-                            $settled = false;
-                        } elseif ($dependency instanceof LaravelFeature && ! $this->hasFeature($dependency)) {
-                            $this->addFeature($dependency);
-                            $settled = false;
-                        } elseif ($dependency instanceof DatabaseDriver && ! $this->hasDatabase($dependency)) {
-                            $this->addDatabase($dependency);
-                            $settled = false;
-                        } elseif ($dependency instanceof CacheDriver && $this->getCacheDriver() !== $dependency) {
-                            $this->setCacheDriver($dependency);
-                            $settled = false;
-                        } elseif ($dependency instanceof StorageDriver && $this->getObjectStorage() !== $dependency) {
-                            $this->setObjectStorage($dependency);
-                            $settled = false;
-                        } elseif ($dependency instanceof ScoutDriver && $this->getScoutDriver() !== $dependency) {
-                            $this->setScoutDriver($dependency);
-                            $settled = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Aggregate environment variables from all components.
-     */
-    public function getAllEnvironmentVariables(): array
-    {
-        $appUrl = $this->getAppUrl();
-        $envs = [
-            'APP_URL' => $appUrl,
-            'ASSET_URL' => $appUrl,
-        ];
-
-        foreach ($this->getComponents() as $component) {
-            if ($component instanceof HasEnvironmentVariables) {
-                $envs = array_merge($envs, $component->getEnvironmentVariables($this));
-            }
-        }
-
-        return $envs;
-    }
-
-    /**
-     * Aggregate host URLs from all components.
-     */
-    public function getAllHosts(): array
-    {
-        $hosts = [
-            "{$this->getName()}.dev.test" => 'Application',
-        ];
-
-        if ($this->getFrontend()?->requiresNodePod()) {
-            $hosts["vite-{$this->getName()}.dev.test"] = 'Vite HMR';
-        }
-
-        foreach ($this->getComponents() as $component) {
-            if ($component instanceof HasHosts) {
-                $hosts = array_merge($hosts, $component->getHosts($this));
-            }
-        }
-
-        return $hosts;
+        $this->environments = $environments;
     }
 
     public function getEnvironments(): array
     {
-        return $this->environments ?? [];
+        return $this->environments ?? ['local', 'production'];
     }
 
-    public function setEnvironments(array $environments): void
+    public function setProductionImage(?string $image): void
     {
-        $this->environments = array_values(array_unique($environments));
+        $this->productionImage = $image;
     }
 
-    public function addEnvironment(string $name): void
+    public function getProductionImage(): ?string
     {
-        $envs = $this->getEnvironments();
-        $envs[] = $name;
-        $this->setEnvironments($envs);
+        return $this->productionImage;
     }
 
     public static function fromArray(array $data): self
@@ -574,7 +619,7 @@ class ConfigData implements Arrayable
             id: $data['id'] ?? null,
             name: $data['name'] ?? null,
             path: $data['path'] ?? null,
-            blueprint: $data['blueprint'] ?? null,
+            blueprints: $data['blueprints'] ?? [],
             serverVariation: $data['serverVariation'] ?? null,
             frontend: $data['frontend'] ?? null,
             phpVersion: $data['phpVersion'] ?? null,
@@ -583,12 +628,19 @@ class ConfigData implements Arrayable
             additionalExtensions: $data['additionalExtensions'] ?? [],
             features: $data['features'] ?? [],
             scoutDriver: $data['scoutDriver'] ?? null,
+            scoutDrivers: $data['scoutDrivers'] ?? [],
             packageManager: $data['packageManager'] ?? null,
-            objectStorage: $data['objectStorage'] ?? 'none',
+            objectStorage: $data['objectStorage'] ?? null,
+            objectStorages: $data['objectStorages'] ?? [],
             cacheDriver: $data['cacheDriver'] ?? null,
+            cacheDrivers: $data['cacheDrivers'] ?? [],
+            database: $data['database'] ?? null,
             databases: $data['databases'] ?? [],
             environments: $data['environments'] ?? ['local', 'production'],
+            productionImage: $data['production_image'] ?? null,
             githubActions: $data['githubActions'] ?? true,
+            isSystem: $data['is_system'] ?? false,
+            lockedFiles: $data['locked_files'] ?? [],
         );
 
         $config->resolveDependencies();
@@ -611,6 +663,11 @@ class ConfigData implements Arrayable
             throw new RuntimeException("LaraKube DNA is malformed at: {$path}");
         }
 
+        // --- 🏗 RUNTIME CONTEXT ---
+        // We set the path from the actual directory being loaded,
+        // ensuring portability across different machines/developers.
+        $data['path'] = realpath($directory) ?: $directory;
+
         return self::fromArray($data);
     }
 
@@ -621,8 +678,7 @@ class ConfigData implements Arrayable
         return [
             'id' => $this->id,
             'name' => $this->name,
-            'path' => $this->path,
-            'blueprint' => $this->blueprint,
+            'blueprints' => $this->blueprints,
             'serverVariation' => $this->serverVariation,
             'frontend' => $this->frontend,
             'phpVersion' => $this->phpVersion,
@@ -631,12 +687,19 @@ class ConfigData implements Arrayable
             'additionalExtensions' => $this->additionalExtensions,
             'features' => $this->features,
             'scoutDriver' => $this->scoutDriver,
+            'scoutDrivers' => $this->scoutDrivers,
             'packageManager' => $this->packageManager,
             'objectStorage' => $this->objectStorage,
+            'objectStorages' => $this->objectStorages,
             'cacheDriver' => $this->cacheDriver,
+            'cacheDrivers' => $this->cacheDrivers,
+            'database' => $this->database,
             'databases' => $this->databases,
             'environments' => $this->environments,
+            'production_image' => $this->productionImage,
             'githubActions' => $this->githubActions,
+            'is_system' => $this->isSystem,
+            'locked_files' => $this->lockedFiles,
         ];
     }
 
@@ -737,6 +800,61 @@ class ConfigData implements Arrayable
         return $suffix;
     }
 
+    /**
+     * Surgically install a single component and its dependencies.
+     */
+    public function installComponent(object $component): void
+    {
+        $projectPath = $this->getPath();
+        $composerPackages = [];
+        $artisanCommands = [];
+        $jsCommands = [];
+
+        if ($component instanceof HasComposerDependencies) {
+            $composerPackages = $component->getComposerDependencies($this);
+        }
+
+        if ($component instanceof HasArtisanCommands) {
+            foreach ($component->getArtisanCommands($this) as $cmd) {
+                $artisanCommands[] = "php artisan $cmd";
+            }
+        }
+
+        if ($component instanceof HasJsDependencies) {
+            $jsCommands = $component->getJsDependencies($this);
+        }
+
+        if ($component instanceof HasLifecycleHooks) {
+            $component->onPostInstall($projectPath, $this);
+        }
+
+        // Execute PHP installation if needed
+        if (! empty($composerPackages) || (! empty($artisanCommands) && $this->isScaffolding())) {
+            $phpCommands = [];
+            $noScripts = $this->isScaffolding() ? '' : ' --no-scripts';
+
+            if (! empty($composerPackages)) {
+                $phpCommands[] = 'composer require '.implode(' ', array_unique($composerPackages)).' --with-all-dependencies --ignore-platform-reqs'.$noScripts;
+            }
+
+            if ($this->isScaffolding()) {
+                foreach ($artisanCommands as $cmd) {
+                    $phpCommands[] = $cmd;
+                }
+            }
+
+            // Inject a safe environment for Artisan commands to prevent connection errors on boot
+            $safeEnv = '-e REDIS_CLIENT=null -e CACHE_STORE=array -e SESSION_DRIVER=array -e DB_CONNECTION=sqlite';
+            $this->runInContainer(implode(' && ', $phpCommands), $projectPath, envs: $safeEnv);
+        }
+
+        // Execute JS installation if needed
+        if (! empty($jsCommands)) {
+            $js = [...$jsCommands, $this->getPackageManager()->buildCommand()];
+            $this->runInContainer(implode(' && ', $js), $projectPath, $this->getFrontend()->getPodName($this));
+        }
+    }
+
     public function installComponents(): void
     {
         $projectPath = $this->getPath();
@@ -745,6 +863,7 @@ class ConfigData implements Arrayable
         $pods = $this->getComponents();
 
         $composerPackages = [];
+        $devComposerPackages = [];
         $artisanCommands = [];
         $jsCommands = [];
 
@@ -769,21 +888,26 @@ class ConfigData implements Arrayable
         }
 
         // PHP
-        if (! empty($composerPackages) || ! empty($artisanCommands)) {
+        if (! empty($composerPackages) || (! empty($artisanCommands) && $this->isScaffolding())) {
             $this->laraKubeInfo('Installing PHP requirements...');
 
             $phpCommands = [];
+            $noScripts = $this->isScaffolding() ? '' : ' --no-scripts';
 
             if (! empty($composerPackages)) {
                 $uniquePackages = array_unique($composerPackages);
-                $phpCommands[] = 'composer require '.implode(' ', $uniquePackages).' --with-all-dependencies --ignore-platform-reqs';
+                $phpCommands[] = 'composer require '.implode(' ', $uniquePackages).' --with-all-dependencies --ignore-platform-reqs'.$noScripts;
             }
 
-            foreach ($artisanCommands as $cmd) {
-                $phpCommands[] = $cmd;
+            if ($this->isScaffolding()) {
+                foreach ($artisanCommands as $cmd) {
+                    $phpCommands[] = $cmd;
+                }
             }
 
-            $this->runInContainer(implode(' && ', $phpCommands), $projectPath);
+            // Inject a safe environment for Artisan commands to prevent connection errors on boot
+            $safeEnv = '-e REDIS_CLIENT=null -e CACHE_STORE=array -e SESSION_DRIVER=array -e DB_CONNECTION=sqlite';
+            $this->runInContainer(implode(' && ', $phpCommands), $projectPath, envs: $safeEnv);
         }
 
         // JS
@@ -793,92 +917,189 @@ class ConfigData implements Arrayable
 
             $js = [...$jsCommands, $this->getPackageManager()->buildCommand()];
 
-            $this->runInContainer(implode(' && ', $js), $projectPath, 'node');
+            $this->runInContainer(implode(' && ', $js), $projectPath, $this->getFrontend()->getPodName($this));
         }
     }
 
     public function hardenViteConfig(): void
     {
-        $projectPath = $this->getPath();
+        $projectPath = $this->path;
+        $viteFile = file_exists("$projectPath/vite.config.ts") ? "$projectPath/vite.config.ts" : "$projectPath/vite.config.js";
+
+        if (! file_exists($viteFile)) {
+            return;
+        }
+
+        $content = file_get_contents($viteFile);
         $appName = $this->getName();
+        $viteHost = "vite-{$appName}.dev.test";
+
+        // Check if the config is already "K8s Ready"
+        $isK8sReady = str_contains($content, "host: '{$viteHost}'") && str_contains($content, 'cors: true');
+
+        // 1. Aggressive Cleanups (ONLY for new scaffolding)
+        if ($this->isScaffolding()) {
+            $this->laraKubeInfo('Hardening Vite configuration for Kubernetes...');
+
+            // Strip Wayfinder
+            $content = preg_replace("/import\s+({?\s*wayfinder\s*}?)\s+from\s+['\"].*?wayfinder.*?['\"];?\n?/s", '', $content);
+            $content = preg_replace("/\bwayfinder\s*\((?:[^()]|(?R))*\),?\n?/s", '', $content);
+
+            // Disable Inertia SSR
+            $content = preg_replace('/inertia\(\)/', 'inertia({ ssr: false })', $content);
+        }
+
+        // 2. Network Alignment
+        // We only auto-edit if there is NO server block, or if we are scaffolding.
+        // If it's an existing project with a custom server block, we stay hands-off and advise.
+        if (! str_contains($content, 'server: {') || $this->isScaffolding()) {
+            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
+
+            if (! str_contains($content, 'server: {')) {
+                $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
+            } else {
+                // Scaffolding update for existing block
+                $content = preg_replace("/origin:\s*['\"].*?\.dev\.test['\"]/", "origin: 'https://{$viteHost}'", $content);
+                $content = preg_replace("/host:\s*['\"].*?\.dev\.test['\"]/", "host: '{$viteHost}'", $content);
+            }
+
+            file_put_contents($viteFile, $content);
+        } elseif (! $isK8sReady) {
+            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
+            $this->laraKubeNewLine();
+            $this->laraKubeWarn(" ⚠ VITE ADVISORY: Your {$viteFile} looks custom.");
+            $this->laraKubeLine("   To ensure HMR works in Kubernetes, please ensure your 'server' block includes:");
+            $this->laraKubeNewLine();
+            $this->laraKubeLine($harden);
+            $this->laraKubeNewLine();
+        }
+    }
+
+    public function getAppUrl(): string
+    {
+        return "https://{$this->getName()}.dev.test";
+    }
+
+    /**
+     * Get all active architectural components.
+     */
+    public function getComponents(): array
+    {
+        return array_filter([
+            ...$this->getBlueprints(),
+            $this->getServerVariation(),
+            ...$this->getDatabases(),
+            ...$this->getCacheDrivers(),
+            ...$this->getScoutDrivers(),
+            ...$this->getObjectStorages(),
+            ...$this->getFeatures(),
+        ]);
+    }
+
+    /**
+     * Recursively resolve and apply all component dependencies to the configuration state.
+     * Only loops as long as the state is actually modified, safely handling circular dependencies.
+     */
+    public function resolveDependencies(): void
+    {
+        $settled = false;
+
+        while (! $settled) {
+            $settled = true;
+            $components = $this->getComponents();
+
+            foreach ($components as $component) {
+                if ($component instanceof HasDependencies) {
+                    foreach ($component->getDependencies($this) as $dependency) {
+                        if ($dependency instanceof ServerVariation && $this->getServerVariation() !== $dependency) {
+                            $this->setServerVariation($dependency);
+                            $settled = false;
+                        } elseif ($dependency instanceof LaravelFeature && ! $this->hasFeature($dependency)) {
+                            $this->addFeature($dependency);
+                            $settled = false;
+                        } elseif ($dependency instanceof DatabaseDriver && ! $this->hasDatabase($dependency)) {
+                            $this->addDatabase($dependency);
+                            $settled = false;
+                        } elseif ($dependency instanceof CacheDriver && ! in_array($dependency, $this->getCacheDrivers())) {
+                            $this->addCacheDriver($dependency);
+                            $settled = false;
+                        } elseif ($dependency instanceof StorageDriver && ! in_array($dependency, $this->getObjectStorages())) {
+                            $this->addObjectStorage($dependency);
+                            $settled = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public function hasCacheStore(string $store): bool
+    {
+        return $this->cacheDriver === $store || in_array($store, $this->cacheDrivers, true);
+    }
+
+    public function hasFeatureName(string $feature): bool
+    {
+        return in_array($feature, $this->features, true);
+    }
+
+    public function getAllEnvironmentVariables(): array
+    {
+        $envs = $this->getServerVariation()?->getEnvironmentVariables($this) ?? [];
+
+        // 🛡️ DEFAULT PHP PERFORMANCE & STABILITY
+        $envs = array_merge([
+            'APP_URL' => $this->getAppUrl(),
+            'ASSET_URL' => $this->getAppUrl(),
+        ], $envs);
 
         if ($this->getFrontend()?->requiresNodePod()) {
-            $this->removeWayfinderFromViteConfig($projectPath);
-            $this->configureViteHmr($projectPath, $appName);
-            $this->removeDuplicateReverbImports($projectPath);
+            $envs['VITE_URL'] = "https://vite-{$this->getName()}.dev.test";
         }
-    }
 
-    // Installation-related
-
-    protected function removeWayfinderFromViteConfig(string $projectPath): void
-    {
-        $files = ['vite.config.ts', 'vite.config.js'];
-
-        foreach ($files as $file) {
-            $path = $projectPath.'/'.$file;
-            if (file_exists($path)) {
-                $content = file_get_contents($path);
-
-                // 1. Remove explicit wayfinder import
-                $cleanContent = preg_replace("/import\s*{\s*wayfinder\s*}\s*from\s*['\"]@laravel\/vite-plugin-wayfinder['\"];?\r?\n?/", '', $content);
-
-                // 2. Remove explicit wayfinder plugin call
-                // This handles wayfinder({...}), wayfinder(), and potential trailing commas
-                $cleanContent = preg_replace("/\bwayfinder\s*\(\s*\{?.*?\s*\}?\s*\),?\r?\n?/s", '', $cleanContent);
-
-                if ($cleanContent !== $content) {
-                    file_put_contents($path, $cleanContent);
-                    $this->laraKubeInfo("Cleaned up Wayfinder plugin from {$file}");
-                }
+        foreach ($this->getComponents() as $component) {
+            if ($component instanceof HasEnvironmentVariables) {
+                $envs = array_merge($envs, $component->getEnvironmentVariables($this));
             }
         }
+
+        return $envs;
     }
 
-    protected function configureViteHmr(string $projectPath, string $appName): void
+    public function getAllPhpExtensions(): array
     {
-        $files = ['vite.config.ts', 'vite.config.js'];
-        $hmrConfig = view('js.vite-hmr', ['appName' => $appName])->render();
+        $extensions = $this->getAdditionalExtensions();
 
-        foreach ($files as $file) {
-            $path = $projectPath.'/'.$file;
-            if (file_exists($path)) {
-                $content = file_get_contents($path);
-
-                if (! str_contains($content, 'server: {')) {
-                    // 1. Ensure fs is imported
-                    if (! str_contains($content, "import fs from 'fs'")) {
-                        $content = "import fs from 'fs';\n".$content;
-                    }
-
-                    // 2. Inject before plugins array
-                    $newContent = preg_replace('/export\s+default\s+defineConfig\s*\(\s*\{/', "export default defineConfig({\n{$hmrConfig}", $content);
-                    file_put_contents($path, $newContent);
-                    $this->laraKubeInfo("Configured Vite HMR in {$file}");
-                }
+        foreach ($this->getComponents() as $component) {
+            if ($component instanceof RequiresPhpExtensions) {
+                $extensions = array_merge($extensions, $component->getPhpExtensions());
             }
         }
+
+        return array_values(array_unique(array_filter($extensions)));
     }
 
-    protected function removeDuplicateReverbImports(string $projectPath): void
+    public function hasPhpExtensions(): bool
     {
-        $files = ['resources/js/app.ts', 'resources/js/app.js'];
+        return count($this->getAllPhpExtensions()) > 0;
+    }
 
-        foreach ($files as $file) {
-            $path = $projectPath.'/'.$file;
-            if (file_exists($path)) {
-                $content = file_get_contents($path);
-                // Match the import line and only keep the first one
-                $pattern = "/import\s*{\s*configureEcho\s*}\s*from\s*['\"]@laravel\/echo-(vue|react)['\"];?\r?\n?/";
+    public function getAllHosts(): array
+    {
+        $hosts = [
+            "{$this->getName()}.dev.test" => 'Primary Application',
+        ];
 
-                if (preg_match_all($pattern, $content, $matches) > 1) {
-                    // Keep only the first occurrence of the import
-                    $newContent = preg_replace($pattern, '', $content);
-                    $newContent = $matches[0][0]."\n".$newContent;
-                    file_put_contents($path, $newContent);
-                    $this->laraKubeInfo("Deduplicated Reverb imports in {$file}");
-                }
+        if ($this->getFrontend()?->requiresNodePod()) {
+            $hosts["vite-{$this->getName()}.dev.test"] = 'Vite Asset Server';
+        }
+
+        foreach ($this->getComponents() as $component) {
+            if ($component instanceof HasHosts) {
+                $hosts = array_merge($hosts, $component->getHosts($this));
             }
         }
+
+        return $hosts;
     }
 }

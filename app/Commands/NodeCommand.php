@@ -9,6 +9,13 @@ class NodeCommand extends Command
 {
     use LaraKubeOutput;
 
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
+
     /**
      * The name and signature of the console command.
      *
@@ -26,14 +33,37 @@ class NodeCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(): void
+    public function handle(): int
     {
-        $command = implode(' ', $this->argument('commands'));
+        // Capture everything from the original command line after 'node'
+        $rawArgs = $_SERVER['argv'];
+        $cmdIndex = array_search('node', $rawArgs);
 
-        $this->call('exec', [
-            'commands' => [$command],
+        if ($cmdIndex !== false) {
+            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
+
+            $commands = [];
+            $env = $this->option('environment');
+
+            foreach ($passedArgs as $arg) {
+                if (str_starts_with($arg, '--environment=')) {
+                    $env = str_replace('--environment=', '', $arg);
+
+                    continue;
+                }
+                $commands[] = $arg;
+            }
+
+            $nodeCommand = implode(' ', $commands);
+        } else {
+            $nodeCommand = implode(' ', $this->argument('commands'));
+            $env = $this->option('environment');
+        }
+
+        return $this->call('exec', [
+            'commands' => [$nodeCommand],
             '--service' => 'node',
-            '--environment' => $this->option('environment'),
+            '--environment' => $env,
         ]);
     }
 }

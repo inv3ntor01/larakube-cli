@@ -18,7 +18,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["namespaces", "pods", "pods/log", "pods/exec", "services", "nodes", "events"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "replicasets"]
     verbs: ["get", "list", "watch", "patch"]
@@ -78,9 +78,9 @@ spec:
             - containerPort: 8080
           env:
             - name: APP_URL
-              value: https://larakube.dev.test
+              value: https://console.dev.test
             - name: ASSET_URL
-              value: https://larakube.dev.test
+              value: https://console.dev.test
             - name: APP_ENV
               value: production
             - name: APP_DEBUG
@@ -93,6 +93,8 @@ spec:
               value: sqlite
             - name: DB_DATABASE
               value: /var/lib/larakube/database.sqlite
+            - name: LARAKUBE_HOST_WORKSPACE
+              value: {{ $workspacePath }}
           livenessProbe:
             httpGet:
               path: /up
@@ -108,11 +110,24 @@ spec:
           volumeMounts:
             - name: larakube-db
               mountPath: /var/lib/larakube
+            - name: larakube-config
+              mountPath: /var/lib/larakube-config
+            - name: larakube-workspace
+              mountPath: /var/lib/larakube-workspace
+              readOnly: true
       volumes:
         - name: larakube-db
           hostPath:
+            path: {{ $_SERVER['HOME'] }}/.larakube/console-data
+            type: DirectoryOrCreate
+        - name: larakube-config
+          hostPath:
             path: {{ $_SERVER['HOME'] }}/.larakube
             type: DirectoryOrCreate
+        - name: larakube-workspace
+          hostPath:
+            path: {{ $workspacePath }}
+            type: Directory
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -124,7 +139,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: larakube.dev.test
+    - host: console.dev.test
       http:
         paths:
           - path: /
@@ -136,4 +151,4 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - larakube.dev.test
+        - console.dev.test

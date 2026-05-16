@@ -2,16 +2,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mailpit
+  name: {{ $feature->getPodName($config) }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mailpit
+      app: {{ $feature->getPodName($config) }}
   template:
     metadata:
       labels:
-        app: mailpit
+        app: {{ $feature->getPodName($config) }}
     spec:
       containers:
         - name: mailpit
@@ -35,10 +35,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mailpit
+  name: {{ $feature->getPodName($config) }}
 spec:
   selector:
-    app: mailpit
+    app: {{ $feature->getPodName($config) }}
   ports:
     - name: dashboard
       protocol: TCP
@@ -53,7 +53,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: mailpit
+  name: {{ $feature->getPodName($config) }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
@@ -66,7 +66,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: mailpit
+                name: {{ $feature->getPodName($config) }}
                 port:
                   number: 8025
   tls:

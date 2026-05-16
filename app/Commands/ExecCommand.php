@@ -76,16 +76,28 @@ class ExecCommand extends Command
 
         $namespace = $this->getNamespace($environment);
 
-        $label = match ($service) {
-            'node' => 'app=laravel-node',
-            'web' => 'app=laravel-web',
-            'horizon' => 'app=laravel-horizon',
-            'reverb' => 'app=laravel-reverb',
-            default => "app={$service}"
-        };
+        // Resilient Label Matching:
+        // 1. Try the clean standard label (e.g., app=web)
+        // 2. Fallback to legacy label (e.g., app=laravel-web)
+        // 3. Special handling for queues (queues vs queue)
+        $labels = ["app={$service}"];
 
-        // Find the pod name
-        $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
+        if (! str_starts_with($service, 'laravel-')) {
+            $labels[] = "app=laravel-{$service}";
+        }
+
+        if ($service === 'queues') {
+            $labels[] = 'app=queue';
+            $labels[] = 'app=laravel-queue';
+        }
+
+        $podName = null;
+        foreach ($labels as $label) {
+            $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
+            if ($podName) {
+                break;
+            }
+        }
 
         if (! $podName) {
             $this->laraKubeError("Could not find a running {$service} pod in namespace '{$namespace}'. Is the app running?");
@@ -96,10 +108,11 @@ class ExecCommand extends Command
         $this->laraKubeInfo("Executing in {$podName} as container default user...");
 
         // Determine the correct container name (default to php for app services, otherwise use service name)
-        $container = match ($service) {
-            'web', 'horizon', 'reverb', 'scheduler' => 'php',
+        $cleanService = str_replace('laravel-', '', $service);
+        $container = match ($cleanService) {
+            'web', 'horizon', 'reverb', 'scheduler', 'queues', 'queue' => 'php',
             'seaweedfs' => 'master',
-            default => $service
+            default => $cleanService
         };
 
         // Execute the command.

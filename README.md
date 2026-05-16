@@ -6,21 +6,21 @@ Industrial-strength Kubernetes orchestration for the modern Laravel Architect.
   <iframe src="https://github.com/sponsors/luchavez-technologies/button" title="Sponsor luchavez-technologies" height="32" width="114" style="border: 0; border-radius: 6px;"></iframe>
 </p>
 
-## 🚀 Overview
+## 🚀 The Vision: Your Personal Cloud Platform
 
-LaraKube CLI is a high-performance Kubernetes orchestrator designed specifically for the Laravel ecosystem. It eliminates the complexity of cloud-native infrastructure by providing a streamlined, developer-first experience.
+LaraKube is a high-performance **Kubernetes Control Plane** for Laravel. It transforms any server—from a local laptop to a production VPS—into a professional, multi-project cloud platform.
 
--   **Zero-Host Dependency**: Run everything in isolated, professional containers.
--   **AI-Native**: Built-in MCP tools for autonomous cluster management.
--   **Absolute Parity**: Identical environments from local dev to production cloud.
+-   **The "Single-Node Hero"**: Run the entire Laravel stack (Web, Horizon, Reverb, Postgres, Meilisearch) on a single, cost-effective VPS for the price of a single Droplet.
+-   **Dual-MCP Architecture**: A "Dual-Brain" AI integration that provides agents with both local filesystem "Hands" and global cluster "Eyes" for unparalleled autonomous orchestration.
+-   **Effortless Scaling**: Graduate from a single node to a multi-node, high-availability cluster by changing a single line of config.
 
-## 🛠 Quick Start
+## 🛠 The "Cloud Pilot" Workflow
 
-To install LaraKube CLI, run the following command in your terminal:
+LaraKube provides a streamlined, Spin Pro-inspired deployment experience, but with the power of Kubernetes.
 
-```bash
-curl -s https://larakube.luchtech.dev/install.sh | bash
-```
+1.  `larakube cloud:provision`: Transforms a fresh VPS into a K3s cluster.
+2.  `larakube cloud:configure`: Sets up your project and GitOps pipeline.
+3.  `git push`: Deploys your application with zero downtime.
 
 ## 📂 Documentation
 

@@ -4,11 +4,13 @@ namespace App\Enums;
 
 use App\Contracts\HasCommandOptions;
 use App\Contracts\HasLabel;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Data\ConfigData;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum FrontendStack: string implements HasCommandOptions, HasLabel, HasSelectOptions
+enum FrontendStack: string implements HasCommandOptions, HasLabel, HasPodName, HasSelectOptions
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -16,6 +18,11 @@ enum FrontendStack: string implements HasCommandOptions, HasLabel, HasSelectOpti
     case VUE = 'vue';
     case SVELTE = 'svelte';
     case LIVEWIRE = 'livewire';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return 'node';
+    }
 
     public function getLabel(): string
     {

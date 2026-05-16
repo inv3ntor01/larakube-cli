@@ -1,3 +1,6 @@
+@include('k8s.base.serviceaccount')
+
+---
 {{-- 1. Deployment --}}
 @include('k8s.base.deployment')
 

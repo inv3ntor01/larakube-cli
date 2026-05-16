@@ -2,14 +2,15 @@
 
 namespace App\Commands;
 
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;
-use App\Traits\InteractsWithInternalDatabase;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class StopCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithInternalDatabase, LaraKubeOutput;
+    use HasConsoleInteraction, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -39,7 +40,10 @@ class StopCommand extends Command
             return true;
         });
 
-        $this->logActivity('Services paused (scaled to zero)', ['environment' => $environment]);
+        $config = $this->getProjectConfig();
+        if ($config && $config->getId()) {
+            $this->logToConsole($config->getId(), 'stop', 'Services paused (scaled to zero)', ['environment' => $environment]);
+        }
 
         $this->laraKubeInfo('All services have been paused. Your data remains safe in the cluster volumes.');
         $this->info('Run larakube start to resume.');

@@ -21,7 +21,7 @@ spec:
           env:
 @if($driver === \App\Enums\DatabaseDriver::MYSQL || $driver === \App\Enums\DatabaseDriver::MARIADB)
             - name: PMA_HOST
-              value: {{ $driver->value }}
+              value: {{ $driver->getPodName($config) }}
             - name: PMA_USER
               valueFrom:
                 configMapKeyRef:
@@ -34,10 +34,10 @@ spec:
                   key: DB_PASSWORD
 @elseif($driver === \App\Enums\DatabaseDriver::POSTGRESQL)
             - name: ADMINER_DEFAULT_SERVER
-              value: {{ $driver->value }}
+              value: {{ $driver->getPodName($config) }}
 @elseif($driver === \App\Enums\DatabaseDriver::MONGODB)
             - name: ME_CONFIG_MONGODB_SERVER
-              value: {{ $driver->value }}
+              value: {{ $driver->getPodName($config) }}
             - name: ME_CONFIG_MONGODB_ADMINUSERNAME
               valueFrom:
                 configMapKeyRef:
@@ -53,17 +53,17 @@ spec:
 @if($driver === \App\Enums\CacheDriver::REDIS)
           env:
             - name: REDIS_HOSTS
-              value: local:redis:6379
+              value: local:{{ $driver->getPodName($config) }}:6379
 @endif
 @endif
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $driver->value }}-companion
+  name: {{ $driver->getPodName($config) }}-companion
 spec:
   selector:
-    app: {{ $driver->value }}-companion
+    app: {{ $driver->getPodName($config) }}-companion
   ports:
     - protocol: TCP
       port: 80

@@ -2,15 +2,15 @@
 
 namespace App\Commands;
 
+use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
-use App\Traits\InteractsWithInternalDatabase;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
-use Illuminate\Support\Facades\File;
 use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
@@ -18,7 +18,7 @@ use function Laravel\Prompts\info;
 
 class UpCommand extends Command
 {
-    use InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithInternalDatabase, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -26,8 +26,9 @@ class UpCommand extends Command
      * @var string
      */
     protected $signature = 'up {environment? : The environment to deploy (local or production)}
-                            {--dashboard : Open k9s after deployment}
-                            {--no-dashboard : Disable the dashboard prompt}
+                            {--console : Open the LaraKube Console after deployment}
+                            {--no-console : Disable the console prompt}
+                            {--no-sync : Skip architectural DNA sync with current machine}
                             {--dry-run : Validate manifests without deploying}
                             {--test : Run smoke test without prompting}
                             {--no-test : Skip smoke test without prompting}';
@@ -99,6 +100,17 @@ class UpCommand extends Command
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
 
+        // --- 🏗 ARCHITECTURAL SYNC (Local Only) ---
+        // Every time we run 'up' locally, we ensure the local overlays
+        // match the current machine's paths (e.g. hostPath code mounts).
+        if ($environment === 'local' && ! $this->option('no-sync')) {
+            $this->withSpin('Syncing architectural DNA with current machine...', function () use ($config) {
+                $this->orchestrateProjectScaffolding($config, false, false);
+
+                return true;
+            });
+        }
+
         if ($environment === 'local') {
             // 🔒 1. Handle missing .env
             if (! file_exists($projectPath.'/.env')) {
@@ -141,8 +153,6 @@ class UpCommand extends Command
                 chmod($dbFile, 0666); // User/Group/Others can read/write
             });
         }
-
-        $this->logActivity('Project deployed to cluster', ['environment' => $environment]);
 
         // Check if ANY Ingress Controller is running (local only)
         if ($environment === 'local') {
@@ -187,6 +197,29 @@ class UpCommand extends Command
         // 4. Apply manifests
         $this->laraKubeInfo('Applying Kubernetes manifests...');
 
+        // --- 🛡 SAFETY: Handle Immutable PersistentVolumes ---
+        // If a PersistentVolume's path has changed (e.g. cloned to a new location),
+        // we must delete the old one because K8s spec.hostPath is immutable.
+        if ($environment === 'local') {
+            $this->withSpin('Optimizing local storage bindings...', function () use ($config) {
+                $appName = $config->getName();
+                $pvNames = [
+                    "{$appName}-laravel-storage-pv",
+                    "{$appName}-laravel-data-pv",
+                ];
+
+                foreach ($pvNames as $pvName) {
+                    $currentPath = shell_exec("kubectl get pv {$pvName} -o jsonpath='{.spec.hostPath.path}' 2>/dev/null");
+                    if ($currentPath && trim($currentPath) !== $config->getPath()) {
+                        // Path mismatch! Delete the PV (data is safe because it's a hostPath)
+                        exec("kubectl delete pv {$pvName} --grace-period=0 --force 2>/dev/null");
+                    }
+                }
+
+                return true;
+            });
+        }
+
         // Scale down to release file locks (Safe transition)
         $this->withSpin('Preparing cluster for architectural update...', function () use ($namespace) {
             exec("kubectl scale deployment --all --replicas=0 -n $namespace 2>/dev/null");
@@ -207,13 +240,17 @@ class UpCommand extends Command
             }
         }
 
-        // 7. Dashboard
-        $openDashboard = $this->option('dashboard') || (! $this->option('no-dashboard') && confirm('Would you like to open the dashboard to monitor the deployment?'));
-        if ($openDashboard) {
-            $this->call('dashboard', ['environment' => $environment]);
+        // 7. Console
+        $openConsole = $this->option('console') || (! $this->option('no-console') && confirm('Would you like to open the console to monitor the deployment?'));
+        if ($openConsole) {
+            $this->call('console', ['environment' => $environment]);
         }
 
         $this->renderStarPrompt();
+
+        if ($config->getId()) {
+            $this->logToConsole($config->getId(), 'up', "Deployed project '{$config->getName()}' to {$environment} environment.");
+        }
 
         return 0;
     }

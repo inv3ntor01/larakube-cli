@@ -7,16 +7,27 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3.{{ $config->getName() }}.dev.test
+    - host: s3-{{ $config->getName() }}.dev.test
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: laravel-garage
+                name: garage
                 port:
                   number: 3900
+    - host: s3-web-{{ $config->getName() }}.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: garage
+                port:
+                  number: 3902
   tls:
     - hosts:
-        - s3.{{ $config->getName() }}.dev.test
+        - s3-{{ $config->getName() }}.dev.test
+        - s3-web-{{ $config->getName() }}.dev.test

@@ -12,19 +12,25 @@ use App\Contracts\HasHosts;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
+use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasSelectOptions
+enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case MEILISEARCH = 'meilisearch';
     case TYPESENSE = 'typesense';
     case DATABASE = 'database';
+
+    public function getPodName(?ConfigData $config = null): string
+    {
+        return $this->value;
+    }
 
     public function getLabel(): string
     {
@@ -58,6 +64,24 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         };
     }
 
+    public function getCompanionDockerImage(): ?string
+    {
+        return match ($this) {
+            self::TYPESENSE => 'typesense/dashboard:latest',
+            default => null,
+        };
+    }
+
+    public function getCompanionPort(): int
+    {
+        return 80;
+    }
+
+    public function hasCompanion(): bool
+    {
+        return ! is_null($this->getCompanionDockerImage());
+    }
+
     public function getDockerImage(?ConfigData $config = null): string
     {
         return match ($this) {
@@ -81,7 +105,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         $this->syncEnvFile($projectPath, $this->getEnvironmentVariables());
     }
 
-    public function getPostInstallInstructions(): array
+    public function getPostInstallInstructions(?ConfigData $config = null): array
     {
         return [];
     }
@@ -91,12 +115,12 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         return match ($this) {
             self::MEILISEARCH => [
                 'SCOUT_DRIVER' => 'meilisearch',
-                'MEILISEARCH_HOST' => 'http://meilisearch:7700',
+                'MEILISEARCH_HOST' => "http://{$this->getPodName()}:7700",
                 'MEILISEARCH_KEY' => 'larakubesecretpassword',
             ],
             self::TYPESENSE => [
                 'SCOUT_DRIVER' => 'typesense',
-                'TYPESENSE_HOST' => 'laravel-typesense',
+                'TYPESENSE_HOST' => $this->getPodName(),
                 'TYPESENSE_PORT' => '8108',
                 'TYPESENSE_PROTOCOL' => 'http',
                 'TYPESENSE_API_KEY' => 'larakubesecretpassword',
@@ -120,7 +144,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
     public function getDependencyConfig(ConfigData $config): array
     {
-        return [$this->value => $this->port()];
+        return [$this->getPodName($config) => $this->port()];
     }
 
     public function getDependencies(ConfigData $config): array
@@ -151,6 +175,21 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         if ($viewName = $this->getNetworkViewName()) {
             $ingress = view($viewName, ['config' => $config, 'driver' => $this])->render();
             file_put_contents("$k8sPath/{$this->getNetworkYamlDestination()}", $ingress);
+        }
+
+        // Write patch
+        if ($viewName = $this->getPatchViewName()) {
+            $patch = view($viewName, ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/{$this->getPatchYamlDestination()}", $patch);
+        }
+
+        // Write companion manifests (Local only)
+        if ($this->hasCompanion()) {
+            $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/overlays/local/{$this->value}-companion.yaml", $content);
+
+            $ingress = view('k8s.companion.ingress', ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/overlays/local/{$this->value}-companion-ingress.yaml", $ingress);
         }
     }
 
@@ -210,12 +249,18 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
     public function getPatchViewName(): ?string
     {
-        return null;
+        return match ($this) {
+            self::MEILISEARCH => 'k8s.meilisearch.patch',
+            default => null,
+        };
     }
 
     public function getPatchYamlDestination(): ?string
     {
-        return null;
+        return match ($this) {
+            self::MEILISEARCH => 'overlays/local/meilisearch-patch.yaml',
+            default => null,
+        };
     }
 
     public function getK8sDeploymentArgs(): string
@@ -225,10 +270,11 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
     public function getManifestFiles(): array
     {
-        return match ($this) {
+        $manifests = match ($this) {
             self::MEILISEARCH => [
                 'base' => ['meilisearch-deployment.yaml'],
                 'local' => ['meilisearch-volumes.yaml', 'meilisearch-ingress.yaml'],
+                'patches' => ['meilisearch-patch.yaml'],
             ],
             self::TYPESENSE => [
                 'base' => ['typesense-deployment.yaml'],
@@ -236,5 +282,12 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             ],
             default => [],
         };
+
+        if ($this->hasCompanion()) {
+            $manifests['local'][] = "{$this->value}-companion.yaml";
+            $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
+        }
+
+        return $manifests;
     }
 }
