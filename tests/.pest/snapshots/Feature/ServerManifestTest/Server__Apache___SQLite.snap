@@ -1,0 +1,346 @@
+--- FILE: base/config.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apache-sqlite-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apache-sqlite-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://apache-sqlite.dev.test"
+  ASSET_URL: "https://apache-sqlite.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+
+
+--- FILE: base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - laravel.yaml
+  - config.yaml
+
+
+--- FILE: base/laravel.yaml ---
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: php
+          image: apache-sqlite:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTORUN_ENABLED
+              value: "true"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: apache-sqlite-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: apache-sqlite-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  rules:
+    - host: apache-sqlite.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - apache-sqlite.dev.test
+
+
+--- FILE: overlays/local/infrastructure.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apache-sqlite-local
+  labels:
+    larakube.io/project: apache-sqlite
+    larakube.io/managed-by: larakube
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: apache-sqlite-laravel-storage-pv
+  labels:
+    larakube-project: apache-sqlite
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/storage"
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: apache-sqlite-laravel-data-pv
+  labels:
+    larakube-project: apache-sqlite
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/.infrastructure/volume_data"
+    type: DirectoryOrCreate
+
+
+--- FILE: overlays/local/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: apache-sqlite-local
+
+resources:
+  - ../../base
+  - infrastructure.yaml
+
+patches:
+  - path: patches.yaml
+
+
+--- FILE: overlays/local/patches.yaml ---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
+        - name: storage
+          persistentVolumeClaim:
+            claimName: apache-sqlite-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: apache-sqlite-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apache-sqlite-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apache-sqlite-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: null
+spec:
+  tls:
+    - hosts:
+        - apache-sqlite.dev.test
+
+
+--- FILE: overlays/production/deployment-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+
+--- FILE: overlays/production/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: apache-sqlite-production
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Add production-specific patches here
+patches:
+  - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apache-sqlite-production
+
+

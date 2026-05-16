@@ -1,0 +1,493 @@
+--- FILE: base/config.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://minio-test.dev.test"
+  ASSET_URL: "https://minio-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-minio-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://minio:9000"
+
+
+--- FILE: base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - minio-deployment.yaml
+  - laravel.yaml
+  - config.yaml
+
+
+--- FILE: base/laravel.yaml ---
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: php
+          image: minio-test:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTORUN_ENABLED
+              value: "true"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: minio-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-test-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  rules:
+    - host: minio-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - minio-test.dev.test
+
+
+--- FILE: base/minio-deployment.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              value: "larakube"
+            - name: MINIO_ROOT_PASSWORD
+              value: "larakubesecretpassword"
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: minio-test-minio-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      protocol: TCP
+      port: 9000
+      targetPort: 9000
+    - name: console
+      protocol: TCP
+      port: 9001
+      targetPort: 9001
+  type: ClusterIP
+
+
+--- FILE: overlays/local/infrastructure.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio-test-local
+  labels:
+    larakube.io/project: minio-test
+    larakube.io/managed-by: larakube
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-test-laravel-storage-pv
+  labels:
+    larakube-project: minio-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/storage"
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-test-laravel-data-pv
+  labels:
+    larakube-project: minio-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/.infrastructure/volume_data"
+    type: DirectoryOrCreate
+
+
+--- FILE: overlays/local/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: minio-test-local
+
+resources:
+  - minio-ingress.yaml
+  - minio-volumes.yaml
+  - ../../base
+  - infrastructure.yaml
+
+patches:
+  - path: patches.yaml
+
+
+--- FILE: overlays/local/minio-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: s3-minio-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9000
+    - host: s3-console-minio-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001
+  tls:
+    - hosts:
+        - s3-minio-test.dev.test
+        - s3-console-minio-test.dev.test
+
+
+--- FILE: overlays/local/minio-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-test-minio-pv
+  labels:
+    larakube-project: minio-test
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /STABLE_TEST_PATH/.infrastructure/volume_data/minio
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-test-minio-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: minio-test-minio-pv
+
+
+--- FILE: overlays/local/patches.yaml ---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
+        - name: storage
+          persistentVolumeClaim:
+            claimName: minio-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-test-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: null
+spec:
+  tls:
+    - hosts:
+        - minio-test.dev.test
+
+
+--- FILE: overlays/production/deployment-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+
+--- FILE: overlays/production/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: minio-test-production
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Add production-specific patches here
+patches:
+  - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio-test-production
+
+

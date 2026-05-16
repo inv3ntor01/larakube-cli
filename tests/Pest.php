@@ -1,7 +1,6 @@
 <?php
 
-use Tests\TestCase;
-
+use App\Data\ConfigData;
 /*
 |--------------------------------------------------------------------------
 | Test Case
@@ -13,7 +12,100 @@ use Tests\TestCase;
 |
 */
 
+use App\Traits\GeneratesProjectInfrastructure;
+use Laravel\Prompts\Prompt;
+use Tests\TestCase;
+
 uses(TestCase::class)->in('Feature');
+
+/**
+ * Helper to generate manifests and return their content as a string for snapshotting.
+ */
+function generateManifests(ConfigData $config): string
+{
+    // Bypass all interactive prompts during tests
+    Prompt::fallbackUsing(fn () => true);
+
+    $tempDir = sys_get_temp_dir().'/larakube-snapshot-stable-test';
+    if (is_dir($tempDir)) {
+        exec('rm -rf '.escapeshellarg($tempDir));
+    }
+    mkdir($tempDir, 0755, true);
+
+    $config->setPath($tempDir);
+
+    // Ensure dependencies are resolved (e.g. Octane -> FrankenPHP)
+    $config->resolveDependencies();
+
+    // We need to mock some properties that the trait expects
+    $test = new class
+    {
+        use GeneratesProjectInfrastructure;
+
+        // Proxy to protected method
+        public function runScaffolding(ConfigData $config)
+        {
+            $this->orchestrateProjectScaffolding($config, installFeatures: false, buildImage: false, dryRun: false);
+        }
+
+        // Mocking methods used in the trait
+        public function line($string, $style = null, $verbosity = null) {}
+
+        public function info($string, $verbosity = null) {}
+
+        public function warn($string, $verbosity = null) {}
+
+        public function error($string, $verbosity = null) {}
+
+        public function newLine($count = 1) {}
+
+        public function withSpin($text, $callback)
+        {
+            return $callback();
+        }
+
+        public function laraKubeInfo($text) {}
+    };
+
+    $test->runScaffolding($config);
+
+    $k8sPath = $config->getK8sPath();
+    $combined = '';
+
+    if (! is_dir($k8sPath)) {
+        return 'NO_MANIFESTS_GENERATED';
+    }
+
+    // Collect all generated files recursively
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($k8sPath));
+    $fileList = [];
+    foreach ($files as $file) {
+        if ($file->isFile() && $file->getExtension() === 'yaml') {
+            $fileList[] = $file->getPathname();
+        }
+    }
+    sort($fileList);
+
+    foreach ($fileList as $filePath) {
+        $relative = str_replace($tempDir.'/.infrastructure/k8s/', '', $filePath);
+        $content = file_get_contents($filePath);
+
+        // NORMALIZE: Replace the dynamic temp dir path with a placeholder
+        $content = str_replace($tempDir, '/STABLE_TEST_PATH', $content);
+
+        // NORMALIZE: Replace random APP_KEY with a placeholder
+        $content = preg_replace('/APP_KEY: "base64:.*?"/', 'APP_KEY: "PLACEHOLDER_KEY"', $content);
+        $content = preg_replace('/APP_KEY: base64:.*? /', 'APP_KEY: PLACEHOLDER_KEY ', $content);
+
+        $combined .= "--- FILE: {$relative} ---\n";
+        $combined .= $content."\n\n";
+    }
+
+    // Cleanup
+    exec('rm -rf '.escapeshellarg($tempDir));
+
+    return $combined;
+}
 
 /*
 |--------------------------------------------------------------------------

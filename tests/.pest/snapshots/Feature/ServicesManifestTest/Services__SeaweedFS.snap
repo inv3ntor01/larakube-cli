@@ -1,0 +1,506 @@
+--- FILE: base/config.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://seaweed-test.dev.test"
+  ASSET_URL: "https://seaweed-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-seaweed-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://seaweedfs:8333"
+
+
+--- FILE: base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - seaweedfs-deployment.yaml
+  - laravel.yaml
+  - config.yaml
+
+
+--- FILE: base/laravel.yaml ---
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: php
+          image: seaweed-test:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTORUN_ENABLED
+              value: "true"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: seaweed-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: seaweed-test-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  rules:
+    - host: seaweed-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - seaweed-test.dev.test
+
+
+--- FILE: base/seaweedfs-deployment.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.20
+          args: ["master", "-ip=localhost"]
+
+          ports:
+            - containerPort: 9333
+        - name: volume
+          image: chrislusf/seaweedfs:4.20
+          args: ["volume", "-mserver=localhost:9333", "-port=8081"]
+          ports:
+            - containerPort: 8081
+        - name: filer
+          image: chrislusf/seaweedfs:4.20
+          args: ["filer", "-master=localhost:9333", "-s3"]
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: "larakube"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "larakubesecretpassword"
+          ports:
+            - containerPort: 8888
+            - containerPort: 8333
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8333
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: seaweedfs-data
+              mountPath: /data
+      volumes:
+        - name: seaweedfs-data
+          persistentVolumeClaim:
+            claimName: seaweed-test-seaweedfs-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - name: master
+      protocol: TCP
+      port: 9333
+      targetPort: 9333
+    - name: volume
+      protocol: TCP
+      port: 8081
+      targetPort: 8081
+    - name: s3
+      protocol: TCP
+      port: 8333
+      targetPort: 8333
+    - name: filer
+      protocol: TCP
+      port: 8888
+      targetPort: 8888
+  type: ClusterIP
+
+
+--- FILE: overlays/local/infrastructure.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: seaweed-test-local
+  labels:
+    larakube.io/project: seaweed-test
+    larakube.io/managed-by: larakube
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seaweed-test-laravel-storage-pv
+  labels:
+    larakube-project: seaweed-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/storage"
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seaweed-test-laravel-data-pv
+  labels:
+    larakube-project: seaweed-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/.infrastructure/volume_data"
+    type: DirectoryOrCreate
+
+
+--- FILE: overlays/local/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: seaweed-test-local
+
+resources:
+  - seaweedfs-ingress.yaml
+  - seaweedfs-volumes.yaml
+  - ../../base
+  - infrastructure.yaml
+
+patches:
+  - path: patches.yaml
+
+
+--- FILE: overlays/local/patches.yaml ---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
+        - name: storage
+          persistentVolumeClaim:
+            claimName: seaweed-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: seaweed-test-laravel-data-pvc
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: null
+spec:
+  tls:
+    - hosts:
+        - seaweed-test.dev.test
+
+
+--- FILE: overlays/local/seaweedfs-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seaweedfs
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: s3-seaweed-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seaweedfs
+                port:
+                  number: 8333
+    - host: s3-admin-seaweed-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seaweedfs
+                port:
+                  number: 9333
+  tls:
+    - hosts:
+        - s3-seaweed-test.dev.test
+        - s3-admin-seaweed-test.dev.test
+
+
+--- FILE: overlays/local/seaweedfs-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seaweed-test-seaweedfs-pv
+  labels:
+    larakube-project: seaweed-test
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /STABLE_TEST_PATH/.infrastructure/volume_data/seaweedfs
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-seaweedfs-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: seaweed-test-seaweedfs-pv
+
+
+--- FILE: overlays/production/deployment-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+
+--- FILE: overlays/production/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: seaweed-test-production
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Add production-specific patches here
+patches:
+  - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: seaweed-test-production
+
+

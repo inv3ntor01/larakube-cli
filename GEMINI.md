@@ -11,11 +11,17 @@ Located in `GeneratesProjectInfrastructure.php`, this engine coordinates:
 
 ## 🤖 AI-Native Orchestration
 LaraKube is designed for the age of AI agents:
-1.  **Autonomous Healing**: `larakube doctor --ai` uses the LaraKube Tool SDK for automated cluster recovery.
-2.  **MCP Integration**: Auto-scaffolds configurations for Gemini, Claude, and Cursor.
-3.  **Discovery**: AI tools use the `InteractsWithLaraKubeCli` trait to learn flags in real-time via `larakube help`.
+1.  **MCP Integration**: Auto-scaffolds configurations for Gemini, Claude, and Cursor.
+2.  **Discovery**: AI tools use the `InteractsWithLaraKubeCli` trait to learn flags in real-time via `larakube help`.
 
 ## 🛠 Technical Standards
+
+### 🔄 Development Workflow
+Whenever you modify the LaraKube CLI codebase, you **must** run the following commands from the `laravel-k8s-cli/` directory to ensure code consistency and update the global binary:
+
+```bash
+./php vendor/bin/pint && ./build
+```
 
 ### 🌐 Networking & Ingress
 -   **Local Domains**: Standardized on **`.dev.test`**.
@@ -36,6 +42,11 @@ LaraKube is designed for the age of AI agents:
     1.  Copy the resource from its `base_path()` to a temporary location using `sys_get_temp_dir()`.
     2.  Pass the temporary path to the system tool.
     3.  Clean up (`unlink`) the temporary file after the action is complete.
+
+### 📦 Standalone Binary Architecture
+- **Embedded Runtime**: LaraKube CLI is distributed as a standalone binary with its own **embedded PHP runtime** used for its own logic.
+- **Pod Proxying**: Commands like `larakube php`, `larakube art`, and `larakube composer` act as **proxies**. They do NOT run the command locally. Instead, they identify the correct pod in the project's Kubernetes namespace (e.g., `laravel-web`) and execute the command there via `kubectl exec`.
+- **Environment Context**: The CLI determines the target namespace and pod based on the `.larakube.json` file in the current working directory.
 
 ### 📦 Development Wrappers
 -   **Standalone**: Distributed as a Mach-O/Linux binary with embedded PHP runtime.

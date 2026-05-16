@@ -1,0 +1,476 @@
+--- FILE: base/config.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://mariadb-test.dev.test"
+  ASSET_URL: "https://mariadb-test.dev.test"
+  DB_CONNECTION: "mysql"
+  DB_HOST: "mariadb"
+  DB_PORT: "3306"
+  DB_DATABASE: "laravel"
+  DB_USERNAME: "laravel"
+  DB_PASSWORD: "larakubesecretpassword"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+
+
+--- FILE: base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - mariadb-deployment.yaml
+  - laravel.yaml
+  - config.yaml
+
+
+--- FILE: base/laravel.yaml ---
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: mariadb-test:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "until nc -z -v -w 1 mariadb 3306; do echo 'Waiting for dependencies...'; sleep 2; done;"]
+      containers:
+        - name: php
+          image: mariadb-test:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTORUN_ENABLED
+              value: "true"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: mariadb-test-laravel-storage-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  rules:
+    - host: mariadb-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - mariadb-test.dev.test
+
+
+--- FILE: base/mariadb-deployment.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+        - name: mariadb
+          image: mariadb:11.8
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MARIADB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: DB_DATABASE
+            - name: MARIADB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: DB_USERNAME
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: DB_PASSWORD
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: DB_PASSWORD
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: mariadb-test-mariadb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+spec:
+  selector:
+    app: mariadb
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+  type: ClusterIP
+
+
+--- FILE: overlays/local/infrastructure.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mariadb-test-local
+  labels:
+    larakube.io/project: mariadb-test
+    larakube.io/managed-by: larakube
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mariadb-test-laravel-storage-pv
+  labels:
+    larakube-project: mariadb-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/storage"
+    type: DirectoryOrCreate
+
+
+--- FILE: overlays/local/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mariadb-test-local
+
+resources:
+  - mariadb-companion-ingress.yaml
+  - mariadb-companion.yaml
+  - mariadb-volumes.yaml
+  - ../../base
+  - infrastructure.yaml
+
+patches:
+  - path: mariadb-patch.yaml
+  - path: patches.yaml
+
+
+--- FILE: overlays/local/mariadb-companion-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mariadb-companion
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: mariadb-mariadb-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mariadb-companion
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - mariadb-mariadb-test.dev.test
+
+
+--- FILE: overlays/local/mariadb-companion.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb-companion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb-companion
+  template:
+    metadata:
+      labels:
+        app: mariadb-companion
+    spec:
+      containers:
+        - name: companion
+          image: phpmyadmin:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: PMA_HOST
+              value: mariadb
+            - name: PMA_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: DB_USERNAME
+            - name: PMA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: DB_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-companion
+spec:
+  selector:
+    app: mariadb-companion
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+
+
+--- FILE: overlays/local/mariadb-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+spec:
+  template:
+    spec:
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: mariadb-test-mariadb-pvc
+
+
+--- FILE: overlays/local/patches.yaml ---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
+        - name: storage
+          persistentVolumeClaim:
+            claimName: mariadb-test-laravel-storage-pvc
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: null
+spec:
+  tls:
+    - hosts:
+        - mariadb-test.dev.test
+
+
+--- FILE: overlays/production/deployment-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+
+--- FILE: overlays/production/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mariadb-test-production
+
+resources:
+  - mariadb-volumes.yaml
+  - ../../base
+  - namespace.yaml
+
+# Add production-specific patches here
+patches:
+  - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mariadb-test-production
+
+

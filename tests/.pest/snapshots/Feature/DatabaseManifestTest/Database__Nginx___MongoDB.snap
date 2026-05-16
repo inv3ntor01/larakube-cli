@@ -1,0 +1,439 @@
+--- FILE: base/config.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://mongodb-test.dev.test"
+  ASSET_URL: "https://mongodb-test.dev.test"
+  DB_CONNECTION: "mongodb"
+  DB_HOST: "mongodb"
+  DB_PORT: "27017"
+  DB_DATABASE: "laravel"
+  DB_USERNAME: "root"
+  DB_PASSWORD: "larakubesecretpassword"
+  DB_URI: "mongodb://root:larakubesecretpassword@mongodb:27017/laravel?authSource=admin"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+
+
+--- FILE: base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - mongodb-statefulset.yaml
+  - laravel.yaml
+  - config.yaml
+
+
+--- FILE: base/laravel.yaml ---
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: mongodb-test:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "until nc -z -v -w 1 mongodb 27017; do echo 'Waiting for dependencies...'; sleep 2; done;"]
+      containers:
+        - name: php
+          image: mongodb-test:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTORUN_ENABLED
+              value: "true"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: mongodb-test-laravel-storage-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  rules:
+    - host: mongodb-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - mongodb-test.dev.test
+
+
+--- FILE: base/mongodb-statefulset.yaml ---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: mongodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          ports:
+
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: "root"
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              value: "larakubesecretpassword"
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: db-data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - protocol: TCP
+      port: 27017
+      targetPort: 27017
+  type: ClusterIP
+
+
+--- FILE: overlays/local/infrastructure.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mongodb-test-local
+  labels:
+    larakube.io/project: mongodb-test
+    larakube.io/managed-by: larakube
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mongodb-test-laravel-storage-pv
+  labels:
+    larakube-project: mongodb-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/storage"
+    type: DirectoryOrCreate
+
+
+--- FILE: overlays/local/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mongodb-test-local
+
+resources:
+  - mongodb-companion-ingress.yaml
+  - mongodb-companion.yaml
+  - ../../base
+  - infrastructure.yaml
+
+patches:
+  - path: patches.yaml
+
+
+--- FILE: overlays/local/mongodb-companion-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mongodb-companion
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: mongodb-mongodb-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mongodb-companion
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - mongodb-mongodb-test.dev.test
+
+
+--- FILE: overlays/local/mongodb-companion.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-companion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-companion
+  template:
+    metadata:
+      labels:
+        app: mongodb-companion
+    spec:
+      containers:
+        - name: companion
+          image: mongo-express:latest
+          ports:
+            - containerPort: 8081
+          env:
+            - name: ME_CONFIG_MONGODB_SERVER
+              value: mongodb
+            - name: ME_CONFIG_MONGODB_ADMINUSERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: DB_USERNAME
+            - name: ME_CONFIG_MONGODB_ADMINPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: DB_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-companion
+spec:
+  selector:
+    app: mongodb-companion
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8081
+  type: ClusterIP
+
+
+--- FILE: overlays/local/patches.yaml ---
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+            - name: storage
+              mountPath: /var/www/html/storage/logs
+              subPath: logs
+            - name: storage
+              mountPath: /var/www/html/bootstrap/cache
+              subPath: bootstrap/cache
+            - name: storage
+              mountPath: /var/www/html/storage/framework/sessions
+              subPath: framework/sessions
+            - name: storage
+              mountPath: /var/www/html/storage/framework/views
+              subPath: framework/views
+            - name: storage
+              mountPath: /var/www/html/storage/framework/cache
+              subPath: framework/cache
+            - name: storage
+              mountPath: /var/www/html/storage/app/public
+              subPath: app/public
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
+        - name: storage
+          persistentVolumeClaim:
+            claimName: mongodb-test-laravel-storage-pvc
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: null
+spec:
+  tls:
+    - hosts:
+        - mongodb-test.dev.test
+
+
+--- FILE: overlays/production/deployment-patch.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+
+--- FILE: overlays/production/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mongodb-test-production
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Add production-specific patches here
+patches:
+  - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mongodb-test-production
+
+
