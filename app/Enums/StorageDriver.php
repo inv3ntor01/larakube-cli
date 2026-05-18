@@ -93,8 +93,10 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
         // Write storage
         if ($viewName = $this->getStorageViewName()) {
-            $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
-            file_put_contents("$k8sPath/{$this->getStorageYamlDestination()}", $vols);
+            foreach (['local', 'production'] as $env) {
+                $vols = view($viewName, ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
+                file_put_contents("$k8sPath/overlays/$env/{$this->getStorageYamlDestination()}", $vols);
+            }
         }
 
         // Write network
@@ -152,9 +154,9 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
     public function getStorageYamlDestination(): ?string
     {
         return match ($this) {
-            self::MINIO => 'overlays/local/minio-volumes.yaml',
-            self::SEAWEEDFS => 'overlays/local/seaweedfs-volumes.yaml',
-            self::GARAGE => 'overlays/local/garage-volumes.yaml',
+            self::MINIO => 'minio-volumes.yaml',
+            self::SEAWEEDFS => 'seaweedfs-volumes.yaml',
+            self::GARAGE => 'garage-volumes.yaml',
         };
     }
 
@@ -170,29 +172,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function getK8sDeploymentArgs(): string
     {
-        return match ($this) {
-            self::SEAWEEDFS => '["master", "-ip=localhost"]',
-            self::MINIO => '["server", "/data", "--console-address", ":9001"]',
-            self::GARAGE => '["/garage", "server"]',
-        };
-    }
-
-    public function getManifestFiles(): array
-    {
-        return match ($this) {
-            self::MINIO => [
-                'base' => ['minio-deployment.yaml'],
-                'local' => ['minio-volumes.yaml', 'minio-ingress.yaml'],
-            ],
-            self::SEAWEEDFS => [
-                'base' => ['seaweedfs-deployment.yaml'],
-                'local' => ['seaweedfs-volumes.yaml', 'seaweedfs-ingress.yaml'],
-            ],
-            self::GARAGE => [
-                'base' => ['garage-deployment.yaml'],
-                'local' => ['garage-volumes.yaml', 'garage-ingress.yaml'],
-            ],
-        };
+        return '';
     }
 
     public function getComposerDependencies(?ConfigData $context = null): array
@@ -202,7 +182,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function onPostInstall(string $projectPath, ?ConfigData $context = null): void
     {
-        $this->syncEnvFile($projectPath, $this->getEnvironmentVariables());
+        $this->syncEnvFile($projectPath, $this->getEnvironmentVariables($context));
 
         if ($this === self::GARAGE) {
             // Garage requires explicit key and bucket creation via its CLI.
@@ -212,20 +192,19 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         }
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
-        $appName = $config?->getName() ?? basename(getcwd());
-
         $envs = [
             'FILESYSTEM_DISK' => 's3',
             'AWS_ACCESS_KEY_ID' => 'larakube',
             'AWS_SECRET_ACCESS_KEY' => 'larakubesecretpassword',
             'AWS_DEFAULT_REGION' => 'us-east-1',
             'AWS_BUCKET' => 'laravel',
-            'AWS_URL' => "https://s3-{$appName}.dev.test",
+            'AWS_URL' => $config ? 'https://'.$config->getServiceHost('s3', $environment) : 'https://s3.dev.test',
             'AWS_USE_PATH_STYLE_ENDPOINT' => 'true',
         ];
 
+        // INTERNAL endpoint for PHP pod to talk to MinIO
         $endpoint = match ($this) {
             self::SEAWEEDFS => "http://{$this->getPodName()}:8333",
             self::MINIO => "http://{$this->getPodName()}:9000",
@@ -237,22 +216,20 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         return $envs;
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
-        $appName = $config->getName();
-
         return match ($this) {
             self::MINIO => [
-                "s3-{$appName}.dev.test" => 'MinIO S3 API',
-                "s3-console-{$appName}.dev.test" => 'MinIO Console',
+                $config->getServiceHost('s3', $environment) => 'MinIO S3 API',
+                $config->getServiceHost('s3-console', $environment) => 'MinIO Console',
             ],
             self::SEAWEEDFS => [
-                "s3-{$appName}.dev.test" => 'SeaweedFS S3 API',
-                "s3-admin-{$appName}.dev.test" => 'SeaweedFS Filer UI',
+                $config->getServiceHost('s3', $environment) => 'SeaweedFS S3 API',
+                $config->getServiceHost('s3-admin', $environment) => 'SeaweedFS Filer UI',
             ],
             self::GARAGE => [
-                "s3-{$appName}.dev.test" => 'Garage S3 API',
-                "s3-web-{$appName}.dev.test" => 'Garage Static Web',
+                $config->getServiceHost('s3', $environment) => 'Garage S3 API',
+                $config->getServiceHost('s3-web', $environment) => 'Garage Static Web',
             ],
         };
     }
@@ -264,19 +241,17 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function getPostInstallInstructions(?ConfigData $config = null): array
     {
-        $appName = $config?->getName() ?? basename(getcwd());
-
         return match ($this) {
             self::MINIO => [
                 'MinIO requires a one-time bucket creation:',
-                "1. Visit the Console: https://s3-console.{$appName}.dev.test",
+                '1. Visit the Console: https://'.$config->getServiceHost('s3-console'),
                 '2. Login with: larakube / larakubesecretpassword',
                 '3. Create a bucket named "laravel"',
             ],
             self::SEAWEEDFS => [
                 'SeaweedFS requires a one-time bucket creation after "larakube up":',
                 '1. Create Bucket: larakube exec --service=seaweedfs "echo s3.bucket.create -name laravel | /usr/bin/weed shell"',
-                "You can monitor your storage at: https://s3-admin.{$appName}.dev.test",
+                'You can monitor your storage at: https://'.$config->getServiceHost('s3-admin'),
             ],
             self::GARAGE => [
                 'Garage requires a one-time manual initialization after "larakube up":',
@@ -289,7 +264,32 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
                 '7. Update your .env: Copy the machine-generated "Key ID" to AWS_ACCESS_KEY_ID and the "Secret key" to AWS_SECRET_ACCESS_KEY.',
                 '8. Sync to cluster: larakube up',
             ],
-            default => [],
         };
+    }
+
+    public function getManifestFiles(): array
+    {
+        return [
+            'base' => [
+                basename($this->getWorkloadYamlDestination()),
+            ],
+            'local' => [
+                basename($this->getStorageYamlDestination()),
+                basename($this->getNetworkYamlDestination()),
+            ],
+            'production' => [
+                basename($this->getStorageYamlDestination()),
+            ],
+        ];
+    }
+
+    public function getPhpExtensions(): array
+    {
+        return [];
+    }
+
+    public function getDependencies(ConfigData $config): array
+    {
+        return [];
     }
 }

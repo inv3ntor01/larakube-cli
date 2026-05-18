@@ -1,3 +1,4 @@
+@if(($environment ?? 'local') === 'local')
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -15,15 +16,18 @@ spec:
     path: {{ $config->getPath() }}/.infrastructure/volume_data/meilisearch
     type: DirectoryOrCreate
 ---
+@endif
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $config->getName() }}-meilisearch-pvc
 spec:
   accessModes:
-    - ReadWriteOnce
+    - {{ $config->getStrategy() === \App\Enums\DeploymentStrategy::SINGLE_NODE ? 'ReadWriteOnce' : 'ReadWriteMany' }}
+@if(($environment ?? 'local') === 'local')
   storageClassName: ""
+  volumeName: {{ $config->getName() }}-meilisearch-pv
+@endif
   resources:
     requests:
       storage: 1Gi
-  volumeName: {{ $config->getName() }}-meilisearch-pv

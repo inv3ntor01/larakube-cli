@@ -5,7 +5,7 @@ metadata:
   name: garage-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,35 +16,10 @@ metadata:
   name: garage-test-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://garage-test.dev.test"
-  ASSET_URL: "https://garage-test.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  CACHE_STORE: "database"
-  SESSION_DRIVER: "database"
-  FILESYSTEM_DISK: "s3"
-  AWS_ACCESS_KEY_ID: "larakube"
-  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
-  AWS_DEFAULT_REGION: "us-east-1"
-  AWS_BUCKET: "laravel"
-  AWS_URL: "https://s3-garage-test.dev.test"
-  AWS_USE_PATH_STYLE_ENDPOINT: "true"
-  AWS_ENDPOINT: "http://garage:3900"
 
 
 --- FILE: base/garage-deployment.yaml ---
@@ -274,6 +249,31 @@ spec:
         - garage-test.dev.test
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://garage-test.dev.test"
+  ASSET_URL: "https://garage-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-garage-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://garage:3900"
+
+
 --- FILE: overlays/local/garage-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -336,10 +336,10 @@ spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: ""
+  volumeName: garage-test-garage-pv
   resources:
     requests:
-      storage: 1Gi
-  volumeName: garage-test-garage-pv
+      storage: 5Gi
 
 
 --- FILE: overlays/local/infrastructure.yaml ---
@@ -399,6 +399,7 @@ resources:
   - garage-volumes.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: patches.yaml
@@ -483,17 +484,84 @@ spec:
         - garage-test.dev.test
 
 
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://garage-test.dev.test"
+  ASSET_URL: "https://garage-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-garage-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://garage:3900"
+
+
 --- FILE: overlays/production/deployment-patch.yaml ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/garage-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: garage-test-garage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: garage-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - garage-test.dev.test
+      secretName: garage-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -503,11 +571,14 @@ kind: Kustomization
 namespace: garage-test-production
 
 resources:
+  - garage-volumes.yaml
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 

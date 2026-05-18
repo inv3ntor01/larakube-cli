@@ -5,7 +5,7 @@ metadata:
   name: memcached-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,28 +16,10 @@ metadata:
   name: memcached-test-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://memcached-test.dev.test"
-  ASSET_URL: "https://memcached-test.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  MEMCACHED_HOST: "memcached"
-  CACHE_STORE: "memcached"
-  SESSION_DRIVER: "memcached"
 
 
 --- FILE: base/kustomization.yaml ---
@@ -222,6 +204,24 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://memcached-test.dev.test"
+  ASSET_URL: "https://memcached-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  MEMCACHED_HOST: "memcached"
+  CACHE_STORE: "memcached"
+  SESSION_DRIVER: "memcached"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -277,6 +277,7 @@ namespace: memcached-test-local
 resources:
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: patches.yaml
@@ -361,17 +362,64 @@ spec:
         - memcached-test.dev.test
 
 
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://memcached-test.dev.test"
+  ASSET_URL: "https://memcached-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  MEMCACHED_HOST: "memcached"
+  CACHE_STORE: "memcached"
+  SESSION_DRIVER: "memcached"
+
+
 --- FILE: overlays/production/deployment-patch.yaml ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: memcached-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - memcached-test.dev.test
+      secretName: memcached-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -383,9 +431,11 @@ namespace: memcached-test-production
 resources:
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 

@@ -35,7 +35,7 @@ trait InteractsWithProjectConfig
     protected function getProjectConfig(?string $projectPath = null): ?ConfigData
     {
         try {
-            return ConfigData::loadFromFile($projectPath);
+            return ConfigData::loadFromFile($projectPath ?: getcwd());
         } catch (Exception) {
             return null;
         }

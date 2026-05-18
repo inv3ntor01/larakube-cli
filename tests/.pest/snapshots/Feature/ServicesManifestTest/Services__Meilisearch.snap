@@ -5,7 +5,7 @@ metadata:
   name: meilisearch-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,30 +16,10 @@ metadata:
   name: meilisearch-test-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://meilisearch-test.dev.test"
-  ASSET_URL: "https://meilisearch-test.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  CACHE_STORE: "database"
-  SESSION_DRIVER: "database"
-  SCOUT_DRIVER: "meilisearch"
-  MEILISEARCH_HOST: "http://meilisearch:7700"
-  MEILISEARCH_KEY: "larakubesecretpassword"
 
 
 --- FILE: base/kustomization.yaml ---
@@ -240,6 +220,26 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://meilisearch-test.dev.test"
+  ASSET_URL: "https://meilisearch-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  SCOUT_DRIVER: "meilisearch"
+  MEILISEARCH_HOST: "http://meilisearch:7700"
+  MEILISEARCH_KEY: "larakubesecretpassword"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -293,13 +293,13 @@ kind: Kustomization
 namespace: meilisearch-test-local
 
 resources:
-  - meilisearch-ingress.yaml
   - meilisearch-volumes.yaml
+  - meilisearch-ingress.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
-  - path: meilisearch-patch.yaml
   - path: patches.yaml
 
 
@@ -328,23 +328,6 @@ spec:
         - meilisearch-meilisearch-test.dev.test
 
 
---- FILE: overlays/local/meilisearch-patch.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: meilisearch
-spec:
-  template:
-    spec:
-      containers:
-        - name: meilisearch
-          env:
-            - name: MEILI_ENV
-              value: "development"
-            - name: MEILI_NO_ANALYTICS
-              value: "true"
-
-
 --- FILE: overlays/local/meilisearch-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolume
@@ -371,10 +354,10 @@ spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: ""
+  volumeName: meilisearch-test-meilisearch-pv
   resources:
     requests:
       storage: 1Gi
-  volumeName: meilisearch-test-meilisearch-pv
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -456,17 +439,66 @@ spec:
         - meilisearch-test.dev.test
 
 
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://meilisearch-test.dev.test"
+  ASSET_URL: "https://meilisearch-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  SCOUT_DRIVER: "meilisearch"
+  MEILISEARCH_HOST: "http://meilisearch:7700"
+  MEILISEARCH_KEY: "larakubesecretpassword"
+
+
 --- FILE: overlays/production/deployment-patch.yaml ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: meilisearch-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - meilisearch-test.dev.test
+      secretName: meilisearch-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -476,12 +508,28 @@ kind: Kustomization
 namespace: meilisearch-test-production
 
 resources:
+  - meilisearch-volumes.yaml
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+
+--- FILE: overlays/production/meilisearch-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: meilisearch-test-meilisearch-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/namespace.yaml ---

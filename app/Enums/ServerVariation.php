@@ -51,7 +51,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
         return $options;
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
             self::FRANKENPHP => [
@@ -61,7 +61,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
         };
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
         return [];
     }

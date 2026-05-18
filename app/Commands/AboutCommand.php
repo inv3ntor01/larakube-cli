@@ -94,7 +94,7 @@ class AboutCommand extends Command
         // 3. Project URLs
         $this->newLine();
         $this->laraKubeInfo('Active Service Links');
-        $hosts = $config->getAllHosts();
+        $hosts = $config->getAllHosts($environment);
 
         if (empty($hosts)) {
             $this->line('  <fg=gray>No external hosts configured.</>');

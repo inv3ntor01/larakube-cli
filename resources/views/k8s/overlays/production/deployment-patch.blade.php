@@ -1,16 +1,20 @@
+@php($first = true)
+@foreach(['web', 'horizon', 'queues', 'reverb'] as $name)
+@php($feature = \App\Enums\LaravelFeature::fromPodName($name))
+@if($name === 'web' || ($feature && $config->hasFeature($feature)))
+{!! $first ? '' : "---\n" !!}@php($first = false)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web
+  name: {{ $name }}
 spec:
-  replicas: 2
+  replicas: {{ $config->getStrategy() === \App\Enums\DeploymentStrategy::MULTI_NODE_HA ? 2 : 1 }}
   template:
     spec:
-@if($image = $config->getProductionImage())
       containers:
         - name: php
-          image: {{ $image }}
           imagePullPolicy: Always
-@endif
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+@endif
+@endforeach

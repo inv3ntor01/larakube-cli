@@ -5,7 +5,7 @@ metadata:
   name: horizon-auto-redis-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,31 +16,10 @@ metadata:
   name: horizon-auto-redis-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://horizon-auto-redis.dev.test"
-  ASSET_URL: "https://horizon-auto-redis.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  REDIS_HOST: "redis"
-  CACHE_STORE: "redis"
-  SESSION_DRIVER: "redis"
-  QUEUE_CONNECTION: "redis"
-  APP_MAINTENANCE_DRIVER: "cache"
-  APP_MAINTENANCE_STORE: "redis"
 
 
 --- FILE: base/horizon-deployment.yaml ---
@@ -298,6 +277,27 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://horizon-auto-redis.dev.test"
+  ASSET_URL: "https://horizon-auto-redis.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  REDIS_HOST: "redis"
+  CACHE_STORE: "redis"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+  APP_MAINTENANCE_DRIVER: "cache"
+  APP_MAINTENANCE_STORE: "redis"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -355,6 +355,7 @@ resources:
   - redis-companion.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: patches.yaml
@@ -547,17 +548,81 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://horizon-auto-redis.dev.test"
+  ASSET_URL: "https://horizon-auto-redis.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  REDIS_HOST: "redis"
+  CACHE_STORE: "redis"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+  APP_MAINTENANCE_DRIVER: "cache"
+  APP_MAINTENANCE_STORE: "redis"
+
+
 --- FILE: overlays/production/deployment-patch.yaml ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: horizon
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
+      imagePullSecrets:
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: horizon-auto-redis.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - horizon-auto-redis.dev.test
+      secretName: horizon-auto-redis-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -569,9 +634,11 @@ namespace: horizon-auto-redis-production
 resources:
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 

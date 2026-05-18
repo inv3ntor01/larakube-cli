@@ -5,7 +5,7 @@ metadata:
   name: seaweed-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,35 +16,10 @@ metadata:
   name: seaweed-test-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://seaweed-test.dev.test"
-  ASSET_URL: "https://seaweed-test.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  CACHE_STORE: "database"
-  SESSION_DRIVER: "database"
-  FILESYSTEM_DISK: "s3"
-  AWS_ACCESS_KEY_ID: "larakube"
-  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
-  AWS_DEFAULT_REGION: "us-east-1"
-  AWS_BUCKET: "laravel"
-  AWS_URL: "https://s3-seaweed-test.dev.test"
-  AWS_USE_PATH_STYLE_ENDPOINT: "true"
-  AWS_ENDPOINT: "http://seaweedfs:8333"
 
 
 --- FILE: base/kustomization.yaml ---
@@ -199,7 +174,7 @@ spec:
       containers:
         - name: seaweedfs
           image: chrislusf/seaweedfs:4.20
-          args: ["master", "-ip=localhost"]
+          args: 
 
           ports:
             - containerPort: 9333
@@ -260,6 +235,31 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://seaweed-test.dev.test"
+  ASSET_URL: "https://seaweed-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-seaweed-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://seaweedfs:8333"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -317,6 +317,7 @@ resources:
   - seaweedfs-volumes.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: patches.yaml
@@ -463,10 +464,35 @@ spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: ""
+  volumeName: seaweed-test-seaweedfs-pv
   resources:
     requests:
       storage: 5Gi
-  volumeName: seaweed-test-seaweedfs-pv
+
+
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://seaweed-test.dev.test"
+  ASSET_URL: "https://seaweed-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  FILESYSTEM_DISK: "s3"
+  AWS_ACCESS_KEY_ID: "larakube"
+  AWS_SECRET_ACCESS_KEY: "larakubesecretpassword"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_BUCKET: "laravel"
+  AWS_URL: "https://s3-seaweed-test.dev.test"
+  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+  AWS_ENDPOINT: "http://seaweedfs:8333"
 
 
 --- FILE: overlays/production/deployment-patch.yaml ---
@@ -475,11 +501,40 @@ kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: seaweed-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - seaweed-test.dev.test
+      secretName: seaweed-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -489,11 +544,14 @@ kind: Kustomization
 namespace: seaweed-test-production
 
 resources:
+  - seaweedfs-volumes.yaml
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 
@@ -502,5 +560,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: seaweed-test-production
+
+
+--- FILE: overlays/production/seaweedfs-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-seaweedfs-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 
 

@@ -20,7 +20,7 @@ class GhaSwitchCommand extends Command
 
         $this->laraKubeInfo('Switching GitHub accounts...');
 
-        $gh = $this->getGhDockerCommand();
+        $gh = $this->getGhCommand(interactive: true);
         passthru("{$gh} auth switch");
 
         return 0;

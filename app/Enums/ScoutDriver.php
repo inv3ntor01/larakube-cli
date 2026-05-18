@@ -102,7 +102,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
     public function onPostInstall(string $projectPath, ?ConfigData $context = null): void
     {
-        $this->syncEnvFile($projectPath, $this->getEnvironmentVariables());
+        $this->syncEnvFile($projectPath, $this->getEnvironmentVariables($context));
     }
 
     public function getPostInstallInstructions(?ConfigData $config = null): array
@@ -110,17 +110,17 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         return [];
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
             self::MEILISEARCH => [
                 'SCOUT_DRIVER' => 'meilisearch',
-                'MEILISEARCH_HOST' => "http://{$this->getPodName()}:7700",
+                'MEILISEARCH_HOST' => 'http://meilisearch:7700',
                 'MEILISEARCH_KEY' => 'larakubesecretpassword',
             ],
             self::TYPESENSE => [
                 'SCOUT_DRIVER' => 'typesense',
-                'TYPESENSE_HOST' => $this->getPodName(),
+                'TYPESENSE_HOST' => 'typesense',
                 'TYPESENSE_PORT' => '8108',
                 'TYPESENSE_PROTOCOL' => 'http',
                 'TYPESENSE_API_KEY' => 'larakubesecretpassword',
@@ -131,13 +131,14 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         };
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
-        $appName = $config->getName();
-
         return match ($this) {
-            self::MEILISEARCH => ["meilisearch-{$appName}.dev.test" => 'Meilisearch Console'],
-            self::TYPESENSE => ["typesense-{$appName}.dev.test" => 'Typesense Console'],
+            self::MEILISEARCH => [$config->getServiceHost('meilisearch', $environment) => 'Meilisearch Console'],
+            self::TYPESENSE => [
+                $config->getServiceHost('typesense', $environment) => 'Typesense API',
+                $config->getServiceHost('typesense-dashboard', $environment) => 'Typesense Dashboard',
+            ],
             default => [],
         };
     }
@@ -149,47 +150,36 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
     public function getDependencies(ConfigData $config): array
     {
-        return match ($this) {
-            self::MEILISEARCH, self::TYPESENSE => [LaravelFeature::SCOUT],
-            default => [],
-        };
+        return [];
     }
 
     public function updateK8s(ConfigData $config): void
     {
         $k8sPath = $config->getK8sPath();
 
-        // Write workload
         if ($viewName = $this->getWorkloadViewName()) {
             $content = view($viewName, ['config' => $config, 'driver' => $this])->render();
             file_put_contents("$k8sPath/{$this->getWorkloadYamlDestination()}", $content);
         }
 
-        // Write storage
-        if ($viewName = $this->getStorageViewName()) {
-            $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
-            file_put_contents("$k8sPath/{$this->getStorageYamlDestination()}", $vols);
-        }
-
-        // Write network
         if ($viewName = $this->getNetworkViewName()) {
             $ingress = view($viewName, ['config' => $config, 'driver' => $this])->render();
             file_put_contents("$k8sPath/{$this->getNetworkYamlDestination()}", $ingress);
         }
 
-        // Write patch
-        if ($viewName = $this->getPatchViewName()) {
-            $patch = view($viewName, ['config' => $config, 'driver' => $this])->render();
-            file_put_contents("$k8sPath/{$this->getPatchYamlDestination()}", $patch);
-        }
-
-        // Write companion manifests (Local only)
         if ($this->hasCompanion()) {
-            $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
-            file_put_contents("$k8sPath/overlays/local/{$this->value}-companion.yaml", $content);
+            $companion = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
+            file_put_contents("$k8sPath/base/{$this->value}-companion-deployment.yaml", $companion);
 
             $ingress = view('k8s.companion.ingress', ['config' => $config, 'driver' => $this])->render();
             file_put_contents("$k8sPath/overlays/local/{$this->value}-companion-ingress.yaml", $ingress);
+        }
+
+        if ($this === self::MEILISEARCH || $this === self::TYPESENSE) {
+            foreach (['local', 'production'] as $env) {
+                $vols = view("k8s.{$this->value}.volumes", ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
+                file_put_contents("$k8sPath/overlays/$env/{$this->value}-volumes.yaml", $vols);
+            }
         }
     }
 
@@ -229,38 +219,14 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         };
     }
 
-    public function getStorageViewName(): ?string
-    {
-        return match ($this) {
-            self::MEILISEARCH => 'k8s.meilisearch.volumes',
-            self::TYPESENSE => 'k8s.typesense.volumes',
-            default => null,
-        };
-    }
-
-    public function getStorageYamlDestination(): ?string
-    {
-        return match ($this) {
-            self::MEILISEARCH => 'overlays/local/meilisearch-volumes.yaml',
-            self::TYPESENSE => 'overlays/local/typesense-volumes.yaml',
-            default => null,
-        };
-    }
-
     public function getPatchViewName(): ?string
     {
-        return match ($this) {
-            self::MEILISEARCH => 'k8s.meilisearch.patch',
-            default => null,
-        };
+        return null;
     }
 
     public function getPatchYamlDestination(): ?string
     {
-        return match ($this) {
-            self::MEILISEARCH => 'overlays/local/meilisearch-patch.yaml',
-            default => null,
-        };
+        return null;
     }
 
     public function getK8sDeploymentArgs(): string
@@ -268,26 +234,43 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         return '';
     }
 
+    public function getStorageViewName(): ?string
+    {
+        return null;
+    }
+
+    public function getStorageYamlDestination(): ?string
+    {
+        return null;
+    }
+
     public function getManifestFiles(): array
     {
-        $manifests = match ($this) {
-            self::MEILISEARCH => [
-                'base' => ['meilisearch-deployment.yaml'],
-                'local' => ['meilisearch-volumes.yaml', 'meilisearch-ingress.yaml'],
-                'patches' => ['meilisearch-patch.yaml'],
+        $files = [
+            'base' => [
+                basename($this->getWorkloadYamlDestination()),
             ],
-            self::TYPESENSE => [
-                'base' => ['typesense-deployment.yaml'],
-                'local' => ['typesense-volumes.yaml', 'typesense-ingress.yaml'],
+            'local' => [
+                basename($this->getNetworkYamlDestination()),
             ],
-            default => [],
-        };
+            'production' => [],
+        ];
 
-        if ($this->hasCompanion()) {
-            $manifests['local'][] = "{$this->value}-companion.yaml";
-            $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
+        if ($this === self::MEILISEARCH || $this === self::TYPESENSE) {
+            $files['local'][] = "{$this->value}-volumes.yaml";
+            $files['production'][] = "{$this->value}-volumes.yaml";
         }
 
-        return $manifests;
+        if ($this->hasCompanion()) {
+            $files['base'][] = "{$this->value}-companion-deployment.yaml";
+            $files['local'][] = "{$this->value}-companion-ingress.yaml";
+        }
+
+        return $files;
+    }
+
+    public function getPhpExtensions(): array
+    {
+        return [];
     }
 }

@@ -25,7 +25,7 @@ class PurgeCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Completely remove LaraKube manifests and cluster resources from this project';
+    protected $description = 'Completely remove LaraKube manifests and ALL cluster resources (Local & Remote)';
 
     /**
      * Execute the console command.
@@ -45,6 +45,7 @@ class PurgeCommand extends Command
         $filesToRemove = [
             '.infrastructure',
             '.larakube.json',
+            '.larakube.yml',
             'Dockerfile.php',
             'Dockerfile.node',
             'docker-compose.yml',
@@ -59,8 +60,10 @@ class PurgeCommand extends Command
 
         // 1. Show Architectural Preview
         $this->laraKubeInfo("Architectural Purge: '{$appName}'");
+        $this->warn('💡 TIP: Use "larakube cloud:nuke" if you only want to wipe the cluster but KEEP your local manifests.');
+        $this->newLine();
 
-        $this->line('  <fg=red>[CLUSTER]</> Would delete ALL namespaces (local, production, etc.)');
+        $this->line('  <fg=red>[CLUSTER]</> Would delete ALL namespaces on current context (local, production, etc.)');
         $this->line("  <fg=red>[CLUSTER]</> Would delete PersistentVolumes labeled with '{$appName}'");
         foreach ($foundFiles as $file) {
             $type = is_dir($projectPath.'/'.$file) ? 'DIR' : 'FILE';

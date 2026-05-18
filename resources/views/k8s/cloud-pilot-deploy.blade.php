@@ -1,0 +1,135 @@
+name: LaraKube Cloud Pilot (Deploy to {{ $environment }})
+
+on:
+  push:
+    branches: [ "{{ $branch }}" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: {!! $gha['repository'] !!}
+
+jobs:
+  deploy:
+    name: 🚀 Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 🛰 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔍 Resolve & Verify Secrets
+        id: secrets
+        run: |
+          # Robust resolution for KUBECONFIG
+          FINAL_KUBE="{!! $secrets['k_env'] !!}"
+          
+          # Robust resolution for ENV_FILE
+          FINAL_ENV="{!! $secrets['e_env'] !!}"
+          
+          if [ -z "$FINAL_KUBE" ]; then
+            echo "::error::{{ $upperEnv }}_KUBECONFIG is missing! Run 'larakube cloud:configure gha' locally."
+            exit 1
+          fi
+          
+          if [ -z "$FINAL_ENV" ]; then
+            echo "::error::{{ $upperEnv }}_ENV_FILE_BASE64 is missing! Run 'larakube cloud:configure gha' locally."
+            exit 1
+          fi
+          
+          # Securely export using Heredoc to prevent truncation/mangling
+          echo "K_DATA<<EOF" >> $GITHUB_ENV
+          echo "$FINAL_KUBE" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "E_DATA<<EOF" >> $GITHUB_ENV
+          echo "$FINAL_ENV" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "✅ All secrets resolved successfully."
+
+      - name: 🕵️ Inspect Cluster Target
+        run: |
+          TARGET_URL=$(echo "$K_DATA" | grep "server:" | awk '{print $2}')
+          echo "🚀 Deployment Target Cluster: $TARGET_URL"
+          
+          if [[ "$TARGET_URL" == *"127.0.0.1"* ]] || [[ "$TARGET_URL" == *"localhost"* ]]; then
+            echo "::error::🚨 FATAL: Kubeconfig is targeting LOCALHOST ($TARGET_URL)!"
+            echo "::error::This usually happens if your local context was active during secret upload."
+            echo "::error::FIX: Run 'larakube cloud:configure gha' again and ensure the CLI extracts your remote context."
+            exit 1
+          fi
+
+      - name: 🔑 Set Kubernetes context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: {!! $gha['k_data'] !!}
+
+      - name: 🛡 Create .env file
+        run: |
+          echo "$E_DATA" | base64 -d > .env
+
+      - name: 🐘 Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '{{ $config->getPhpVersion()->value }}'
+          extensions: {{ implode(', ', array_unique(array_merge(['ctype', 'dom', 'fileinfo', 'filter', 'hash', 'mbstring', 'openssl', 'pcre', 'pdo', 'session', 'tokenizer', 'xml', 'zip'], $config->getAllPhpExtensions()))) }}
+          tools: composer:v2
+
+      - name: 📦 Install Composer dependencies
+        run: composer install --optimize-autoloader --no-interaction --no-progress --ignore-platform-reqs
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: '{{ $config->getPackageManager()->value }}'
+
+      - name: 🛠 Install Node dependencies
+        run: {!! $config->getPackageManager()->installCommand() !!}
+@if($config->hasFeature(\App\Enums\LaravelFeature::BOOST))
+
+      - name: 🏎 Generate Wayfinder files
+        run: php artisan wayfinder:generate --with-form
+@endif
+
+      - name: 💎 Build production assets
+        run: {!! $config->getPackageManager()->buildCommand() !!}
+
+      - name: 🔐 Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: {!! $gha['actor'] !!}
+          password: {!! $gha['token'] !!}
+
+      - name: 🐳 Build & Push Application Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.php
+          push: true
+          tags: {!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:latest,{!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:{!! $gha['sha'] !!}
+          target: deploy
+
+      - name: 🏗 Prepare Manifests & Deploy
+        run: |
+          # 1. Update ConfigMap/Secret
+          kubectl create configmap laravel-config -n {{ $namespace }} --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic laravel-secrets -n {{ $namespace }} --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+
+          # 2. Deploy via Kustomize
+          cd .infrastructure/k8s/overlays/{{ $environment }}
+          kubectl kustomize . | sed "s|image: {{ $appName }}:latest|image: {!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:{!! $gha['sha'] !!}|g" | kubectl apply -f -
+          
+          # 3. Wait for rollouts
+@foreach(['web', 'horizon', 'queues', 'reverb'] as $name)
+@php($feature = \App\Enums\LaravelFeature::fromPodName($name))
+@if($name === 'web' || ($feature && $config->hasFeature($feature)))
+          kubectl rollout status deployment/{{ $name }} -n {{ $namespace }} --timeout=300s
+@endif
+@endforeach

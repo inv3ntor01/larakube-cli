@@ -5,7 +5,7 @@ metadata:
   name: typesense-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -16,32 +16,10 @@ metadata:
   name: typesense-test-laravel-data-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://typesense-test.dev.test"
-  ASSET_URL: "https://typesense-test.dev.test"
-  DB_CONNECTION: "sqlite"
-  DB_DATABASE: "/var/lib/larakube/database.sqlite"
-  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
-  CACHE_STORE: "database"
-  SESSION_DRIVER: "database"
-  SCOUT_DRIVER: "typesense"
-  TYPESENSE_HOST: "typesense"
-  TYPESENSE_PORT: "8108"
-  TYPESENSE_PROTOCOL: "http"
-  TYPESENSE_API_KEY: "larakubesecretpassword"
 
 
 --- FILE: base/kustomization.yaml ---
@@ -49,6 +27,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - typesense-companion-deployment.yaml
   - typesense-deployment.yaml
   - laravel.yaml
   - config.yaml
@@ -176,6 +155,41 @@ spec:
         - typesense-test.dev.test
 
 
+--- FILE: base/typesense-companion-deployment.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typesense-companion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: typesense-companion
+  template:
+    metadata:
+      labels:
+        app: typesense-companion
+    spec:
+      containers:
+        - name: companion
+          image: typesense/dashboard:latest
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: typesense-companion
+spec:
+  selector:
+    app: typesense-companion
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+
+
 --- FILE: base/typesense-deployment.yaml ---
 apiVersion: apps/v1
 kind: Deployment
@@ -240,6 +254,28 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://typesense-test.dev.test"
+  ASSET_URL: "https://typesense-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  SCOUT_DRIVER: "typesense"
+  TYPESENSE_HOST: "typesense"
+  TYPESENSE_PORT: "8108"
+  TYPESENSE_PROTOCOL: "http"
+  TYPESENSE_API_KEY: "larakubesecretpassword"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -294,11 +330,11 @@ namespace: typesense-test-local
 
 resources:
   - typesense-companion-ingress.yaml
-  - typesense-companion.yaml
-  - typesense-ingress.yaml
   - typesense-volumes.yaml
+  - typesense-ingress.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: patches.yaml
@@ -408,41 +444,6 @@ spec:
         - typesense-typesense-test.dev.test
 
 
---- FILE: overlays/local/typesense-companion.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: typesense-companion
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: typesense-companion
-  template:
-    metadata:
-      labels:
-        app: typesense-companion
-    spec:
-      containers:
-        - name: companion
-          image: typesense/dashboard:latest
-          ports:
-            - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: typesense-companion
-spec:
-  selector:
-    app: typesense-companion
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 80
-  type: ClusterIP
-
-
 --- FILE: overlays/local/typesense-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -494,10 +495,32 @@ spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: ""
+  volumeName: typesense-test-typesense-pv
   resources:
     requests:
       storage: 1Gi
-  volumeName: typesense-test-typesense-pv
+
+
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://typesense-test.dev.test"
+  ASSET_URL: "https://typesense-test.dev.test"
+  DB_CONNECTION: "sqlite"
+  DB_DATABASE: "/var/lib/larakube/database.sqlite"
+  AUTORUN_LARAVEL_MIGRATION_SKIP_DB_CHECK: "true"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+  SCOUT_DRIVER: "typesense"
+  TYPESENSE_HOST: "typesense"
+  TYPESENSE_PORT: "8108"
+  TYPESENSE_PROTOCOL: "http"
+  TYPESENSE_API_KEY: "larakubesecretpassword"
 
 
 --- FILE: overlays/production/deployment-patch.yaml ---
@@ -506,11 +529,40 @@ kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: typesense-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - typesense-test.dev.test
+      secretName: typesense-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -520,11 +572,14 @@ kind: Kustomization
 namespace: typesense-test-production
 
 resources:
+  - typesense-volumes.yaml
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 
@@ -533,5 +588,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: typesense-test-production
+
+
+--- FILE: overlays/production/typesense-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typesense-test-typesense-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 

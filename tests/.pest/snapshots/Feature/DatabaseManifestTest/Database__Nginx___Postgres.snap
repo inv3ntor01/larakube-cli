@@ -5,30 +5,10 @@ metadata:
   name: postgres-test-laravel-storage-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: laravel-config
-data:
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_URL: "https://postgres-test.dev.test"
-  ASSET_URL: "https://postgres-test.dev.test"
-  DB_CONNECTION: "pgsql"
-  DB_HOST: "postgres"
-  DB_PORT: "5432"
-  DB_DATABASE: "laravel"
-  DB_USERNAME: "postgres"
-  DB_PASSWORD: "larakubesecretpassword"
-  CACHE_STORE: "database"
-  SESSION_DRIVER: "database"
 
 
 --- FILE: base/kustomization.yaml ---
@@ -233,6 +213,26 @@ spec:
   type: ClusterIP
 
 
+--- FILE: overlays/local/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: "https://postgres-test.dev.test"
+  ASSET_URL: "https://postgres-test.dev.test"
+  DB_CONNECTION: "pgsql"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_DATABASE: "laravel"
+  DB_USERNAME: "postgres"
+  DB_PASSWORD: "larakubesecretpassword"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+
+
 --- FILE: overlays/local/infrastructure.yaml ---
 apiVersion: v1
 kind: Namespace
@@ -274,6 +274,7 @@ resources:
   - postgres-volumes.yaml
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 
 patches:
   - path: postgres-patch.yaml
@@ -423,17 +424,66 @@ spec:
             claimName: postgres-test-postgres-pvc
 
 
+--- FILE: overlays/production/config-patch.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-config
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "https://postgres-test.dev.test"
+  ASSET_URL: "https://postgres-test.dev.test"
+  DB_CONNECTION: "pgsql"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_DATABASE: "laravel"
+  DB_USERNAME: "postgres"
+  DB_PASSWORD: "larakubesecretpassword"
+  CACHE_STORE: "database"
+  SESSION_DRIVER: "database"
+
+
 --- FILE: overlays/production/deployment-patch.yaml ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  replicas: 2
+  replicas: 1
   template:
     spec:
+      containers:
+        - name: php
+          imagePullPolicy: Always
       imagePullSecrets:
-        - name: ghcr-creds
+        - name: ghcr-login
+
+
+--- FILE: overlays/production/ingress-patch.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  rules:
+    - host: postgres-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - postgres-test.dev.test
+      secretName: postgres-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
@@ -446,9 +496,11 @@ resources:
   - postgres-volumes.yaml
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:
+  - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
 

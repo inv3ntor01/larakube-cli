@@ -60,8 +60,11 @@ trait InteractsWithTraefik
 
         shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
 
-        // Force Traefik to restart to pick up changes
-        shell_exec("kubectl rollout restart deployment traefik -n {$namespace}");
+        // Force Traefik to restart to pick up changes (ONLY if it exists)
+        $exists = shell_exec("kubectl get deployment traefik -n {$namespace} 2>/dev/null");
+        if ($exists) {
+            shell_exec("kubectl rollout restart deployment traefik -n {$namespace}");
+        }
 
         @unlink($tmpCertsYml);
         @unlink($tmpDevPem);

@@ -264,7 +264,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         return ! is_null($this->getCompanionDockerImage());
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         $envs = [
             'DB_CONNECTION' => $this->dbConnection(),
@@ -291,7 +291,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         return $envs;
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
         $appName = $config->getName();
 

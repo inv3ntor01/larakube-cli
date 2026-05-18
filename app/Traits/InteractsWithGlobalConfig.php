@@ -19,20 +19,44 @@ trait InteractsWithGlobalConfig
         return $home.'/.larakube/gh-config';
     }
 
-    protected function getGhDockerCommand(?string $workDir = null): string
+    protected function getGhCommand(?string $workDir = null, bool $interactive = false): string
     {
-        $workDir = $workDir ?? getcwd();
-        $configPath = $this->getGhConfigPath();
-
-        if (! is_dir($configPath)) {
-            @mkdir($configPath, 0700, true);
+        // 1. Check for local 'gh' installation (robust check)
+        $localGh = trim(shell_exec('command -v gh 2>/dev/null') ?? '');
+        if ($localGh && @is_executable($localGh)) {
+            return $localGh;
         }
 
-        return 'docker run --rm -it '.
-               "-v {$workDir}:/work ".
-               "-v {$configPath}:/root/.config/gh ".
-               '-w /work '.
-               'ghcr.io/cli/cli ';
+        // 2. Fallback to Docker
+        return $this->getGhDockerCommand($workDir, $interactive);
+    }
+
+    protected function getGhDockerCommand(?string $workDir = null, bool $interactive = false): string
+    {
+        $workDir = $workDir ?? getcwd();
+        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $ghConfigPath = $this->getGhConfigPath();
+        $dockerConfigPath = $home.'/.docker';
+
+        if (! is_dir($ghConfigPath)) {
+            @mkdir($ghConfigPath, 0700, true);
+        }
+
+        $mounts = [
+            "-v {$workDir}:/work",
+            "-v {$ghConfigPath}:/root/.config/gh",
+        ];
+
+        // Mount host docker config if it exists to share registry credentials (solves GHCR 403s)
+        if (is_dir($dockerConfigPath)) {
+            $mounts[] = "-v {$dockerConfigPath}:/root/.docker:ro";
+        }
+
+        $mountString = implode(' ', $mounts);
+        // We always include -i to support piping data (like secrets) into the container
+        $interactiveFlag = $interactive ? '-it' : '-i';
+
+        return "docker run --rm {$interactiveFlag} {$mountString} -w /work alpine:latest sh -c 'apk add --no-cache github-cli >/dev/null && gh \"\$@\"' larakube-gh ";
     }
 
     protected function getEmail(): ?string

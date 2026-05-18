@@ -8,6 +8,7 @@ use App\Enums\AiProvider;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
+use App\Enums\DeploymentStrategy;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
 use App\Enums\OperatingSystem;
@@ -38,6 +39,7 @@ trait InteractsWithDynamicOptions
             ...PackageManager::getCommandOptionArrays(),
             ...StorageDriver::getCommandOptionArrays(),
             ...ScoutDriver::getCommandOptionArrays(),
+            ...DeploymentStrategy::getCommandOptionArrays(),
         ];
 
         foreach ($options as $option) {
@@ -207,6 +209,14 @@ trait InteractsWithDynamicOptions
             }
         }
 
+        // Deployment Strategy
+        foreach (DeploymentStrategy::cases() as $case) {
+            if ($this->option($case->value)) {
+                $config->setStrategy($case);
+                break;
+            }
+        }
+
         if ($this->hasOption('production-image') && $this->option('production-image')) {
             $config->setProductionImage($this->option('production-image'));
         }
@@ -239,6 +249,14 @@ trait InteractsWithDynamicOptions
 
             if (! $config->hasCacheDriver()) {
                 $config->setCacheDriver(CacheDriver::REDIS);
+            }
+
+            if (! $config->hasStrategy()) {
+                $config->setStrategy(DeploymentStrategy::SINGLE_NODE);
+            }
+
+            if (! $config->hasGithubActions()) {
+                $config->setGithubActions(true);
             }
         }
 

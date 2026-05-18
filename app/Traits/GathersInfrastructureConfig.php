@@ -6,6 +6,7 @@ use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
+use App\Enums\DeploymentStrategy;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
 use App\Enums\OperatingSystem;
@@ -170,7 +171,28 @@ trait GathersInfrastructureConfig
 
         // 6. Security & Contact
         if (! $config->hasEmail()) {
-            $config->setEmail($this->getEmail() ?? $this->getDefaultEmail());
+            $email = $this->getEmail();
+
+            if (! $email) {
+                $email = text(
+                    label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
+                    placeholder: 'admin@larakube.dev.test',
+                    required: true,
+                    validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.'
+                );
+                $this->setEmail($email);
+            }
+
+            $config->setEmail($email);
+        }
+
+        if (! $config->hasProductionHost()) {
+            $host = text(
+                label: 'What is your production domain/subdomain?',
+                placeholder: "{$config->getName()}.luchtech.dev",
+                required: true,
+            );
+            $config->setProductionHost($host);
         }
 
         // 7. Extensions
@@ -241,6 +263,17 @@ trait GathersInfrastructureConfig
             if ($driver = CacheDriver::tryFrom($cache)) {
                 $config->setCacheDriver($driver);
             }
+        }
+
+        // 13. Deployment Strategy
+        if (! $config->hasStrategy()) {
+            $strategy = select(
+                label: 'What is your primary deployment strategy?',
+                options: DeploymentStrategy::getSelectOptions($config),
+                default: DeploymentStrategy::SINGLE_NODE->value
+            );
+
+            $config->setStrategy(DeploymentStrategy::from($strategy));
         }
 
         if (! $config->hasGithubActions()) {

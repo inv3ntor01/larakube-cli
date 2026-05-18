@@ -17,8 +17,14 @@ docker-*.yml
 .env*
 
 # Dependencies
+# We allow these to support building assets/dependencies on GitHub Runners
+@if($config->getGithubActions())
+# node_modules
+# vendor
+@else
 node_modules
 vendor
+@endif
 
 # Laravel Specifics
 storage/framework/cache/*

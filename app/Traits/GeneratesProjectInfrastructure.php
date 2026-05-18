@@ -14,11 +14,17 @@ trait GeneratesProjectInfrastructure
     /**
      * Sync values to the .env file.
      */
-    protected function syncEnvFile(string $projectPath, array $values, bool $commented = false): void
+    protected function syncEnvFile(string $projectPath, array $values, bool $commented = false, bool $isProduction = false): void
     {
-        $envPath = $projectPath.'/.env';
+        $envFile = $isProduction ? '.env.production' : '.env';
+        $envPath = $projectPath.'/'.$envFile;
+
         if (! file_exists($envPath)) {
-            return;
+            if ($isProduction && file_exists($projectPath.'/.env')) {
+                copy($projectPath.'/.env', $envPath);
+            } else {
+                return;
+            }
         }
 
         $lines = explode("\n", file_get_contents($envPath));
@@ -53,7 +59,8 @@ trait GeneratesProjectInfrastructure
         $content = implode("\n", $newLines);
         file_put_contents($envPath, $content);
 
-        if (file_exists($projectPath.'/.env.production')) {
+        // If we are updating the base .env and .env.production is missing, create it
+        if (! $isProduction && ! file_exists($projectPath.'/.env.production')) {
             file_put_contents($projectPath.'/.env.production', $content);
         }
     }
@@ -139,9 +146,12 @@ trait GeneratesProjectInfrastructure
             'overlays/local/kustomization.yaml',
             'overlays/local/infrastructure.yaml',
             'overlays/local/patches.yaml',
+            'overlays/local/config-patch.yaml',
             'overlays/production/kustomization.yaml',
             'overlays/production/namespace.yaml',
             'overlays/production/deployment-patch.yaml',
+            'overlays/production/ingress-patch.yaml',
+            'overlays/production/config-patch.yaml',
         ];
 
         if ($config->getFrontend()?->requiresNodePod()) {
@@ -150,14 +160,18 @@ trait GeneratesProjectInfrastructure
 
         foreach ($stubs as $stub) {
             $namespace = $appName;
+            $environment = 'local';
+
             if (str_contains($stub, 'overlays/local')) {
                 $namespace .= '-local';
+                $environment = 'local';
             } elseif (str_contains($stub, 'overlays/production')) {
                 $namespace .= '-production';
+                $environment = 'production';
             }
 
             // Calculate environment-aware command
-            $command = $config->getServerVariation()?->getStartCommand(str_contains($stub, 'overlays/local')) ?? '[]';
+            $command = $config->getServerVariation()?->getStartCommand($environment === 'local') ?? '[]';
             $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
             $workspacePath = dirname($config->getPath());
 
@@ -165,6 +179,7 @@ trait GeneratesProjectInfrastructure
             $content = view($viewName, [
                 'config' => $config,
                 'namespace' => $namespace,
+                'environment' => $environment,
                 'command' => $command,
                 'binaryPath' => $binaryPath,
                 'workspacePath' => $workspacePath,
@@ -209,6 +224,7 @@ trait GeneratesProjectInfrastructure
         foreach (array_unique($manifests['production']) as $file) {
             $this->appendToKustomization($k8sPath, 'overlays/production', $file);
         }
+        $this->appendToKustomization($k8sPath, 'overlays/production', 'ingress-patch.yaml', 'patches');
         foreach (array_unique($manifests['patches']) as $file) {
             $this->appendToKustomization($k8sPath, 'overlays/local', $file, 'patches');
         }
@@ -356,12 +372,22 @@ trait GeneratesProjectInfrastructure
         $envChanges = $config->getAllEnvironmentVariables();
 
         if ($dryRun) {
-            $this->line('  <fg=gray>[.ENV]</> Would sync the following variables:');
+            $this->line('  <fg=gray>[.ENV]</> Would sync the following variables to local .env and .env.production:');
             foreach ($envChanges as $k => $v) {
                 $this->line("         $k=$v");
             }
+
+            $prodEnvChanges = $config->getAllEnvironmentVariables('production');
+            $this->line('  <fg=gray>[.ENV.PRODUCTION]</> Would sync the following variables ONLY to .env.production:');
+            foreach ($prodEnvChanges as $k => $v) {
+                if ($v !== ($envChanges[$k] ?? null)) {
+                    $this->line("         $k=$v");
+                }
+            }
         } else {
             $this->syncEnvFile($config->getPath(), $envChanges);
+            // Specifically sync production-only overrides to .env.production
+            $this->syncEnvFile($config->getPath(), $config->getAllEnvironmentVariables('production'), isProduction: true);
         }
 
         if (! $dryRun) {

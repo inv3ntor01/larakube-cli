@@ -4,6 +4,7 @@ namespace App\Commands;
 
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\HasConsoleInteraction;
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
@@ -18,7 +19,7 @@ use function Laravel\Prompts\info;
 
 class UpCommand extends Command
 {
-    use GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -52,6 +53,10 @@ class UpCommand extends Command
         }
 
         $environment = $this->argument('environment') ?? 'local';
+
+        if (! $this->validateContextForEnvironment($environment)) {
+            return 1;
+        }
 
         // 1. Safe Dry-Run (Validation Mode)
         if ($this->option('dry-run')) {
@@ -161,9 +166,6 @@ class UpCommand extends Command
                 if (confirm('LaraKube works best with Traefik. Would you like us to install it for you?', true)) {
                     $this->setupTraefik();
                 }
-            } else {
-                // Ensure Traefik infra (SSL/Config) is up-to-date
-                $this->setupTraefik();
             }
         }
 

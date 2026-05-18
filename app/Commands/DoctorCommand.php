@@ -2,6 +2,7 @@
 
 namespace App\Commands;
 
+use App\Data\ConfigData;
 use App\Traits\CheckPrerequisites;
 use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;

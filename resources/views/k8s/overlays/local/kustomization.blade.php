@@ -6,6 +6,7 @@ namespace: {{ $namespace }}
 resources:
   - ../../base
   - infrastructure.yaml
+  - config-patch.yaml
 @if($config->getFrontend()?->requiresNodePod())
   - node-deployment.yaml
 @endif

@@ -6,6 +6,7 @@ namespace: {{ $namespace }}
 resources:
   - ../../base
   - namespace.yaml
+  - config-patch.yaml
 
 # Add production-specific patches here
 patches:

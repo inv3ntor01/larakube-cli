@@ -14,6 +14,7 @@ use App\Contracts\RequiresPhpExtensions;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
+use App\Enums\DeploymentStrategy;
 use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
 use App\Enums\OperatingSystem;
@@ -55,9 +56,11 @@ class ConfigData implements Arrayable
         protected ?array $cacheDrivers = [],
         protected ?string $database = null,
         protected ?array $databases = [],
+        protected ?string $strategy = null,
         protected ?array $environments = [],
         protected ?string $productionImage = null,
-        protected ?bool $githubActions = true,
+        protected ?string $productionHost = null,
+        protected ?bool $githubActions = null,
         protected ?bool $isSystem = false,
         protected bool $isScaffolding = false,
         protected ?array $lockedFiles = [],
@@ -517,6 +520,21 @@ class ConfigData implements Arrayable
         return $all;
     }
 
+    public function setStrategy(DeploymentStrategy $strategy): void
+    {
+        $this->strategy = $strategy->value;
+    }
+
+    public function getStrategy(): DeploymentStrategy
+    {
+        return $this->strategy ? DeploymentStrategy::from($this->strategy) : DeploymentStrategy::SINGLE_NODE;
+    }
+
+    public function hasStrategy(): bool
+    {
+        return ! is_null($this->strategy);
+    }
+
     /**
      * Alias for getDatabase() with a fallback.
      */
@@ -595,7 +613,12 @@ class ConfigData implements Arrayable
 
     public function setEnvironments(array $environments): void
     {
-        $this->environments = $environments;
+        $this->environments = array_values(array_unique($environments));
+    }
+
+    public function addEnvironment(string $environment): void
+    {
+        $this->environments = array_values(array_unique(array_merge($this->environments ?? [], [$environment])));
     }
 
     public function getEnvironments(): array
@@ -611,6 +634,21 @@ class ConfigData implements Arrayable
     public function getProductionImage(): ?string
     {
         return $this->productionImage;
+    }
+
+    public function setProductionHost(?string $host): void
+    {
+        $this->productionHost = $host;
+    }
+
+    public function getProductionHost(): string
+    {
+        return $this->productionHost ?? "{$this->name}.dev.test";
+    }
+
+    public function hasProductionHost(): bool
+    {
+        return ! is_null($this->productionHost);
     }
 
     public static function fromArray(array $data): self
@@ -636,8 +674,10 @@ class ConfigData implements Arrayable
             cacheDrivers: $data['cacheDrivers'] ?? [],
             database: $data['database'] ?? null,
             databases: $data['databases'] ?? [],
+            strategy: $data['strategy'] ?? 'single-node',
             environments: $data['environments'] ?? ['local', 'production'],
             productionImage: $data['production_image'] ?? null,
+            productionHost: $data['production_host'] ?? null,
             githubActions: $data['githubActions'] ?? true,
             isSystem: $data['is_system'] ?? false,
             lockedFiles: $data['locked_files'] ?? [],
@@ -648,8 +688,9 @@ class ConfigData implements Arrayable
         return $config;
     }
 
-    public static function loadFromFile(string $directory): self
+    public static function loadFromFile(?string $directory = null): self
     {
+        $directory = $directory ?: getcwd();
         $path = "$directory/".self::CONFIG_FILE;
 
         if (! file_exists($path)) {
@@ -695,8 +736,10 @@ class ConfigData implements Arrayable
             'cacheDrivers' => $this->cacheDrivers,
             'database' => $this->database,
             'databases' => $this->databases,
+            'strategy' => $this->strategy,
             'environments' => $this->environments,
             'production_image' => $this->productionImage,
+            'production_host' => $this->productionHost,
             'githubActions' => $this->githubActions,
             'is_system' => $this->isSystem,
             'locked_files' => $this->lockedFiles,
@@ -932,7 +975,7 @@ class ConfigData implements Arrayable
 
         $content = file_get_contents($viteFile);
         $appName = $this->getName();
-        $viteHost = "vite-{$appName}.dev.test";
+        $viteHost = $this->getServiceHost('vite', 'local');
 
         // Check if the config is already "K8s Ready"
         $isK8sReady = str_contains($content, "host: '{$viteHost}'") && str_contains($content, 'cors: true');
@@ -975,9 +1018,22 @@ class ConfigData implements Arrayable
         }
     }
 
-    public function getAppUrl(): string
+    public function getAppUrl(string $environment = 'local'): string
     {
+        if ($environment === 'production' && $this->hasProductionHost()) {
+            return "https://{$this->getProductionHost()}";
+        }
+
         return "https://{$this->getName()}.dev.test";
+    }
+
+    public function getServiceHost(string $service, string $environment = 'local'): string
+    {
+        if ($environment === 'production' && $this->hasProductionHost()) {
+            return "{$service}-{$this->getProductionHost()}";
+        }
+
+        return "{$service}-{$this->getName()}.dev.test";
     }
 
     /**
@@ -1043,23 +1099,23 @@ class ConfigData implements Arrayable
         return in_array($feature, $this->features, true);
     }
 
-    public function getAllEnvironmentVariables(): array
+    public function getAllEnvironmentVariables(string $environment = 'local'): array
     {
-        $envs = $this->getServerVariation()?->getEnvironmentVariables($this) ?? [];
+        $envs = $this->getServerVariation()?->getEnvironmentVariables($this, $environment) ?? [];
 
         // 🛡️ DEFAULT PHP PERFORMANCE & STABILITY
         $envs = array_merge([
-            'APP_URL' => $this->getAppUrl(),
-            'ASSET_URL' => $this->getAppUrl(),
+            'APP_URL' => $this->getAppUrl($environment),
+            'ASSET_URL' => $this->getAppUrl($environment),
         ], $envs);
 
-        if ($this->getFrontend()?->requiresNodePod()) {
-            $envs['VITE_URL'] = "https://vite-{$this->getName()}.dev.test";
+        if ($environment === 'local' && $this->getFrontend()?->requiresNodePod()) {
+            $envs['VITE_URL'] = 'https://'.$this->getServiceHost('vite', 'local');
         }
 
         foreach ($this->getComponents() as $component) {
             if ($component instanceof HasEnvironmentVariables) {
-                $envs = array_merge($envs, $component->getEnvironmentVariables($this));
+                $envs = array_merge($envs, $component->getEnvironmentVariables($this, $environment));
             }
         }
 
@@ -1084,19 +1140,22 @@ class ConfigData implements Arrayable
         return count($this->getAllPhpExtensions()) > 0;
     }
 
-    public function getAllHosts(): array
+    public function getAllHosts(string $environment = 'local'): array
     {
         $hosts = [
-            "{$this->getName()}.dev.test" => 'Primary Application',
+            parse_url($this->getAppUrl($environment), PHP_URL_HOST) => 'Primary Application',
         ];
 
         if ($this->getFrontend()?->requiresNodePod()) {
-            $hosts["vite-{$this->getName()}.dev.test"] = 'Vite Asset Server';
+            $viteHost = $environment === 'production' && $this->hasProductionHost()
+                ? "vite-{$this->getProductionHost()}"
+                : "vite-{$this->getName()}.dev.test";
+            $hosts[$viteHost] = 'Vite Asset Server';
         }
 
         foreach ($this->getComponents() as $component) {
             if ($component instanceof HasHosts) {
-                $hosts = array_merge($hosts, $component->getHosts($this));
+                $hosts = array_merge($hosts, $component->getHosts($this, $environment));
             }
         }
 

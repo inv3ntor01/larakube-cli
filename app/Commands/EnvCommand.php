@@ -33,7 +33,7 @@ class EnvCommand extends Command
     {
         $this->renderHeader();
 
-        if (! $this->ensureIsProject()) {
+        if (! $this->isLaraKubeProject()) {
             return 1;
         }
 
@@ -82,8 +82,12 @@ class EnvCommand extends Command
             }
 
             // Copy from production as a safe base
-            $files = ['kustomization.yaml', 'namespace.yaml', 'deployment-patch.yaml'];
+            $files = ['kustomization.yaml', 'namespace.yaml', 'deployment-patch.yaml', 'ingress-patch.yaml'];
             foreach ($files as $file) {
+                if (! file_exists("{$baseOverlayPath}/production/{$file}")) {
+                    continue;
+                }
+
                 $content = file_get_contents("{$baseOverlayPath}/production/{$file}");
 
                 // Update the namespace in the new files

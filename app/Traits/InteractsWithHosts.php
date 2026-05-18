@@ -21,7 +21,7 @@ trait InteractsWithHosts
 
         if (empty($customHosts)) {
             $config = $this->getProjectConfig($projectPath);
-            $requiredHosts = array_keys($config->getAllHosts());
+            $requiredHosts = array_keys($config->getAllHosts('local'));
         } else {
             $requiredHosts = $customHosts;
         }

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<testSuite xmlns="https://xml.phpunit.de/testSuite">
+ <tests>
+  <testClass name="P\Tests\Feature\GhaWorkflowTest" file="/Users/jsluchavez/Codes/Ideas/laravel-k8s/laravel-k8s-cli/vendor/pestphp/pest/src/Factories/TestCaseFactory.php(175) : eval()'d code">
+   <testMethod id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_GHA__Surgical_Kubeconfig_Extraction_command_construction" name="__pest_evaluable_GHA__Surgical_Kubeconfig_Extraction_command_construction"/>
+   <testMethod id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Workflow_Syntax_Integrity__cloud_pilot_deploy_template" name="__pest_evaluable_Workflow_Syntax_Integrity__cloud_pilot_deploy_template"/>
+   <testMethod id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Docker_Context_Safety___dockerignore_allows_dependencies_when_GHA_is_enabled" name="__pest_evaluable_Docker_Context_Safety___dockerignore_allows_dependencies_when_GHA_is_enabled"/>
+   <testMethod id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Docker_Context_Safety___dockerignore_ignores_dependencies_when_GHA_is_disabled" name="__pest_evaluable_Docker_Context_Safety___dockerignore_ignores_dependencies_when_GHA_is_disabled"/>
+  </testClass>
+ </tests>
+ <groups>
+  <group name="default">
+   <test id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_GHA__Surgical_Kubeconfig_Extraction_command_construction"/>
+   <test id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Workflow_Syntax_Integrity__cloud_pilot_deploy_template"/>
+   <test id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Docker_Context_Safety___dockerignore_allows_dependencies_when_GHA_is_enabled"/>
+   <test id="P\Tests\Feature\GhaWorkflowTest::__pest_evaluable_Docker_Context_Safety___dockerignore_ignores_dependencies_when_GHA_is_disabled"/>
+  </group>
+ </groups>
+</testSuite>

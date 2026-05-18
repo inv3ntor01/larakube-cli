@@ -198,7 +198,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         return ! is_null($this->getCompanionDockerImage());
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
             self::REDIS => [
@@ -222,7 +222,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         };
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
         $appName = $config->getName();
 

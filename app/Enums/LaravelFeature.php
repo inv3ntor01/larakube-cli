@@ -103,25 +103,25 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         ];
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
             self::REVERB => [
                 'REVERB_APP_ID' => 'larakube',
                 'REVERB_APP_KEY' => 'larakubekey',
                 'REVERB_APP_SECRET' => 'larakubesecret',
-                'REVERB_HOST' => '0.0.0.0',
-                'REVERB_PORT' => '8080',
-                'REVERB_SCHEME' => 'http',
+                'REVERB_HOST' => $config ? $config->getServiceHost('reverb', $environment) : '0.0.0.0',
+                'REVERB_PORT' => $environment === 'production' ? '443' : '8080',
+                'REVERB_SCHEME' => $environment === 'production' ? 'https' : 'http',
             ],
-            self::MAILPIT => [
+            self::MAILPIT => $environment !== 'production' ? [
                 'MAIL_MAILER' => 'smtp',
                 'MAIL_HOST' => $this->getPodName(),
                 'MAIL_PORT' => '1025',
                 'MAIL_USERNAME' => 'null',
                 'MAIL_PASSWORD' => 'null',
                 'MAIL_ENCRYPTION' => 'null',
-            ],
+            ] : [],
             self::QUEUES => [
                 'QUEUE_CONNECTION' => 'database',
             ],
@@ -135,16 +135,16 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
         $appName = $config->getName();
 
         return match ($this) {
-            self::REVERB => ["reverb-{$appName}.dev.test" => 'Reverb Console'],
-            self::MAILPIT => ["mailpit-{$appName}.dev.test" => 'Mailpit Dashboard'],
+            self::REVERB => [$config->getServiceHost('reverb', $environment) => 'Reverb Console'],
+            self::MAILPIT => $environment !== 'production' ? [$config->getServiceHost('mailpit', $environment) => 'Mailpit Dashboard'] : [],
             self::MONITORING => [
-                "grafana-{$appName}.dev.test" => 'Grafana Dashboard',
-                "prometheus-{$appName}.dev.test" => 'Prometheus Dashboard',
+                $config->getServiceHost('grafana', $environment) => 'Grafana Dashboard',
+                $config->getServiceHost('prometheus', $environment) => 'Prometheus Dashboard',
             ],
             default => [],
         };

@@ -64,7 +64,7 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
         };
     }
 
-    public function getEnvironmentVariables(?ConfigData $config = null): array
+    public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
             self::STATAMIC => [
@@ -74,7 +74,7 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
         };
     }
 
-    public function getHosts(ConfigData $config): array
+    public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
         return [];
     }

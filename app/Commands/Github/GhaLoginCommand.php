@@ -20,7 +20,7 @@ class GhaLoginCommand extends Command
 
         $this->laraKubeInfo('Launching GitHub CLI authentication wizard...');
 
-        $gh = $this->getGhDockerCommand();
+        $gh = $this->getGhCommand(interactive: true);
         passthru("{$gh} auth login");
 
         return 0;
