@@ -24,6 +24,13 @@ class ArtisanCommand extends Command
     protected $signature = 'art {commands* : The artisan command to run} {--environment=local : The environment to target}';
 
     /**
+     * The console command aliases.
+     *
+     * @var array
+     */
+    protected $aliases = ['artisan'];
+
+    /**
      * The console command description.
      *
      * @var string
@@ -35,13 +42,19 @@ class ArtisanCommand extends Command
      */
     public function handle()
     {
-        // Capture everything from the original command line after 'art'
+        // Capture everything from the original command line after the trigger ('art' or 'artisan')
         $rawArgs = $_SERVER['argv'];
+
+        $trigger = 'art';
         $artIndex = array_search('art', $rawArgs);
 
+        if ($artIndex === false) {
+            $artIndex = array_search('artisan', $rawArgs);
+            $trigger = 'artisan';
+        }
+
         if ($artIndex !== false) {
-            // Get everything after 'art', but filter out options that belong to larakube itself if needed
-            // For now, let's just take everything that doesn't look like a larakube option
+            // Get everything after the trigger, but filter out options that belong to larakube itself if needed
             $passedArgs = array_slice($rawArgs, $artIndex + 1);
 
             // Filter out --environment from the passed args so it's not passed to artisan twice
