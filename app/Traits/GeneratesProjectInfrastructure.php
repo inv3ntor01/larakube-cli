@@ -218,7 +218,7 @@ trait GeneratesProjectInfrastructure
         foreach ($pods as $pod) {
             if ($pod instanceof HasKubernetesFiles) {
                 $pod->updateK8s($config);
-                $actionFiles = $pod->getManifestFiles();
+                $actionFiles = $pod->getManifestFiles($config);
                 foreach (['base', 'local', 'production', 'patches'] as $key) {
                     if (isset($actionFiles[$key])) {
                         $manifests[$key] = array_merge($manifests[$key], $actionFiles[$key]);

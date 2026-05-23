@@ -298,7 +298,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         };
     }
 
-    public function getManifestFiles(): array
+    public function getManifestFiles(?ConfigData $config = null): array
     {
         return [
             'base' => [

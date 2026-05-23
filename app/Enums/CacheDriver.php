@@ -96,7 +96,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         }
 
         // Write companion manifests (Local only)
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && $config->withCompanions) {
             $compDest = "overlays/local/{$this->value}-companion.yaml";
             if (! $config->isLocked(".infrastructure/k8s/{$compDest}")) {
                 $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
@@ -164,7 +164,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         return '';
     }
 
-    public function getManifestFiles(): array
+    public function getManifestFiles(?ConfigData $config = null): array
     {
         $manifests = match ($this) {
             self::REDIS => [
@@ -176,7 +176,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             default => [],
         };
 
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
             $manifests['local'][] = "{$this->value}-companion.yaml";
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }

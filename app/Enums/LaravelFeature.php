@@ -297,6 +297,10 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 
     public function updateK8s(ConfigData $config): void
     {
+        if (in_array($this, [self::MAILPIT, self::MONITORING]) && ! $config->withCompanions) {
+            return;
+        }
+
         $k8sPath = $config->getK8sPath();
         $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
         $workspacePath = dirname($config->getPath());
@@ -418,9 +422,9 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    public function getManifestFiles(): array
+    public function getManifestFiles(?ConfigData $config = null): array
     {
-        return match ($this) {
+        $manifests = match ($this) {
             self::TASK_SCHEDULING => [
                 'base' => ['scheduler-cronjob.yaml'],
             ],
@@ -441,6 +445,12 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             ],
             default => [],
         };
+
+        if (in_array($this, [self::MAILPIT, self::MONITORING]) && ! ($config?->withCompanions ?? true)) {
+            return [];
+        }
+
+        return $manifests;
     }
 
     private function getReverbJsCommands(?ConfigData $context): array

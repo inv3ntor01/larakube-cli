@@ -192,7 +192,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             }
         }
 
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && $config->withCompanions) {
             $compDest = "base/{$this->value}-companion-deployment.yaml";
             if (! $config->isLocked(".infrastructure/k8s/{$compDest}")) {
                 $companion = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
@@ -278,7 +278,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         return null;
     }
 
-    public function getManifestFiles(): array
+    public function getManifestFiles(?ConfigData $config = null): array
     {
         $files = [
             'base' => [
@@ -295,7 +295,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             $files['production'][] = "{$this->value}-volumes.yaml";
         }
 
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
             $files['base'][] = "{$this->value}-companion-deployment.yaml";
             $files['local'][] = "{$this->value}-companion-ingress.yaml";
         }

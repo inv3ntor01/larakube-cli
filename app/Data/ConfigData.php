@@ -64,6 +64,7 @@ class ConfigData extends Data
         public bool $githubActions = true,
         public bool $isSystem = false,
         public bool $isScaffolding = false,
+        public bool $withCompanions = true,
         public array $lockedFiles = [],
         /** @var array<CloudData> */
         public array $cloud = [],

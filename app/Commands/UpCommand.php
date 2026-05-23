@@ -36,7 +36,9 @@ class UpCommand extends Command
                             {--no-build : Skip building the Docker image}
                             {--dry-run : Validate manifests without deploying}
                             {--test : Run smoke test without prompting}
-                            {--no-test : Skip smoke test without prompting}';
+                            {--no-test : Skip smoke test without prompting}
+                            {--companions : Enable heavy companion apps (PhpMyAdmin, etc.)}
+                            {--no-companions : Disable heavy companion apps to save resources}';
 
     /**
      * The console command description.
@@ -108,6 +110,13 @@ class UpCommand extends Command
 
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
+
+        // --- 🏗 COMPANION TOGGLE ---
+        if ($this->option('companions')) {
+            $config->withCompanions = true;
+        } elseif ($this->option('no-companions')) {
+            $config->withCompanions = false;
+        }
 
         // --- 🏗 ARCHITECTURAL SYNC (Local Only) ---
         // Every time we run 'up' locally, we ensure the local overlays

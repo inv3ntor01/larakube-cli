@@ -116,7 +116,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         }
 
         // Write companion manifests (Local only)
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && $config->withCompanions) {
             $compDest = "overlays/local/{$this->value}-companion.yaml";
             if (! $config->isLocked(".infrastructure/k8s/{$compDest}")) {
                 $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
@@ -208,7 +208,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         return '';
     }
 
-    public function getManifestFiles(): array
+    public function getManifestFiles(?ConfigData $config = null): array
     {
         $manifests = match ($this) {
             self::MYSQL => [
@@ -235,7 +235,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::SQLITE => [],
         };
 
-        if ($this->hasCompanion()) {
+        if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
             $manifests['local'][] = "{$this->value}-companion.yaml";
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }

@@ -271,6 +271,12 @@ trait GathersInfrastructureConfig
             $config->setGithubActions(confirm(label: 'Would you like to use GitHub Actions?'));
         }
 
+        $config->withCompanions = confirm(
+            label: 'Would you like to include companion apps (e.g., PhpMyAdmin, RedisInsight)?',
+            default: true,
+            hint: 'Companion apps provide helpful UIs for debugging but increase local resource usage.'
+        );
+
         $config->resolveDependencies();
 
         return $config;

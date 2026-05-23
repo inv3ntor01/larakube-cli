@@ -26,5 +26,5 @@ interface HasKubernetesFiles
 
     public function getK8sDeploymentArgs(): string;
 
-    public function getManifestFiles(): array;
+    public function getManifestFiles(?ConfigData $config = null): array;
 }
