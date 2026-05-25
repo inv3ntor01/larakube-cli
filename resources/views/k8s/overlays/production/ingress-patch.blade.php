@@ -3,9 +3,13 @@ kind: Ingress
 metadata:
   name: {{ $config->getServerVariation()->getPodName($config) }}
   annotations:
+@if($view = $config->ingressController?->getAnnotationView())
+@include($view)
+@else
     traefik.ingress.kubernetes.io/router.tls: "true"
 @if($config->getStrategy() === \App\Enums\DeploymentStrategy::SINGLE_NODE)
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+@endif
 @endif
 spec:
   rules:

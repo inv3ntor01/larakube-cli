@@ -267,6 +267,35 @@ trait GathersInfrastructureConfig
             $config->setStrategy(DeploymentStrategy::from($strategy));
         }
 
+        // 14. Ingress Controller (Production)
+        if (! $config->ingressController) {
+            $controller = select(
+                label: 'Which Ingress Controller will you use in production?',
+                options: IngressController::getSelectOptions($config),
+                default: IngressController::TRAEFIK->value
+            );
+
+            $config->ingressController = IngressController::from($controller);
+        }
+
+        // 15. Managed Services (Production)
+        if (empty($config->managedServices)) {
+            $managedOptions = [];
+            foreach ($config->getComponents() as $component) {
+                if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
+                    $managedOptions[$component->value] = $component->getLabel();
+                }
+            }
+
+            if (! empty($managedOptions)) {
+                $config->managedServices = multiselect(
+                    label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache)?',
+                    options: $managedOptions,
+                    hint: 'These services will be orchestrated locally but skipped in production manifests.'
+                );
+            }
+        }
+
         if (! $config->hasGithubActions()) {
             $config->setGithubActions(confirm(label: 'Would you like to use GitHub Actions?'));
         }

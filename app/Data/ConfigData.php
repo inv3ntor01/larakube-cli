@@ -12,6 +12,7 @@ use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\DeploymentStrategy;
 use App\Enums\FrontendStack;
+use App\Enums\IngressController;
 use App\Enums\LaravelFeature;
 use App\Enums\OperatingSystem;
 use App\Enums\PackageManager;
@@ -65,6 +66,8 @@ class ConfigData extends Data
         public bool $isSystem = false,
         public bool $isScaffolding = false,
         public bool $withCompanions = true,
+        public ?IngressController $ingressController = IngressController::TRAEFIK,
+        public array $managedServices = [],
         public array $lockedFiles = [],
         /** @var array<CloudData> */
         public array $cloud = [],

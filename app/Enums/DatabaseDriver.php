@@ -240,6 +240,11 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
+        // If the service is managed externally in production, remove it from the production manifest list
+        if (in_array($this->value, $config?->managedServices ?? [])) {
+            unset($manifests['production']);
+        }
+
         return $manifests;
     }
 

@@ -6,7 +6,14 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     traefik.ingress.kubernetes.io/service.serversscheme: {{ $config->getServerVariation()->traefikScheme() }}
+@if($config->ingressController && $config->ingressController !== \App\Enums\IngressController::TRAEFIK)
+    # Production Controller Overrides (Local defaults shown above)
+    # The actual production annotations will be applied via patches
+@endif
 spec:
+@if($config->ingressController?->getIngressClass())
+  ingressClassName: {{ $config->ingressController->getIngressClass() }}
+@endif
   rules:
     - host: {{ $config->getName() }}.dev.test
       http:
