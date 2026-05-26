@@ -356,6 +356,25 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: vue-test-laravel-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node
+spec:
+  template:
+    spec:
+      containers:
+        - name: node
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
 
 ---
 

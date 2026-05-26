@@ -1,6 +1,6 @@
-@foreach(['web', 'horizon', 'queues', 'reverb'] as $name)
+@foreach(['web', 'horizon', 'queues', 'reverb', 'node'] as $name)
 @php($feature = \App\Enums\LaravelFeature::fromPodName($name))
-@if($name === 'web' || ($feature && $config->hasFeature($feature)))
+@if($name === 'web' || ($feature && $config->hasFeature($feature)) || ($name === 'node' && $config->getFrontend()?->requiresNodePod()))
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -10,11 +10,12 @@ spec:
   template:
     spec:
       containers:
-        - name: php
+        - name: {{ $name === 'node' ? 'node' : 'php' }}
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: code
               mountPath: /var/www/html
+@if($name !== 'node')
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
@@ -37,11 +38,13 @@ spec:
             - name: data
               mountPath: /var/lib/larakube
 @endif
+@endif
       volumes:
         - name: code
           hostPath:
             path: "{{ $config->getPath() }}"
             type: Directory
+@if($name !== 'node')
         - name: storage
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-storage-pvc
@@ -49,6 +52,7 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-data-pvc
+@endif
 @endif
 @endif
 @endforeach
