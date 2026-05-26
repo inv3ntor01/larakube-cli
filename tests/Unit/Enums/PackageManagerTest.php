@@ -22,8 +22,10 @@ test('package manager build commands', function () {
 });
 
 test('package manager dev commands', function () {
-    expect(PackageManager::NPM->devCommand())->toBe('npm run dev --')
-        ->and(PackageManager::PNPM->devCommand())->toBe('pnpm dev');
+    expect(PackageManager::NPM->devCommand())->toBe('npm run dev -- --host')
+        ->and(PackageManager::PNPM->devCommand())->toBe('pnpm dev --host')
+        ->and(PackageManager::BUN->devCommand())->toBe('bun run dev --host')
+        ->and(PackageManager::YARN->devCommand())->toBe('yarn dev --host');
 });
 
 test('package manager select options are valid', function () {

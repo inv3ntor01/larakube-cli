@@ -20,6 +20,9 @@ spec:
           command: {!! $config->getPackageManager()->getReadinessProbeCommand() !!}
           ports:
             - containerPort: 5173
+          env:
+            - name: VITE_DEV_SERVER_URL
+              value: https://vite-{{ $config->getName() }}.dev.test
           envFrom:
             - configMapRef:
                 name: laravel-config
