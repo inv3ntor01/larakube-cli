@@ -75,10 +75,15 @@ trait InteractsWithDocker
                 // Check in the server node (standard for k3d)
                 $images = shell_exec('docker exec k3d-larakube-server-0 crictl images 2>/dev/null');
 
-                return str_contains($images ?? '', $imageTag) ||
-                       str_contains($images ?? '', "docker.io/library/$imageTag");
-            });
-        }
+                // Handle the fact that crictl uses spaces instead of colons (e.g. "console   latest")
+                $parts = explode(':', $imageTag);
+                $name = $parts[0];
+                $tag = $parts[1] ?? 'latest';
+
+                return str_contains($images ?? '', $imageTag) || 
+                       str_contains($images ?? '', "docker.io/library/$imageTag") ||
+                       (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
+            });        }
     }
 
     /**
