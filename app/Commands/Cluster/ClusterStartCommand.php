@@ -32,7 +32,16 @@ class ClusterStartCommand extends Command
 
         $this->laraKubeInfo('Starting LaraKube cluster...');
 
-        passthru('k3d cluster start larakube');
+        if (shell_exec('which k3d')) {
+            passthru('k3d cluster start larakube');
+        } elseif (shell_exec('which k3s') && PHP_OS_FAMILY === 'Linux') {
+            $this->info('  Detected native k3s. Using systemctl...');
+            passthru('sudo systemctl start k3s');
+        } else {
+            $this->laraKubeError('No supported cluster engine (k3d or k3s) found.');
+
+            return 1;
+        }
 
         $this->laraKubeInfo('✅ Cluster is online! Run "larakube up" to resume development.');
 

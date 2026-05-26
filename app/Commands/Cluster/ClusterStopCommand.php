@@ -32,7 +32,16 @@ class ClusterStopCommand extends Command
 
         $this->laraKubeInfo('Stopping LaraKube cluster...');
 
-        passthru('k3d cluster stop larakube');
+        if (shell_exec('which k3d')) {
+            passthru('k3d cluster stop larakube');
+        } elseif (shell_exec('which k3s') && PHP_OS_FAMILY === 'Linux') {
+            $this->info('  Detected native k3s. Using systemctl...');
+            passthru('sudo systemctl stop k3s');
+        } else {
+            $this->laraKubeError('No supported cluster engine (k3d or k3s) found.');
+
+            return 1;
+        }
 
         $this->laraKubeInfo('✅ Cluster stopped. Run "larakube cluster:start" to resume.');
 
