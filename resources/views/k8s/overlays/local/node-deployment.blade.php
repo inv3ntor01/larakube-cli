@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: node
-          image: {{ file_exists($config->getPath().'/Dockerfile.node') ? $config->getName().'-node' : 'node:22-alpine' }}:latest
+          image: {{ $config->getName() }}:latest
           workingDir: /var/www/html
           command: {!! $config->getPackageManager()->getReadinessProbeCommand() !!}
           ports:
@@ -33,10 +33,6 @@ spec:
               port: 5173
             initialDelaySeconds: 15
             periodSeconds: 10
-          lifecycle:
-            postStart:
-              exec:
-                command: ["/bin/sh", "-c", "echo 'https://vite-{{ $config->getName() }}.dev.test' > /var/www/html/public/hot"]
           volumeMounts:
             - name: code
               mountPath: /var/www/html

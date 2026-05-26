@@ -46,13 +46,8 @@ trait InteractsWithDocker
         $appName = $config->getName();
         $path = $config->getPath();
 
-        // 1. Build PHP Image
+        // Build Primary Project Image (Includes PHP, Node, and correct permissions)
         $this->buildTargetedImage($appName, "$path/Dockerfile.php", $path, $uid, $gid);
-
-        // 2. Build Node Image (if custom Dockerfile exists)
-        if (file_exists("$path/Dockerfile.node")) {
-            $this->buildTargetedImage("$appName-node", "$path/Dockerfile.node", $path, $uid, $gid);
-        }
     }
 
     protected function buildTargetedImage(string $tag, string $dockerfile, string $path, int $uid, int $gid): void

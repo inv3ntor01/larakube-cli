@@ -83,11 +83,6 @@ trait GeneratesProjectInfrastructure
             file_put_contents("$projectPath/Dockerfile.php", $phpDockerfile);
         }
 
-        if ($config->getFrontend()?->requiresNodePod() && ! $config->isLocked('Dockerfile.node')) {
-            $nodeDockerfile = view('docker.node', ['config' => $config])->render();
-            file_put_contents("$projectPath/Dockerfile.node", $nodeDockerfile);
-        }
-
         $this->generateDockerIgnore($config);
         $this->hardenGitIgnore($config);
     }

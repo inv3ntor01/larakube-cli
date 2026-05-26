@@ -246,7 +246,7 @@ spec:
     spec:
       containers:
         - name: node
-          image: svelte-test-node:latest
+          image: svelte-test:latest
           workingDir: /var/www/html
           command: ["sh", "-c", "npm install && npm run dev -- --host"]
           ports:
@@ -264,10 +264,6 @@ spec:
               port: 5173
             initialDelaySeconds: 15
             periodSeconds: 10
-          lifecycle:
-            postStart:
-              exec:
-                command: ["/bin/sh", "-c", "echo 'https://vite-svelte-test.dev.test' > /var/www/html/public/hot"]
           volumeMounts:
             - name: code
               mountPath: /var/www/html
