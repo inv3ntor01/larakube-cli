@@ -76,9 +76,9 @@ trait InteractsWithDocker
         passthru("docker build $target $buildArgs -t $imageTag -f $dockerfile $path");
 
         // --- 🛡 K3D IMAGE BRIDGE ---
-        // If k3d cluster exists, import the image so the pods can see it
+        // If k3d cluster exists AND is running, import the image so the pods can see it
         $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
-        if (str_contains($clusters ?? '', 'larakube')) {
+        if (str_contains($clusters ?? '', 'larakube') && str_contains($clusters ?? '', 'running')) {
             $this->laraKubeInfo("Importing '$imageTag' into k3d cluster...");
             passthru("k3d image import $imageTag -c larakube");
 

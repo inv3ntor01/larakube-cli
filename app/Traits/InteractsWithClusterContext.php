@@ -95,9 +95,22 @@ trait InteractsWithClusterContext
             return null;
         }
 
+        // --- 🔍 ENHANCED STATUS DETECTION ---
+        $options = [];
+        $k3dStatus = shell_exec('k3d cluster list larakube --no-headers 2>/dev/null') ?: '';
+        $isStopped = str_contains($k3dStatus, 'stopped') || ! str_contains($k3dStatus, 'running');
+
+        foreach ($contexts as $context) {
+            $label = $context;
+            if ($context === 'k3d-larakube' && $isStopped) {
+                $label .= ' <fg=yellow>(stopped)</>';
+            }
+            $options[$context] = $label;
+        }
+
         return \Laravel\Prompts\select(
             label: 'Which Kubernetes context would you like to use?',
-            options: array_combine($contexts, $contexts),
+            options: $options,
             default: $currentContext ?: null
         );
     }
