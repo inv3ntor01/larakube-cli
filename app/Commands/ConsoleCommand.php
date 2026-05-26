@@ -50,7 +50,9 @@ class ConsoleCommand extends Command
 
         // If an environment is specified or --cli is forced, go to K9s
         if ($this->option('cli') || $this->argument('environment')) {
-            return $this->showK9s();
+            return $this->call('k9s', [
+                'environment' => $this->argument('environment'),
+            ]);
         }
 
         // Default behavior: Ask the user or promote K9s
@@ -64,30 +66,7 @@ class ConsoleCommand extends Command
             'web' => 'LaraKube Console (Visual Management)',
         ], 'k9s');
 
-        return $choice === 'k9s' ? $this->showK9s() : $this->showConsole();
-    }
-
-    protected function showK9s(): int
-    {
-        $hasK9s = shell_exec('which k9s') !== null;
-
-        if (! $hasK9s) {
-            $this->laraKubeError('K9s is not installed.');
-            $isLinux = PHP_OS_FAMILY === 'Linux';
-            $k9sCmd = $isLinux ? 'snap install k9s' : 'brew install k9s';
-            $this->warn("  👉 Install it for the best CLI experience: {$k9sCmd}");
-            $this->info('  Alternatively, run "larakube status --watch" for a simple live view.');
-
-            return 1;
-        }
-
-        $environment = $this->argument('environment') ?? 'local';
-        $namespace = $this->getNamespace($environment);
-
-        $this->laraKubeInfo("Launching K9s for namespace: {$namespace}...");
-        passthru("k9s -n {$namespace}");
-
-        return 0;
+        return $choice === 'k9s' ? $this->call('k9s') : $this->showConsole();
     }
 
     protected function showConsole(): int

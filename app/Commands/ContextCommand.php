@@ -2,14 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
-use function Laravel\Prompts\select;
-
 class ContextCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithClusterContext, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -28,35 +27,15 @@ class ContextCommand extends Command
     {
         $this->renderHeader();
 
-        $contextsOutput = shell_exec('kubectl config get-contexts -o name 2>/dev/null');
         $currentContext = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? '');
-
-        if (! $contextsOutput) {
-            $this->laraKubeError('No Kubernetes contexts found. Please ensure kubectl is installed and configured.');
-
-            return 1;
-        }
-
-        $contexts = array_filter(explode("\n", trim($contextsOutput)));
-
-        if (empty($contexts)) {
-            $this->laraKubeError('No Kubernetes contexts found.');
-
-            return 1;
-        }
-
         $targetContext = $this->argument('name');
 
         if (! $targetContext) {
-            $targetContext = select(
-                label: 'Which Kubernetes context would you like to use?',
-                options: array_combine($contexts, $contexts),
-                default: $currentContext ?: null
-            );
+            $targetContext = $this->askForClusterContext();
         }
 
-        if (! in_array($targetContext, $contexts)) {
-            $this->laraKubeError("Context '{$targetContext}' not found.");
+        if (! $targetContext) {
+            $this->laraKubeError('No Kubernetes contexts found or selection cancelled.');
 
             return 1;
         }
@@ -67,9 +46,7 @@ class ContextCommand extends Command
             return 0;
         }
 
-        exec('kubectl config use-context '.escapeshellarg($targetContext), $output, $resultCode);
-
-        if ($resultCode === 0) {
+        if ($this->switchClusterContext($targetContext)) {
             $this->laraKubeInfo("Switched to context: <fg=cyan;options=bold>{$targetContext}</>");
         } else {
             $this->laraKubeError('Failed to switch context.');

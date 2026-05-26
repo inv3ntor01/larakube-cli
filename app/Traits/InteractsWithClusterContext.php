@@ -7,6 +7,19 @@ use function Laravel\Prompts\confirm;
 trait InteractsWithClusterContext
 {
     /**
+     * Determine if there is an active and reachable Kubernetes cluster.
+     */
+    protected function hasActiveCluster(): bool
+    {
+        // We use a short timeout to prevent the CLI from hanging if the cluster is unreachable
+        $output = [];
+        $resultCode = 0;
+        exec('kubectl cluster-info --request-timeout=5s 2>&1', $output, $resultCode);
+
+        return $resultCode === 0;
+    }
+
+    /**
      * Determine if the current Kubernetes context is likely a local cluster.
      */
     protected function isLocalContext(): bool
@@ -28,6 +41,41 @@ trait InteractsWithClusterContext
         }
 
         return false;
+    }
+
+    /**
+     * Prompt the user to select a Kubernetes context.
+     */
+    protected function askForClusterContext(): ?string
+    {
+        $contextsOutput = shell_exec('kubectl config get-contexts -o name 2>/dev/null');
+        $currentContext = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? '');
+
+        if (! $contextsOutput) {
+            return null;
+        }
+
+        $contexts = array_filter(explode("\n", trim($contextsOutput)));
+
+        if (empty($contexts)) {
+            return null;
+        }
+
+        return \Laravel\Prompts\select(
+            label: 'Which Kubernetes context would you like to use?',
+            options: array_combine($contexts, $contexts),
+            default: $currentContext ?: null
+        );
+    }
+
+    /**
+     * Switch to a specific Kubernetes context.
+     */
+    protected function switchClusterContext(string $name): bool
+    {
+        exec('kubectl config use-context '.escapeshellarg($name), $output, $resultCode);
+
+        return $resultCode === 0;
     }
 
     /**

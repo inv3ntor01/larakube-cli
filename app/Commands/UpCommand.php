@@ -58,6 +58,21 @@ class UpCommand extends Command
             return 1;
         }
 
+        // --- 🛡️ ZERO-CLUSTER GUARD ---
+        if (! $this->hasActiveCluster()) {
+            $this->laraKubeWarn('No active Kubernetes cluster detected!');
+            $this->line('  It looks like you haven\'t set up a local cluster yet, or your Docker daemon is stopped.');
+            $this->newLine();
+
+            if (confirm('Would you like LaraKube to automatically set up a local cluster for you? (k3d)', true)) {
+                return $this->call('cluster:setup');
+            }
+
+            $this->info('  👉 You can run "larakube cluster:setup" later when you are ready.');
+
+            return 1;
+        }
+
         $environment = $this->argument('environment') ?? 'local';
 
         if (! $this->validateContextForEnvironment($environment)) {
