@@ -34,10 +34,16 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-# Helper to run PHP via Docker
+# Helper to run PHP via Docker (Local) or System (CI)
 run_php() {
     export SHOW_WELCOME_MESSAGE=false
     
+    # If we are in CI, run php directly
+    if [ "$GITHUB_ACTIONS" == "true" ]; then
+        php -d phar.readonly=0 "$@"
+        return $?
+    fi
+
     # Load .env if it exists to pick up GITHUB_TOKEN
     if [ -f .env ]; then
         export $(grep -v '^#' .env | xargs)
