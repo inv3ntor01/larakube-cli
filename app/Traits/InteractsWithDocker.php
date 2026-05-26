@@ -72,9 +72,11 @@ trait InteractsWithDocker
 
             // Verify the import
             $this->withSpin('Verifying cluster image availability...', function () use ($imageTag) {
-                $images = shell_exec('k3d image list 2>/dev/null');
+                // Check in the server node (standard for k3d)
+                $images = shell_exec('docker exec k3d-larakube-server-0 crictl images 2>/dev/null');
 
-                return str_contains($images ?? '', $imageTag);
+                return str_contains($images ?? '', $imageTag) ||
+                       str_contains($images ?? '', "docker.io/library/$imageTag");
             });
         }
     }
