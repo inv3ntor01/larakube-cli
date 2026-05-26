@@ -1,5 +1,8 @@
 FROM node:22-alpine AS base
 
+# Install shadow package for usermod/groupmod support in Alpine
+RUN apk add --no-cache shadow
+
 ############################################
 # Development Image
 ############################################
