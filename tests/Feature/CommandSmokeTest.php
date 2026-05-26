@@ -40,3 +40,9 @@ test('build command is registered', function () {
         ->assertExitCode(0)
         ->expectsOutputToContain('build');
 });
+
+test('kustomize command is registered', function () {
+    $this->artisan('list')
+        ->assertExitCode(0)
+        ->expectsOutputToContain('kustomize');
+});

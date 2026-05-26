@@ -8,6 +8,7 @@ use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
+use App\Enums\IngressController;
 use App\Enums\LaravelFeature;
 use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
@@ -156,8 +157,15 @@ class AddCommand extends Command
                     'os' => 'Operating System (Alpine, Debian)',
                     'extension' => 'PHP Extension (gd, bcmath, etc.)',
                     'blueprint' => 'Specialized Blueprint (Filament, etc.)',
+                    'cloud' => 'Cloud Configuration (Ingress, Managed Services)',
                 ]
             );
+
+            if ($type === 'cloud') {
+                $this->updateCloudConfig($config);
+
+                return 0;
+            }
 
             if ($type === 'extension') {
                 $ext = text(
@@ -612,6 +620,38 @@ class AddCommand extends Command
         $config->addFeature($feature);
         $this->saveProjectConfig($projectPath, $config);
         $this->installComponent($config, $feature);
+    }
+
+    protected function updateCloudConfig(ConfigData $config): void
+    {
+        $this->laraKubeInfo('Updating Cloud Configuration...');
+
+        // 1. Ingress Controller
+        $controller = select(
+            label: 'Which Ingress Controller will you use in production?',
+            options: IngressController::getSelectOptions($config),
+            default: $config->ingressController?->value ?? IngressController::TRAEFIK->value
+        );
+        $config->ingressController = IngressController::from($controller);
+
+        // 2. Managed Services
+        $managedOptions = [];
+        foreach ($config->getComponents() as $component) {
+            if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
+                $managedOptions[$component->value] = $component->getLabel();
+            }
+        }
+
+        if (! empty($managedOptions)) {
+            $config->managedServices = multiselect(
+                label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache)?',
+                options: $managedOptions,
+                default: $config->managedServices,
+                hint: 'These services will be orchestrated locally but skipped in production manifests.'
+            );
+        }
+
+        $this->finishArchitecturalPivot($config);
     }
 
     protected function updatePhpVersion(PhpVersion $version, ConfigData $config): void
