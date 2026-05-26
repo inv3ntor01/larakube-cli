@@ -246,8 +246,8 @@ spec:
     spec:
       containers:
         - name: node
-          image: node:22-alpine
-          workingDir: /usr/src/app
+          image: react-test-node:latest
+          workingDir: /var/www/html
           command: ["sh", "-c", "npm install && npm run dev -- --host"]
           ports:
             - containerPort: 5173
@@ -266,7 +266,7 @@ spec:
             periodSeconds: 10
           volumeMounts:
             - name: code
-              mountPath: /usr/src/app
+              mountPath: /var/www/html
       volumes:
         - name: code
           hostPath:

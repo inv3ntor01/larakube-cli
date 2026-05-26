@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: node
-          image: node:22-alpine
-          workingDir: /usr/src/app
+          image: {{ file_exists($config->getPath().'/Dockerfile.node') ? $config->getName().'-node' : 'node:22-alpine' }}:latest
+          workingDir: /var/www/html
           command: {!! $config->getPackageManager()->getReadinessProbeCommand() !!}
           ports:
             - containerPort: 5173
@@ -35,7 +35,7 @@ spec:
             periodSeconds: 10
           volumeMounts:
             - name: code
-              mountPath: /usr/src/app
+              mountPath: /var/www/html
       volumes:
         - name: code
           hostPath:

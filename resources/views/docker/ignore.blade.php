@@ -7,6 +7,7 @@
 .infrastructure
 !.infrastructure/**/local-ca.pem
 !.infrastructure/conf/
+.infrastructure/k8s/overlays/local/
 .larakube.json
 
 # Docker & Container Files

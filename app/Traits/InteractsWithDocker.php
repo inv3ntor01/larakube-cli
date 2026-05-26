@@ -41,27 +41,39 @@ trait InteractsWithDocker
      */
     protected function buildImage(ConfigData $config): void
     {
+        $uid = function_exists('posix_getuid') ? posix_getuid() : 1000;
+        $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
         $appName = $config->getName();
         $path = $config->getPath();
 
-        $imageTag = "$appName:latest";
+        // 1. Build PHP Image
+        $this->buildTargetedImage($appName, "$path/Dockerfile.php", $path, $uid, $gid);
+
+        // 2. Build Node Image (if custom Dockerfile exists)
+        if (file_exists("$path/Dockerfile.node")) {
+            $this->buildTargetedImage("$appName-node", "$path/Dockerfile.node", $path, $uid, $gid);
+        }
+    }
+
+    protected function buildTargetedImage(string $tag, string $dockerfile, string $path, int $uid, int $gid): void
+    {
+        if (! file_exists($dockerfile)) {
+            return;
+        }
+
+        $imageTag = "$tag:latest";
         $this->laraKubeInfo("Building local image '$imageTag'...");
 
         $target = '';
         $buildArgs = '';
+        $content = file_get_contents($dockerfile);
 
-        if (file_exists("$path/Dockerfile.php")) {
-            $content = file_get_contents("$path/Dockerfile.php");
-            if (str_contains($content, 'AS development')) {
-                $target = '--target development';
-
-                $uid = function_exists('posix_getuid') ? posix_getuid() : 1000;
-                $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
-                $buildArgs = "--build-arg USER_ID=$uid --build-arg GROUP_ID=$gid";
-            }
+        if (str_contains($content, 'AS development')) {
+            $target = '--target development';
+            $buildArgs = "--build-arg USER_ID=$uid --build-arg GROUP_ID=$gid";
         }
 
-        passthru("docker build $target $buildArgs -t $imageTag -f $path/Dockerfile.php $path");
+        passthru("docker build $target $buildArgs -t $imageTag -f $dockerfile $path");
 
         // --- 🛡 K3D IMAGE BRIDGE ---
         // If k3d cluster exists, import the image so the pods can see it
@@ -72,10 +84,7 @@ trait InteractsWithDocker
 
             // Verify the import
             $this->withSpin('Verifying cluster image availability...', function () use ($imageTag) {
-                // Check in the server node (standard for k3d)
                 $images = shell_exec('docker exec k3d-larakube-server-0 crictl images 2>/dev/null');
-
-                // Handle the fact that crictl uses spaces instead of colons (e.g. "console   latest")
                 $parts = explode(':', $imageTag);
                 $name = $parts[0];
                 $tag = $parts[1] ?? 'latest';
