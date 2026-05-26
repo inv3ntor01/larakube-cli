@@ -83,3 +83,5 @@ jobs:
           make_latest: ${{ github.ref_type == 'tag' && 'true' || 'false' }}
           generate_release_notes: true
           overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
