@@ -11,12 +11,28 @@ trait InteractsWithClusterContext
      */
     protected function hasActiveCluster(): bool
     {
+        $context = shell_exec('kubectl config current-context 2>/dev/null');
+
+        if (! $context) {
+            return false;
+        }
+
         // We use a short timeout to prevent the CLI from hanging if the cluster is unreachable
         $output = [];
         $resultCode = 0;
-        exec('kubectl cluster-info --request-timeout=5s 2>&1', $output, $resultCode);
+        exec('kubectl cluster-info --request-timeout=2s 2>&1', $output, $resultCode);
 
         return $resultCode === 0;
+    }
+
+    /**
+     * Check if ANY Kubernetes context exists on the system.
+     */
+    protected function hasAnyContext(): bool
+    {
+        $output = shell_exec('kubectl config get-contexts -o name 2>/dev/null');
+
+        return ! empty(trim($output ?? ''));
     }
 
     /**

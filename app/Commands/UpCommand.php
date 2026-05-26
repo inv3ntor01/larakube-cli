@@ -60,17 +60,42 @@ class UpCommand extends Command
 
         // --- 🛡️ ZERO-CLUSTER GUARD ---
         if (! $this->hasActiveCluster()) {
-            $this->laraKubeWarn('No active Kubernetes cluster detected!');
-            $this->line('  It looks like you haven\'t set up a local cluster yet, or your Docker daemon is stopped.');
-            $this->newLine();
+            if ($this->hasAnyContext()) {
+                $context = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? 'Unknown');
+                $this->laraKubeWarn('Kubernetes cluster exists but is unreachable!');
+                $this->line("  Current context: <fg=cyan;options=bold>{$context}</>");
+                $this->newLine();
+                $this->line('  👉 <fg=gray>Suggestions:</>');
+                $this->line('  1. Ensure your Docker daemon (OrbStack/Docker Desktop) is running.');
+                $this->line('  2. If using k3d, run: <fg=yellow>k3d cluster start larakube</>');
+                $this->line('  3. If you want to use a different cluster, run: <fg=yellow>larakube context</>');
+                $this->newLine();
 
-            if (confirm('Would you like LaraKube to automatically set up a local cluster for you? (k3d)', true)) {
-                return $this->call('cluster:setup');
+                if (confirm('Would you like LaraKube to try starting your local k3d cluster?', true)) {
+                    $this->withSpin('Starting k3d cluster...', fn () => exec('k3d cluster start larakube 2>/dev/null'));
+                    if ($this->hasActiveCluster()) {
+                        $this->laraKubeInfo('✅ Cluster is back online!');
+                    } else {
+                        $this->laraKubeError('Failed to reach the cluster. Please check your Docker logs.');
+
+                        return 1;
+                    }
+                } else {
+                    return 1;
+                }
+            } else {
+                $this->laraKubeWarn('No active Kubernetes cluster detected!');
+                $this->line('  It looks like you haven\'t set up a local cluster yet, or Docker is not running.');
+                $this->newLine();
+
+                if (confirm('Would you like LaraKube to automatically set up a local cluster for you? (k3d)', true)) {
+                    return $this->call('cluster:setup');
+                }
+
+                $this->info('  👉 You can run "larakube cluster:setup" later when you are ready.');
+
+                return 1;
             }
-
-            $this->info('  👉 You can run "larakube cluster:setup" later when you are ready.');
-
-            return 1;
         }
 
         $environment = $this->argument('environment') ?? 'local';

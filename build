@@ -35,7 +35,19 @@ done
 # Helper to run PHP via Docker
 run_php() {
     export SHOW_WELCOME_MESSAGE=false
-    ./php -d phar.readonly=0 "$@"
+    
+    # Load .env if it exists to pick up GITHUB_TOKEN
+    if [ -f .env ]; then
+        export $(grep -v '^#' .env | xargs)
+    fi
+
+    # Pass GITHUB_TOKEN to the ./php runner if it exists
+    ENV_ARGS=""
+    if [ ! -z "$GITHUB_TOKEN" ]; then
+        ENV_ARGS="-e GITHUB_TOKEN=$GITHUB_TOKEN"
+    fi
+
+    ./php $ENV_ARGS -d phar.readonly=0 "$@"
 }
 
 build_phar() {
