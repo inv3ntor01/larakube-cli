@@ -33,6 +33,10 @@ spec:
               port: 5173
             initialDelaySeconds: 15
             periodSeconds: 10
+          lifecycle:
+            postStart:
+              exec:
+                command: ["/bin/sh", "-c", "echo 'https://vite-{{ $config->getName() }}.dev.test' > /var/www/html/public/hot"]
           volumeMounts:
             - name: code
               mountPath: /var/www/html
