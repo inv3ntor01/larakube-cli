@@ -4,7 +4,7 @@ metadata:
   name: {{ $config->getServerVariation()->getPodName($config) }}
   annotations:
 @if($view = $config->ingressController?->getAnnotationView())
-@include($view)
+{!! trim(view($view, ['config' => $config])->render()) !!}
 @else
     traefik.ingress.kubernetes.io/router.tls: "true"
 @if($config->getStrategy() === \App\Enums\DeploymentStrategy::SINGLE_NODE)
