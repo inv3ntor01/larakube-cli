@@ -13,6 +13,9 @@ metadata:
 @endif
 @endif
 spec:
+@if($config->ingressController?->getIngressClass())
+  ingressClassName: {{ $config->ingressController->getIngressClass() }}
+@endif
   rules:
     - host: {{ $config->getProductionHost() }}
       http:

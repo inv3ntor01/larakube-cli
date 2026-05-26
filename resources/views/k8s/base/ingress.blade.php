@@ -11,9 +11,6 @@ metadata:
     # The actual production annotations will be applied via patches
 @endif
 spec:
-@if($config->ingressController?->getIngressClass())
-  ingressClassName: {{ $config->ingressController->getIngressClass() }}
-@endif
   rules:
     - host: {{ $config->getName() }}.dev.test
       http:
