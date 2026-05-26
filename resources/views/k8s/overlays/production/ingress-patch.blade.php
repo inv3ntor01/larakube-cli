@@ -4,7 +4,8 @@ metadata:
   name: {{ $config->getServerVariation()->getPodName($config) }}
   annotations:
 @if($view = $config->ingressController?->getAnnotationView())
-{!! trim(view($view, ['config' => $config])->render()) !!}
+{{-- We use a custom indent filter to ensure every line of the included view is aligned --}}
+{!! preg_replace('/^/m', '    ', trim(view($view, ['config' => $config])->render())) !!}
 @else
     traefik.ingress.kubernetes.io/router.tls: "true"
 @if($config->getStrategy() === \App\Enums\DeploymentStrategy::SINGLE_NODE)
