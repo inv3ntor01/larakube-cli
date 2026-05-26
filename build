@@ -14,7 +14,6 @@ cd "$(dirname "$0")"
 
 # Smart Argument Handling
 NO_INSTALL=false
-WRAP_ONLY=false
 BUILD_TYPE="--local"
 VERSION="local"
 
@@ -23,27 +22,19 @@ while [[ "$#" -gt 0 ]]; do
         --all) BUILD_TYPE="--all"; shift ;;
         --local) BUILD_TYPE="--local"; shift ;;
         --no-install) NO_INSTALL=true; shift ;;
-        --wrap-only) WRAP_ONLY=true; shift ;;
-        *) 
+        *)
             # If it doesn't start with --, assume it's the version
             if [[ ! "$1" =~ ^-- ]]; then
                 VERSION=$1
             fi
-            shift 
+            shift
             ;;
     esac
 done
 
-# Helper to run PHP via Docker (Local) or System (CI)
+# Helper to run PHP via Docker
 run_php() {
     export SHOW_WELCOME_MESSAGE=false
-
-    # If we are in CI, run php directly
-    if [ "$GITHUB_ACTIONS" == "true" ]; then
-        php -d phar.readonly=0 "$@"
-        return $?
-    fi
-
     ./php -d phar.readonly=0 "$@"
 }
 
@@ -62,20 +53,18 @@ build_standalone() {
 
 case $BUILD_TYPE in
     "--local")
-        if [ "$WRAP_ONLY" = false ]; then
-            build_phar
-        fi
-        
+        build_phar
+
         # Detect Local Arch
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
         [ "$OS" == "darwin" ] && OS="mac"
-        
+
         ARCH=$(uname -m)
         [ "$ARCH" == "arm64" ] && ARCH="arm"
         [ "$ARCH" == "x86_64" ] && ARCH="x64"
 
         build_standalone $OS $ARCH
-        
+
         if [ "$NO_INSTALL" = false ]; then
             echo "🚚 Installing local binary to /usr/local/bin/larakube (requires sudo)..."
             sudo mv builds/standalone/$OS/$OS-$ARCH /usr/local/bin/larakube
@@ -89,17 +78,15 @@ case $BUILD_TYPE in
         ;;
 
     "--all")
-        if [ "$WRAP_ONLY" = false ]; then
-            build_phar
-        fi
+        build_phar
         build_standalone linux x64
         build_standalone linux arm
         build_standalone mac x64
         build_standalone mac arm
-        
+
         # Cleanup
         run_php php -r "unlink('builds/larakube.phar');"
-        
+
         echo "✅ All standalone binaries built in builds/standalone/"
         ;;
 
