@@ -151,8 +151,14 @@ fi
 INTERACTIVE="-i"
 [ -t 0 ] && INTERACTIVE="-it"
 
+# Pass GITHUB_TOKEN if it exists on the host
+ENV_ARGS=""
+if [ ! -z "$GITHUB_TOKEN" ]; then
+    ENV_ARGS="-e GITHUB_TOKEN=$GITHUB_TOKEN"
+fi
+
 # Local development: run inside Docker
-docker exec $INTERACTIVE "$CONTAINER_NAME" /bin/bash -c "
+docker exec $INTERACTIVE $ENV_ARGS "$CONTAINER_NAME" /bin/bash -c "
     $(declare -f execute)
     execute \"\$@\"
 " -- "$@"

@@ -68,6 +68,8 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           volumeMounts:
+            - name: code
+              mountPath: /var/www/html
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
@@ -87,6 +89,10 @@ spec:
               mountPath: /var/www/html/storage/app/public
               subPath: app/public
       volumes:
+        - name: code
+          hostPath:
+            path: /STABLE_TEST_PATH
+            type: Directory
         - name: storage
           persistentVolumeClaim:
             claimName: octane-auto-franken-laravel-storage-pvc

@@ -80,10 +80,11 @@ trait InteractsWithDocker
                 $name = $parts[0];
                 $tag = $parts[1] ?? 'latest';
 
-                return str_contains($images ?? '', $imageTag) || 
+                return str_contains($images ?? '', $imageTag) ||
                        str_contains($images ?? '', "docker.io/library/$imageTag") ||
                        (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
-            });        }
+            });
+        }
     }
 
     /**

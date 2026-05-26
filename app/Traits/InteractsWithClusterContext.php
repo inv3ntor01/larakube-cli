@@ -11,7 +11,7 @@ trait InteractsWithClusterContext
      */
     protected function hasActiveCluster(): bool
     {
-        $context = shell_exec('kubectl config current-context 2>/dev/null');
+        $context = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? '');
 
         if (! $context) {
             return false;
@@ -23,6 +23,24 @@ trait InteractsWithClusterContext
         exec('kubectl cluster-info --request-timeout=2s 2>&1', $output, $resultCode);
 
         return $resultCode === 0;
+    }
+
+    /**
+     * Get the standard LaraKube k3d context name.
+     */
+    protected function getLaraKubeContext(): string
+    {
+        return 'k3d-larakube';
+    }
+
+    /**
+     * Check if the LaraKube k3d context exists in the kubeconfig.
+     */
+    protected function laraKubeContextExists(): bool
+    {
+        $output = shell_exec('kubectl config get-contexts -o name 2>/dev/null');
+
+        return str_contains($output ?? '', $this->getLaraKubeContext());
     }
 
     /**

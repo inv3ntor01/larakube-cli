@@ -60,6 +60,8 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           volumeMounts:
+            - name: code
+              mountPath: /var/www/html
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
@@ -83,14 +85,15 @@ spec:
               mountPath: /var/lib/larakube
 @endif
 @if($config->isSystem())
-            - name: larakube-config
-              mountPath: /var/www/html/.larakube.json
-              subPath: .larakube.json
             - name: larakube-workspace
               mountPath: /var/lib/larakube-workspace
               readOnly: true
 @endif
       volumes:
+        - name: code
+          hostPath:
+            path: {{ $config->getPath() }}
+            type: Directory
         - name: storage
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-storage-pvc
@@ -100,10 +103,6 @@ spec:
             claimName: {{ $config->getName() }}-laravel-data-pvc
 @endif
 @if($config->isSystem())
-        - name: larakube-config
-          hostPath:
-            path: {{ $_SERVER['HOME'] }}/.larakube
-            type: DirectoryOrCreate
         - name: larakube-workspace
           hostPath:
             path: {{ $workspacePath }}

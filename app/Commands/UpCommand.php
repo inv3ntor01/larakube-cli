@@ -60,9 +60,40 @@ class UpCommand extends Command
 
         // --- 🛡️ ZERO-CLUSTER GUARD ---
         if (! $this->hasActiveCluster()) {
-            if ($this->hasAnyContext()) {
-                $context = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? 'Unknown');
-                $this->laraKubeWarn('Kubernetes cluster exists but is unreachable!');
+            $laraKubeContext = $this->getLaraKubeContext();
+            $currentContext = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? '');
+
+            // Scenario A: Wrong context selected (e.g. OrbStack is active but k3d-larakube exists)
+            if ($currentContext !== $laraKubeContext && $this->laraKubeContextExists()) {
+                $this->laraKubeWarn('Incorrect Kubernetes context detected!');
+                $this->line("  Active context: <fg=cyan;options=bold>{$currentContext}</>");
+                $this->line("  LaraKube cluster: <fg=green;options=bold>{$laraKubeContext}</>");
+                $this->newLine();
+
+                if (confirm('Would you like to switch to the LaraKube cluster now?', true)) {
+                    $this->switchClusterContext($laraKubeContext);
+                    if ($this->hasActiveCluster()) {
+                        $this->laraKubeInfo('✅ Context switched! Cluster is reachable.');
+                    } else {
+                        // If it's still unreachable after switching, it might be stopped
+                        if (confirm('LaraKube cluster is selected but seems to be stopped. Start it now?', true)) {
+                            $this->withSpin('Starting k3d cluster...', fn () => exec('k3d cluster start larakube 2>/dev/null'));
+                        }
+                    }
+
+                    // Final verification
+                    if (! $this->hasActiveCluster()) {
+                        $this->laraKubeError('Failed to reach the cluster. Please ensure Docker is running.');
+
+                        return 1;
+                    }
+                } else {
+                    return 1;
+                }
+            } // Scenario B: LaraKube context exists but cluster is unreachable/stopped
+            elseif ($this->laraKubeContextExists()) {
+                $context = $currentContext ?: 'Unknown';
+                $this->laraKubeWarn('LaraKube cluster exists but is unreachable!');
                 $this->line("  Current context: <fg=cyan;options=bold>{$context}</>");
                 $this->newLine();
                 $this->line('  👉 <fg=gray>Suggestions:</>');

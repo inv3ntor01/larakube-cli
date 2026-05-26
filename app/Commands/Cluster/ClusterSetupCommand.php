@@ -7,7 +7,6 @@ use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
-use function Laravel\Prompts\text;
 
 class ClusterSetupCommand extends Command
 {
@@ -108,33 +107,20 @@ class ClusterSetupCommand extends Command
             }
         }
 
-        // --- 🛡 SECURE WORKSPACE BRIDGE ---
-        $defaultPath = dirname(getcwd());
-        $workspace = $this->option('volume') ?? text(
-            label: 'Which host directory contains your Laravel projects?',
-            placeholder: 'e.g. '.$defaultPath,
-            default: $defaultPath,
-            hint: 'This directory will be mounted into the Kubernetes nodes so your code can be seen by the pods.'
-        );
-
-        // Resolve to absolute path to ensure k3d is happy
-        $workspace = realpath(str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $workspace));
-
-        if (! $workspace || ! is_dir($workspace)) {
-            $this->laraKubeError("Invalid workspace directory: {$workspace}");
-
-            return 1;
-        }
+        // --- 🛡️ UNIVERSAL WORKSPACE BRIDGE ---
+        // Instead of asking for a specific folder, we mount the entire user root
+        // so that projects can be located anywhere (Desktop, Codes, etc.)
+        $userRoot = PHP_OS_FAMILY === 'Darwin' ? '/Users' : '/home';
 
         $this->laraKubeInfo('Creating LaraKube local cluster...');
-        $this->info("  🛡 Scoped workspace bridge: {$workspace}");
+        $this->info("  🛡 Universal workspace bridge: {$userRoot}");
 
         // Create k3d cluster with standard ports exposed
-        // And mount the workspace so hostPath mounts work correctly
+        // And mount the user root so hostPath mounts work correctly
         $command = "k3d cluster create {$clusterName} ".
                    '-p "80:80@loadbalancer" '.
                    '-p "443:443@loadbalancer" '.
-                   "-v \"{$workspace}:{$workspace}@all\" ".
+                   "-v \"{$userRoot}:{$userRoot}@all\" ".
                    '--agents 1 '.
                    '--k3s-arg "--disable=traefik@server:*" '.
                    '--wait';
