@@ -6,6 +6,7 @@
 # LaraKube Infrastructure
 .infrastructure
 !.infrastructure/**/local-ca.pem
+!.infrastructure/conf/
 .larakube.json
 
 # Docker & Container Files
