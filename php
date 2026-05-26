@@ -157,6 +157,12 @@ if [ ! -z "$GITHUB_TOKEN" ]; then
     ENV_ARGS="-e GITHUB_TOKEN=$GITHUB_TOKEN"
 fi
 
+# Detect if we are in CI
+if [ "$GITHUB_ACTIONS" == "true" ]; then
+    execute "$@"
+    exit $?
+fi
+
 # Local development: run inside Docker
 docker exec $INTERACTIVE $ENV_ARGS "$CONTAINER_NAME" /bin/bash -c "
     $(declare -f execute)
