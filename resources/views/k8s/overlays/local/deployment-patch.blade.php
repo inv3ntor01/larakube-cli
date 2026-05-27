@@ -7,6 +7,10 @@ kind: Deployment
 metadata:
   name: {{ $name }}
 spec:
+@if($name === 'node')
+  strategy:
+    type: Recreate
+@endif
   template:
     spec:
       containers:

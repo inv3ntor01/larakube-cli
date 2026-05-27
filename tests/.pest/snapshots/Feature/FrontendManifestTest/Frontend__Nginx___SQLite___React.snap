@@ -240,6 +240,8 @@ metadata:
   name: node
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: node
@@ -361,6 +363,8 @@ kind: Deployment
 metadata:
   name: node
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       containers:

@@ -9,6 +9,8 @@ metadata:
   name: node
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: node
