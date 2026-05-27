@@ -1,3 +1,7 @@
+# The hot-file URL is sourced from vite.config.js#server.origin (the only lever
+# laravel-vite-plugin honors). Do not add VITE_DEV_SERVER_URL here — the plugin
+# does not read it. Liveness probes are intentionally omitted: a SIGTERM to the
+# dev server triggers the plugin's cleanup handler and deletes public/hot.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -20,9 +24,6 @@ spec:
           command: {!! $config->getPackageManager()->getReadinessProbeCommand() !!}
           ports:
             - containerPort: 5173
-          env:
-            - name: VITE_DEV_SERVER_URL
-              value: https://vite-{{ $config->getName() }}.dev.test
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -31,11 +32,6 @@ spec:
               port: 5173
             initialDelaySeconds: 5
             periodSeconds: 5
-          livenessProbe:
-            tcpSocket:
-              port: 5173
-            initialDelaySeconds: 15
-            periodSeconds: 10
           volumeMounts:
             - name: code
               mountPath: /var/www/html

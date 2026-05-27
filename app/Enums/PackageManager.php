@@ -55,16 +55,17 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
     public function devCommand(): string
     {
         return match ($this) {
-            self::YARN, self::PNPM => "{$this->value} dev --host",
-            self::NPM => 'npm run dev -- --host',
-            self::BUN => 'bun run dev --host',
-            default => "{$this->value} run dev --host",
+            self::YARN, self::PNPM => "{$this->value} dev",
+            self::NPM => 'npm run dev --',
+            default => "{$this->value} run dev",
         };
     }
 
     public function getReadinessProbeCommand(): string
     {
-        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().'"]';
+        $separator = ($this === self::NPM) ? '' : ' --';
+
+        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().$separator.' --host"]';
     }
 
     public function getOptionFlag(): string
