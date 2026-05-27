@@ -1,15 +1,7 @@
 <?php
 
 use App\Data\ConfigData;
-use App\Traits\GeneratesProjectInfrastructure;
-use App\Traits\LaraKubeOutput;
-
-class ViteHardenHelper
-{
-    use GeneratesProjectInfrastructure, LaraKubeOutput;
-
-    public function laraKubeInfo(string $message): void {}
-}
+use Tests\Feature\ViteHardenHelper;
 
 test('Vite Hardening: Strips Wayfinder and injects K8s config', function () {
     $tempDir = sys_get_temp_dir().'/vite-harden-test-'.uniqid();
