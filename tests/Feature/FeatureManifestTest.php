@@ -2,7 +2,9 @@
 
 use App\Data\ConfigData;
 use App\Enums\DatabaseDriver;
+use App\Enums\FrontendStack;
 use App\Enums\LaravelFeature;
+use App\Enums\PackageManager;
 use App\Enums\ServerVariation;
 
 test('Feature: Kitchen Sink (Queues + Scheduler + Reverb + MCP + Boost)', function () {
@@ -37,4 +39,23 @@ test('Feature: Octane + Postgres (Auto-resolves FrankenPHP)', function () {
 
     $manifests = generateManifests($config);
     expect($manifests)->toMatchSnapshot();
+});
+
+test('Feature: SSR (Inertia Server-Side Rendering)', function () {
+    $config = new ConfigData(name: 'ssr-test');
+    $config->setServerVariation(ServerVariation::FRANKENPHP);
+    $config->setDatabase(DatabaseDriver::SQLITE);
+    $config->setFrontend(FrontendStack::REACT);
+    $config->setPackageManager(PackageManager::NPM);
+    $config->addFeature(LaravelFeature::SSR);
+
+    $manifests = generateManifests($config);
+
+    // SSR pod is production-only — must land in overlays/production, NEVER in base.
+    expect($manifests)->toContain('--- FILE: overlays/production/ssr-deployment.yaml ---')
+        ->and($manifests)->not->toContain('--- FILE: base/ssr-deployment.yaml ---')
+        ->and($manifests)->toContain('node-ssr')
+        ->and($manifests)->toContain('containerPort: 13714')
+        ->and($manifests)->toContain('imagePullPolicy: Always')
+        ->and($manifests)->toMatchSnapshot();
 });

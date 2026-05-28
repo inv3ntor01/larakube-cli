@@ -2,13 +2,14 @@
 
 namespace App\Commands;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class ExecCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use CapturesPassthroughArgs, InteractsWithEnvironments, LaraKubeOutput;
 
     public function __construct()
     {
@@ -37,42 +38,20 @@ class ExecCommand extends Command
      */
     public function handle(): int
     {
-        // Capture everything from the original command line after 'exec'
-        $rawArgs = $_SERVER['argv'];
-        $execIndex = array_search('exec', $rawArgs);
+        ['command' => $command, 'options' => $opts] = $this->capturePassthroughArgs(
+            'exec',
+            ['environment', 'service', 'user'],
+        );
 
-        $environment = $this->option('environment');
-        $service = $this->option('service');
-        $user = $this->option('user');
-
-        if ($execIndex !== false) {
-            $passedArgs = array_slice($rawArgs, $execIndex + 1);
-            $commands = [];
-
-            foreach ($passedArgs as $arg) {
-                // Filter out larakube-specific options
-                if (str_starts_with($arg, '--environment=')) {
-                    $environment = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                if (str_starts_with($arg, '--service=')) {
-                    $service = str_replace('--service=', '', $arg);
-
-                    continue;
-                }
-                if (str_starts_with($arg, '--user=')) {
-                    $user = str_replace('--user=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $command = implode(' ', $commands);
-        } else {
-            $command = implode(' ', $this->argument('commands'));
+        // Test-runner safety net: `larakube exec php artisan test`,
+        // `larakube exec vendor/bin/pest`, etc. would otherwise wipe the dev DB.
+        if (static::looksLikeTestRunner($command)) {
+            return $this->delegateToTestCommand();
         }
+
+        $environment = $opts['environment'];
+        $service = $opts['service'];
+        $user = $opts['user'];
 
         $namespace = $this->getNamespace($environment);
 

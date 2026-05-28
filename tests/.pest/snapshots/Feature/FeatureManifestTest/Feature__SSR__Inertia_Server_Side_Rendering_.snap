@@ -7,7 +7,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - postgres-deployment.yaml
   - laravel.yaml
   - volumes.yaml
 
@@ -31,14 +30,9 @@ spec:
       labels:
         app: web
     spec:
-      initContainers:
-        - name: wait-for-deps
-          image: octane-auto-franken:latest
-          imagePullPolicy: IfNotPresent
-          command: ["sh", "-c", "until nc -z -v -w 1 postgres 5432; do echo 'Waiting for dependencies...'; sleep 2; done;"]
       containers:
         - name: php
-          image: octane-auto-franken:latest
+          image: ssr-test:latest
           imagePullPolicy: IfNotPresent
           args: ["php", "artisan", "octane:start", "--server=frankenphp", "--port=8080", "--host=0.0.0.0"]
           ports:
@@ -88,6 +82,8 @@ spec:
             - name: storage
               mountPath: /var/www/html/storage/app/public
               subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
       volumes:
         - name: code
           hostPath:
@@ -95,7 +91,10 @@ spec:
             type: Directory
         - name: storage
           persistentVolumeClaim:
-            claimName: octane-auto-franken-laravel-storage-pvc
+            claimName: ssr-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: ssr-test-laravel-data-pvc
 
 ---
 
@@ -124,7 +123,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: octane-auto-franken.dev.test
+    - host: ssr-test.dev.test
       http:
         paths:
           - path: /
@@ -136,84 +135,14 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - octane-auto-franken.dev.test
-
-
---- FILE: base/postgres-deployment.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    metadata:
-      labels:
-        app: postgres
-    spec:
-      containers:
-        - name: postgres
-          image: postgres:17.9
-          ports:
-            - containerPort: 5432
-          env:
-            - name: POSTGRES_DB
-              valueFrom:
-                configMapKeyRef:
-                  name: laravel-config
-                  key: DB_DATABASE
-            - name: POSTGRES_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: laravel-config
-                  key: DB_USERNAME
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: laravel-secrets
-                  key: DB_PASSWORD
-          readinessProbe:
-            tcpSocket:
-              port: 5432
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket:
-              port: 5432
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          volumeMounts:
-            - name: db-data
-              mountPath: /var/lib/postgresql/data
-      volumes:
-        - name: db-data
-          persistentVolumeClaim:
-            claimName: octane-auto-franken-postgres-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres
-spec:
-  selector:
-    app: postgres
-  ports:
-    - protocol: TCP
-      port: 5432
-      targetPort: 5432
-  type: ClusterIP
+        - ssr-test.dev.test
 
 
 --- FILE: base/volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: octane-auto-franken-laravel-storage-pvc
+  name: ssr-test-laravel-storage-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -224,7 +153,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: octane-auto-franken-laravel-data-pvc
+  name: ssr-test-laravel-data-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -241,9 +170,9 @@ spec:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: octane-auto-franken-local
+  name: ssr-test-local
   labels:
-    larakube.io/project: octane-auto-franken
+    larakube.io/project: ssr-test
     larakube.io/managed-by: larakube
 
 ---
@@ -251,9 +180,9 @@ metadata:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: octane-auto-franken-laravel-storage-pv
+  name: ssr-test-laravel-storage-pv
   labels:
-    larakube-project: octane-auto-franken
+    larakube-project: ssr-test
 spec:
   capacity:
     storage: 1Gi
@@ -264,25 +193,122 @@ spec:
   hostPath:
     path: "/STABLE_TEST_PATH/storage"
     type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ssr-test-laravel-data-pv
+  labels:
+    larakube-project: ssr-test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: "/STABLE_TEST_PATH/.infrastructure/volume_data"
+    type: DirectoryOrCreate
 
 
 --- FILE: overlays/local/kustomization.yaml ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: octane-auto-franken-local
+namespace: ssr-test-local
 
 resources:
-  - postgres-companion-ingress.yaml
-  - postgres-companion.yaml
-  - postgres-volumes.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
+  - node-deployment.yaml
 
 patches:
-  - path: postgres-patch.yaml
   - path: patches.yaml
+
+
+--- FILE: overlays/local/node-deployment.yaml ---
+# The hot-file URL is sourced from vite.config.js#server.origin (the only lever
+# laravel-vite-plugin honors). Do not add VITE_DEV_SERVER_URL here — the plugin
+# does not read it. Liveness probes are intentionally omitted: a SIGTERM to the
+# dev server triggers the plugin's cleanup handler and deletes public/hot.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: node
+  template:
+    metadata:
+      labels:
+        app: node
+    spec:
+      containers:
+        - name: node
+          image: ssr-test:latest
+          workingDir: /var/www/html
+          command: ["sh", "-c", "npm run dev -- --host 0.0.0.0"]
+          ports:
+            - containerPort: 5173
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+          readinessProbe:
+            tcpSocket:
+              port: 5173
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+      volumes:
+        - name: code
+          hostPath:
+            path: /STABLE_TEST_PATH
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node
+spec:
+  selector:
+    app: node
+  ports:
+    - protocol: TCP
+      port: 5173
+      targetPort: 5173
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: node
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: vite-ssr-test.dev.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: node
+                port:
+                  number: 5173
+  tls:
+    - hosts:
+        - vite-ssr-test.dev.test
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -337,6 +363,8 @@ spec:
             - name: storage
               mountPath: /var/www/html/storage/app/public
               subPath: app/public
+            - name: data
+              mountPath: /var/lib/larakube
       volumes:
         - name: code
           hostPath:
@@ -344,14 +372,46 @@ spec:
             type: Directory
         - name: storage
           persistentVolumeClaim:
-            claimName: octane-auto-franken-laravel-storage-pvc
+            claimName: ssr-test-laravel-storage-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: ssr-test-laravel-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node
+spec:
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      containers:
+        - name: node
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+      volumes:
+        - name: code
+          hostPath:
+            path: "/STABLE_TEST_PATH"
+            type: Directory
 
 ---
 
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: octane-auto-franken-laravel-storage-pvc
+  name: ssr-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ssr-test-laravel-data-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -367,123 +427,22 @@ metadata:
 spec:
   tls:
     - hosts:
-        - octane-auto-franken.dev.test
-
-
---- FILE: overlays/local/postgres-companion-ingress.yaml ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: postgres-companion
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  rules:
-    - host: postgres-octane-auto-franken.dev.test
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: postgres-companion
-                port:
-                  number: 80
-  tls:
-    - hosts:
-        - postgres-octane-auto-franken.dev.test
-
-
---- FILE: overlays/local/postgres-companion.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres-companion
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: postgres-companion
-  template:
-    metadata:
-      labels:
-        app: postgres-companion
-    spec:
-      containers:
-        - name: companion
-          image: adminer:latest
-          ports:
-            - containerPort: 8080
-          env:
-            - name: ADMINER_DEFAULT_SERVER
-              value: postgres
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-companion
-spec:
-  selector:
-    app: postgres-companion
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
-  type: ClusterIP
-
-
---- FILE: overlays/local/postgres-patch.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres
-spec:
-  template:
-    spec:
-      volumes:
-        - name: db-data
-          persistentVolumeClaim:
-            claimName: octane-auto-franken-postgres-pvc
-
-
---- FILE: overlays/local/postgres-volumes.yaml ---
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: octane-auto-franken-postgres-pv
-  labels:
-    larakube-project: octane-auto-franken
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/postgres
-    type: DirectoryOrCreate
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: octane-auto-franken-postgres-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: ""
-  volumeName: octane-auto-franken-postgres-pv
-  resources:
-    requests:
-      storage: 1Gi
+        - ssr-test.dev.test
 
 
 --- FILE: overlays/local/pvc-patch.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: octane-auto-franken-laravel-storage-pvc
+  name: ssr-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ssr-test-laravel-data-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -519,7 +478,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: octane-auto-franken.dev.test
+    - host: ssr-test.dev.test
       http:
         paths:
           - path: /
@@ -531,18 +490,18 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - octane-auto-franken.dev.test
-      secretName: octane-auto-franken-tls
+        - ssr-test.dev.test
+      secretName: ssr-test-tls
 
 
 --- FILE: overlays/production/kustomization.yaml ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: octane-auto-franken-production
+namespace: ssr-test-production
 
 resources:
-  - postgres-volumes.yaml
+  - ssr-deployment.yaml
   - ../../base
   - namespace.yaml
   - config-patch.yaml
@@ -557,38 +516,77 @@ patches:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: octane-auto-franken-production
+  name: ssr-test-production
 
 
---- FILE: overlays/production/postgres-volumes.yaml ---
-apiVersion: v1
-kind: PersistentVolume
+--- FILE: overlays/production/ssr-deployment.yaml ---
+# Inertia SSR (Server-Side Rendering) server — PRODUCTION ONLY.
+#
+# A Node.js process that pre-renders Inertia page components and returns HTML
+# to the web pod. Reads the pre-built bootstrap/ssr/ssr.js bundle baked into
+# the project image during build (production Dockerfile must run
+# `npm run build:ssr` as part of its build steps). Listens on the Inertia
+# default port 13714, in-cluster only.
+#
+# This manifest deploys ONLY to production (writes to overlays/production/).
+# Local dev does NOT get a SSR pod by default — for Inertia v2 it would add
+# 50-200ms round-trip per page with no SEO benefit; for Inertia v3 the Vite
+# dev server handles SSR natively via vite-node, making a separate pod
+# redundant. Local opt-in support is planned for v2 (see plans/active/).
+---
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: octane-auto-franken-postgres-pv
-  labels:
-    larakube-project: octane-auto-franken
+  name: node-ssr
 spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/postgres
-    type: DirectoryOrCreate
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: node-ssr
+  template:
+    metadata:
+      labels:
+        app: node-ssr
+    spec:
+      containers:
+        - name: node-ssr
+          image: ssr-test:latest
+          imagePullPolicy: Always
+          workingDir: /var/www/html
+          command: ["node", "bootstrap/ssr/ssr.js"]
+          ports:
+            - containerPort: 13714
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
+          env:
+            - name: AUTORUN_ENABLED
+              value: "false"
+            - name: AUTORUN_LARAVEL_MIGRATION
+              value: "false"
+          readinessProbe:
+            tcpSocket:
+              port: 13714
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      imagePullSecrets:
+        - name: ghcr-login
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Service
 metadata:
-  name: octane-auto-franken-postgres-pvc
+  name: node-ssr
 spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: ""
-  volumeName: octane-auto-franken-postgres-pv
-  resources:
-    requests:
-      storage: 1Gi
+  selector:
+    app: node-ssr
+  ports:
+    - protocol: TCP
+      port: 13714
+      targetPort: 13714
+  type: ClusterIP
 
 

@@ -2,6 +2,9 @@
 
 namespace App\Commands;
 
+use App\Contracts\HasReloadCommand;
+use App\Data\ConfigData;
+use App\Traits\EnsuresHostDependencies;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithArchitecturalEngine;
@@ -20,7 +23,7 @@ use function Laravel\Prompts\info;
 
 class UpCommand extends Command
 {
-    use GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
+    use EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -270,6 +273,10 @@ class UpCommand extends Command
             }
         }
 
+        // 1b. Ensure host has vendor/, node_modules/, and SSR bundle before pods start.
+        // Pod start commands assume these are present (via hostPath mount in local).
+        $this->ensureHostDependencies($config, $environment);
+
         // 2. Ensure Namespace exists
         $this->withSpin("Ensuring namespace '$namespace' exists...", function () use ($namespace) {
             exec("kubectl create namespace $namespace --dry-run=client -o yaml | kubectl apply -f -");
@@ -392,6 +399,8 @@ class UpCommand extends Command
             $this->call('console', ['environment' => $environment]);
         }
 
+        $this->renderHotReloadTip($config, $environment);
+
         $this->renderStarPrompt();
 
         if ($config->id) {
@@ -399,5 +408,35 @@ class UpCommand extends Command
         }
 
         return 0;
+    }
+
+    /**
+     * Print a one-line tip about `larakube watch` if the project has anything
+     * that benefits from hot-reload (Octane workers, Horizon, queues). Skipped
+     * for non-local environments and projects with nothing to reload.
+     */
+    protected function renderHotReloadTip(ConfigData $config, string $environment): void
+    {
+        if ($environment !== 'local') {
+            return;
+        }
+
+        $services = [];
+        foreach ([$config->getServerVariation(), ...$config->getFeatures()] as $candidate) {
+            if (! $candidate instanceof HasReloadCommand) {
+                continue;
+            }
+            if ($candidate->getReloadCommand() === null) {
+                continue;
+            }
+            $services[] = $candidate->getPodName($config);
+        }
+
+        if (empty($services)) {
+            return;
+        }
+
+        $this->newLine();
+        $this->line('  <fg=cyan>💡 Hot-reload tip:</> run <fg=yellow;options=bold>larakube watch</> in another terminal to auto-reload '.implode(' + ', $services).' on PHP code changes.');
     }
 }

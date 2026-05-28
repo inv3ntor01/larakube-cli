@@ -400,6 +400,32 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         return $this !== self::SQLITE;
     }
 
+    /**
+     * Shell command (intended to run inside this driver's pod via kubectl exec)
+     * that idempotently creates a test database. Returns null for drivers where
+     * `larakube test --with-db` doesn't apply (SQLite uses :memory:; MongoDB
+     * auto-creates collections on first write).
+     *
+     * Returned command uses the DB pod's own credentials env vars
+     * (POSTGRES_USER for Postgres superuser, MYSQL_ROOT_PASSWORD for MySQL root).
+     * Wrap with `sh -c "..."` when invoking — relies on shell pipe/||/$VAR.
+     */
+    public function getTestDatabaseProvisionCommand(string $testDbName): ?string
+    {
+        return match ($this) {
+            self::MYSQL, self::MARIADB => sprintf(
+                'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e \'CREATE DATABASE IF NOT EXISTS `%s`\'',
+                $testDbName,
+            ),
+            self::POSTGRESQL => sprintf(
+                'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT 1 FROM pg_database WHERE datname=\'%s\'" | grep -q 1 || PGPASSWORD="$POSTGRES_PASSWORD" createdb -U "$POSTGRES_USER" "%s"',
+                $testDbName,
+                $testDbName,
+            ),
+            default => null,
+        };
+    }
+
     public function getComposerDependencies(?ConfigData $context = null): array
     {
         return match ($this) {

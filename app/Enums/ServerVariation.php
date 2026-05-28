@@ -11,12 +11,13 @@ use App\Contracts\HasHosts;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
+use App\Contracts\HasReloadCommand;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasDependencies, HasEnvironmentVariables, HasHosts, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
+enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasDependencies, HasEnvironmentVariables, HasHosts, HasLabel, HasLifecycleHooks, HasPodName, HasReloadCommand, HasSelectOptions
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
     case FPM_NGINX = 'fpm-nginx';
@@ -129,5 +130,13 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
         }
 
         return '[]';
+    }
+
+    public function getReloadCommand(): ?string
+    {
+        return match ($this) {
+            self::FRANKENPHP => 'php artisan octane:reload',
+            default => null,
+        };
     }
 }

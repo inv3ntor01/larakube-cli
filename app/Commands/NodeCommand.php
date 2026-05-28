@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class NodeCommand extends Command
 {
-    use LaraKubeOutput;
+    use CapturesPassthroughArgs, LaraKubeOutput;
 
     public function __construct()
     {
@@ -35,35 +36,12 @@ class NodeCommand extends Command
      */
     public function handle(): int
     {
-        // Capture everything from the original command line after 'node'
-        $rawArgs = $_SERVER['argv'];
-        $cmdIndex = array_search('node', $rawArgs);
-
-        if ($cmdIndex !== false) {
-            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
-
-            $commands = [];
-            $env = $this->option('environment');
-
-            foreach ($passedArgs as $arg) {
-                if (str_starts_with($arg, '--environment=')) {
-                    $env = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $nodeCommand = implode(' ', $commands);
-        } else {
-            $nodeCommand = implode(' ', $this->argument('commands'));
-            $env = $this->option('environment');
-        }
+        ['command' => $nodeCommand, 'options' => $opts] = $this->capturePassthroughArgs('node');
 
         return $this->call('exec', [
             'commands' => [$nodeCommand],
             '--service' => 'node',
-            '--environment' => $env,
+            '--environment' => $opts['environment'],
         ]);
     }
 }

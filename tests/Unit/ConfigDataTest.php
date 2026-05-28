@@ -171,4 +171,37 @@ class ConfigDataTest extends TestCase
         $this->assertFalse(PhpVersion::PHP_8_2->isHidden($existing));
         $this->assertFalse(PhpVersion::PHP_8_1->isHidden($existing));
     }
+
+    public function test_watch_paths_default_to_standard_laravel_dirs()
+    {
+        $config = ConfigData::from([]);
+
+        $this->assertSame(
+            ['app', 'bootstrap', 'config', 'database', 'public', 'resources', 'routes', 'composer.lock', '.env'],
+            $config->getWatchPaths(),
+        );
+    }
+
+    public function test_watch_paths_can_be_overridden_via_blueprint()
+    {
+        $config = ConfigData::from([
+            'watchPaths' => ['app', 'domain', 'modules'],
+        ]);
+
+        $this->assertSame(['app', 'domain', 'modules'], $config->getWatchPaths());
+    }
+
+    public function test_provision_test_db_defaults_to_false()
+    {
+        $config = ConfigData::from([]);
+
+        $this->assertFalse($config->getProvisionTestDb());
+    }
+
+    public function test_provision_test_db_can_be_enabled_via_blueprint()
+    {
+        $config = ConfigData::from(['provisionTestDb' => true]);
+
+        $this->assertTrue($config->getProvisionTestDb());
+    }
 }

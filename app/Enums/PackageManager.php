@@ -52,6 +52,19 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
         };
     }
 
+    public function buildSsrCommand(): string
+    {
+        return match ($this) {
+            self::YARN => 'yarn build:ssr',
+            default => "{$this->value} run build:ssr",
+        };
+    }
+
+    public function getSsrStartCommand(): string
+    {
+        return '["node", "bootstrap/ssr/ssr.js"]';
+    }
+
     public function devCommand(): string
     {
         return match ($this) {
@@ -65,7 +78,7 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
     {
         $separator = ($this === self::NPM) ? '' : ' --';
 
-        return '["sh", "-c", "'.$this->installCommand().' && '.$this->devCommand().$separator.' --host"]';
+        return '["sh", "-c", "'.$this->devCommand().$separator.' --host 0.0.0.0"]';
     }
 
     public function getOptionFlag(): string

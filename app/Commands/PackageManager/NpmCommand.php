@@ -2,12 +2,13 @@
 
 namespace App\Commands\PackageManager;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class NpmCommand extends Command
 {
-    use LaraKubeOutput;
+    use CapturesPassthroughArgs, LaraKubeOutput;
 
     public function __construct()
     {
@@ -33,34 +34,11 @@ class NpmCommand extends Command
      */
     public function handle(): int
     {
-        // Capture everything from the original command line after 'npm'
-        $rawArgs = $_SERVER['argv'];
-        $cmdIndex = array_search('npm', $rawArgs);
-
-        if ($cmdIndex !== false) {
-            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
-
-            $commands = [];
-            $env = $this->option('environment');
-
-            foreach ($passedArgs as $arg) {
-                if (str_starts_with($arg, '--environment=')) {
-                    $env = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $npmCommand = implode(' ', $commands);
-        } else {
-            $npmCommand = implode(' ', $this->argument('commands'));
-            $env = $this->option('environment');
-        }
+        ['command' => $npmCommand, 'options' => $opts] = $this->capturePassthroughArgs('npm');
 
         return $this->call('node', [
             'commands' => ["npm {$npmCommand}"],
-            '--environment' => $env,
+            '--environment' => $opts['environment'],
         ]);
     }
 }

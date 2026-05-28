@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class PhpCommand extends Command
 {
-    use LaraKubeOutput;
+    use CapturesPassthroughArgs, LaraKubeOutput;
 
     public function __construct()
     {
@@ -35,34 +36,17 @@ class PhpCommand extends Command
      */
     public function handle()
     {
-        // Capture everything from the original command line after 'php'
-        $rawArgs = $_SERVER['argv'];
-        $cmdIndex = array_search('php', $rawArgs);
+        ['command' => $phpCommand, 'options' => $opts] = $this->capturePassthroughArgs('php');
 
-        if ($cmdIndex !== false) {
-            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
-
-            $commands = [];
-            $env = $this->option('environment');
-
-            foreach ($passedArgs as $arg) {
-                if (str_starts_with($arg, '--environment=')) {
-                    $env = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $phpCommand = implode(' ', $commands);
-        } else {
-            $phpCommand = implode(' ', $this->argument('commands'));
-            $env = $this->option('environment');
+        // Test-runner safety net: `larakube php artisan test`,
+        // `larakube php vendor/bin/pest`, etc. would otherwise wipe the dev DB.
+        if (static::looksLikeTestRunner($phpCommand)) {
+            return $this->delegateToTestCommand();
         }
 
         return $this->call('exec', [
             'commands' => ["php {$phpCommand}"],
-            '--environment' => $env,
+            '--environment' => $opts['environment'],
             '--service' => 'web',
         ]);
     }

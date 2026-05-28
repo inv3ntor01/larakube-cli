@@ -31,3 +31,9 @@ test('server variation select options are valid', function () {
     expect($options)->toBeArray()
         ->and($options)->toHaveKey('fpm-nginx');
 });
+
+test('server variation reload commands', function () {
+    expect(ServerVariation::FRANKENPHP->getReloadCommand())->toBe('php artisan octane:reload')
+        ->and(ServerVariation::FPM_NGINX->getReloadCommand())->toBeNull()
+        ->and(ServerVariation::FPM_APACHE->getReloadCommand())->toBeNull();
+});

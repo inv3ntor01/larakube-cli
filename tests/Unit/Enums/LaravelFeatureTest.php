@@ -34,3 +34,32 @@ test('from pod name mapping', function () {
         ->and(LaravelFeature::fromPodName('horizon'))->toBe(LaravelFeature::HORIZON)
         ->and(LaravelFeature::fromPodName('reverb'))->toBe(LaravelFeature::REVERB);
 });
+
+test('laravel feature reload commands', function () {
+    expect(LaravelFeature::HORIZON->getReloadCommand())->toBe('php artisan horizon:terminate')
+        ->and(LaravelFeature::QUEUES->getReloadCommand())->toBe('php artisan queue:restart')
+        ->and(LaravelFeature::REVERB->getReloadCommand())->toBeNull()
+        ->and(LaravelFeature::TASK_SCHEDULING->getReloadCommand())->toBeNull()
+        ->and(LaravelFeature::SCOUT->getReloadCommand())->toBeNull()
+        ->and(LaravelFeature::OCTANE->getReloadCommand())->toBeNull()
+        ->and(LaravelFeature::SSR->getReloadCommand())->toBeNull();
+});
+
+test('ssr feature exposes node-ssr pod and Inertia label', function () {
+    expect(LaravelFeature::SSR->getPodName())->toBe('node-ssr')
+        ->and(LaravelFeature::fromPodName('node-ssr'))->toBe(LaravelFeature::SSR)
+        ->and(LaravelFeature::SSR->getLabel())->toBe('Inertia SSR (Server-Side Rendering)');
+});
+
+test('ssr feature injects Inertia env vars in production only', function () {
+    $config = ConfigData::from(['name' => 'ssr-test']);
+
+    $prodEnv = LaravelFeature::SSR->getPublicEnvironmentVariables($config, 'production');
+    expect($prodEnv)->toHaveKey('INERTIA_SSR_ENABLED', 'true')
+        ->and($prodEnv['INERTIA_SSR_URL'])->toEndWith(':13714')
+        ->and($prodEnv['INERTIA_SSR_URL'])->toStartWith('http://');
+
+    // Local must NOT inject SSR env vars — local dev should not call SSR by default.
+    $localEnv = LaravelFeature::SSR->getPublicEnvironmentVariables($config, 'local');
+    expect($localEnv)->toBe([]);
+});

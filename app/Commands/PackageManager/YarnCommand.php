@@ -2,12 +2,13 @@
 
 namespace App\Commands\PackageManager;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class YarnCommand extends Command
 {
-    use LaraKubeOutput;
+    use CapturesPassthroughArgs, LaraKubeOutput;
 
     public function __construct()
     {
@@ -33,34 +34,11 @@ class YarnCommand extends Command
      */
     public function handle(): int
     {
-        // Capture everything from the original command line after 'yarn'
-        $rawArgs = $_SERVER['argv'];
-        $cmdIndex = array_search('yarn', $rawArgs);
-
-        if ($cmdIndex !== false) {
-            $passedArgs = array_slice($rawArgs, $cmdIndex + 1);
-
-            $commands = [];
-            $env = $this->option('environment');
-
-            foreach ($passedArgs as $arg) {
-                if (str_starts_with($arg, '--environment=')) {
-                    $env = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $yarnCommand = implode(' ', $commands);
-        } else {
-            $yarnCommand = implode(' ', $this->argument('commands'));
-            $env = $this->option('environment');
-        }
+        ['command' => $yarnCommand, 'options' => $opts] = $this->capturePassthroughArgs('yarn');
 
         return $this->call('node', [
             'commands' => ["yarn {$yarnCommand}"],
-            '--environment' => $env,
+            '--environment' => $opts['environment'],
         ]);
     }
 }

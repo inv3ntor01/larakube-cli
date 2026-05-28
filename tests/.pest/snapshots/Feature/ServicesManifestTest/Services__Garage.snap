@@ -405,6 +405,25 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          env:
+            # Skip all SSU on-startup caching in local dev. Caching freezes
+            # pod env vars (DB_CONNECTION=pgsql, etc.) into bootstrap/cache/*.php
+            # files that win over process env, silently breaking test-time
+            # overrides and hiding .env edits until pod restart. We disable:
+            #   - the umbrella `optimize` command (older SSU images)
+            #   - the granular individual cache commands (newer SSU images
+            #     split optimize into separate steps; we cover both shapes)
+            # Production keeps the defaults (true) for performance.
+            - name: AUTORUN_LARAVEL_OPTIMIZE
+              value: "false"
+            - name: AUTORUN_LARAVEL_CONFIG_CACHE
+              value: "false"
+            - name: AUTORUN_LARAVEL_ROUTE_CACHE
+              value: "false"
+            - name: AUTORUN_LARAVEL_VIEW_CACHE
+              value: "false"
+            - name: AUTORUN_LARAVEL_EVENT_CACHE
+              value: "false"
           volumeMounts:
             - name: code
               mountPath: /var/www/html

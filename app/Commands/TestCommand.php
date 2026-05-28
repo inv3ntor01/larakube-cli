@@ -2,82 +2,270 @@
 
 namespace App\Commands;
 
+use App\Enums\DatabaseDriver;
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class TestCommand extends Command
 {
-    use InteractsWithEnvironments, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
-    protected $signature = 'test {environment=local : The environment to test}';
+    public function __construct()
+    {
+        parent::__construct();
 
-    protected $description = 'Perform a smoke test to ensure the application is reachable';
+        $this->ignoreValidationErrors();
+    }
+
+    protected $signature = 'test
+                            {--db : Provision <app>_testing on the project DB engine instead of in-memory SQLite (auto-saved to .larakube.json on first use)}
+                            {--with-db : Alias for --db (kept for backward compat)}
+                            {--environment=local : Cluster environment to target}
+                            {--service=web : Pod label to exec into}';
+
+    protected $description = 'Run phpunit/pest inside the web pod (defaults to in-memory SQLite; --db for engine-specific test DB)';
+
+    /**
+     * Process env vars that get stripped from the test process so phpunit.xml's
+     * <env> blocks (and our own safe defaults) can take effect. K8s injects these
+     * into the pod via the laravel-config ConfigMap, and they otherwise win over
+     * phpunit.xml during PHP bootstrap.
+     *
+     * @var array<int, string>
+     */
+    protected array $stripVarsByDefault = [
+        'DB_CONNECTION',
+        'DB_DATABASE',
+        'DB_HOST',
+        'DB_PORT',
+        'DB_USERNAME',
+        'DB_PASSWORD',
+        'CACHE_DRIVER',
+        'CACHE_STORE',
+        'SESSION_DRIVER',
+        'QUEUE_CONNECTION',
+        'MAIL_MAILER',
+    ];
 
     public function handle(): int
     {
-        $this->renderHeader();
+        if (! $this->isLaraKubeProject()) {
+            return 1;
+        }
 
-        $projectPath = getcwd();
-        $ingressPath = $projectPath.'/.infrastructure/k8s/base/ingress.yaml';
-
-        if (! file_exists($ingressPath)) {
-            $this->laraKubeError('Ingress configuration not found.');
+        $config = $this->getProjectConfig();
+        if (! $config) {
+            $this->laraKubeError('Could not load .larakube.json.');
 
             return 1;
         }
 
-        // Get the host from ingress
-        $content = file_get_contents($ingressPath);
-        if (preg_match('/host: (.*)/', $content, $matches)) {
-            $host = trim($matches[1]);
-            $protocols = ['https', 'http'];
-            $maxAttempts = 5;
-            $success = false;
+        $environment = $this->option('environment');
+        $service = $this->option('service');
+        $namespace = $this->getNamespace($environment);
 
-            foreach ($protocols as $protocol) {
-                $url = "{$protocol}://{$host}";
-                $this->laraKubeInfo("Testing connectivity to {$url}...");
+        $passthroughArgs = $this->extractPassthroughArgs();
 
-                // 🛡 PHASE 1: Standard Domain Check
-                for ($i = 1; $i <= $maxAttempts; $i++) {
-                    $httpCode = trim(shell_exec("curl -k -s -o /dev/null -w \"%{http_code}\" {$url} --connect-timeout 2") ?? '');
+        // Decide whether to provision a real test DB or use in-memory SQLite.
+        // Precedence: explicit CLI flag > blueprint default > built-in default.
+        $flagPassed = $this->option('db') || $this->option('with-db');
+        $driver = $config->getDatabase();
+        $driverSupportsProvisioning = $driver?->getTestDatabaseProvisionCommand('x') !== null;
 
-                    if ($httpCode === '200' || $httpCode === '302' || $httpCode === '301') {
-                        $this->laraKubeInfo("SUCCESS! Application reachable via {$protocol} (HTTP {$httpCode}).");
-                        $success = true;
-                        break 2;
-                    }
+        // If the user asked for --db but the driver can't be provisioned
+        // (SQLite: redundant — tests already use SQLite; MongoDB: not
+        // implemented yet), fall back to the in-memory SQLite path. Don't
+        // persist the preference — saving it would just produce the same
+        // warning forever.
+        if ($flagPassed && ! $driverSupportsProvisioning) {
+            if ($driver === DatabaseDriver::SQLITE) {
+                $this->laraKubeInfo("Note: your project uses SQLite, so --db is unnecessary. Tests already use in-memory SQLite.");
+            } else {
+                $this->laraKubeWarn("--db isn't supported for {$driver?->getLabel()} yet. Falling back to in-memory SQLite for tests.");
+            }
+            $flagPassed = false;
+        }
 
-                    if ($i < $maxAttempts) {
-                        sleep(1);
-                    }
-                }
+        $withDb = $flagPassed || ($config->getProvisionTestDb() && $driverSupportsProvisioning);
 
-                // 🛡 PHASE 2: Cluster IP Bypass (Ensures app is healthy even if hosts are out of sync)
-                $this->line('  <fg=gray>[INFO]</> Retrying via internal cluster bridge...');
-                $externalIp = shell_exec("kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null") ?? '127.0.0.1';
+        // First-time auto-persist: if user passed --db explicitly AND the
+        // blueprint doesn't already have it set AND the driver supports
+        // provisioning, save the preference so future `larakube test` runs
+        // default to this behavior. Avoids the friction of editing
+        // .larakube.json by hand.
+        if ($flagPassed && ! $config->getProvisionTestDb()) {
+            $config->provisionTestDb = true;
+            $config->saveToFile($config->getPath());
+            $this->laraKubeInfo('✓ Saved provisionTestDb=true to .larakube.json — future tests will default to the provisioned DB.');
+        }
 
-                // If it's a k3d setup, localhost (127.0.0.1) is usually the correct bridge for the daemon
-                $bypassUrl = "{$protocol}://127.0.0.1";
-                $httpCode = trim(shell_exec("curl -k -s -o /dev/null -w \"%{http_code}\" -H \"Host: {$host}\" {$bypassUrl} --connect-timeout 2") ?? '');
+        if ($withDb) {
+            if (! $this->provisionTestingDatabase($config, $namespace)) {
+                return 1;
+            }
+            $stripVars = array_diff($this->stripVarsByDefault, ['DB_HOST', 'DB_PORT', 'DB_USERNAME', 'DB_PASSWORD']);
+            $setVars = [
+                'DB_CONNECTION' => $config->getDatabase()->dbConnection(),
+                'DB_DATABASE' => $config->getName().'_testing',
+                'APP_ENV' => 'testing',
+            ];
+        } else {
+            $stripVars = $this->stripVarsByDefault;
+            $setVars = [
+                'DB_CONNECTION' => 'sqlite',
+                'DB_DATABASE' => ':memory:',
+                'CACHE_DRIVER' => 'array',
+                'CACHE_STORE' => 'array',
+                'SESSION_DRIVER' => 'array',
+                'QUEUE_CONNECTION' => 'sync',
+                'MAIL_MAILER' => 'array',
+                'APP_ENV' => 'testing',
+            ];
+        }
 
-                if ($httpCode === '200' || $httpCode === '302' || $httpCode === '301') {
-                    $this->laraKubeInfo("SUCCESS! Application verified via Cluster Bridge (HTTP {$httpCode}).");
-                    $this->line("  <fg=yellow>⚠ NOTE: Your app is healthy, but you might need to run 'larakube hosts' to sync your domains.</>");
-                    $success = true;
+        $podName = $this->findPod($service, $namespace);
+        if (! $podName) {
+            $this->laraKubeError("Could not find a running '{$service}' pod in '{$namespace}'.");
+
+            return 1;
+        }
+
+        $envFragment = $this->buildEnvFragment($stripVars, $setVars);
+        $artisanArgs = $passthroughArgs === '' ? '' : ' '.$passthroughArgs;
+
+        // CRITICAL: remove the cached config file before invoking artisan test.
+        // The SSU base image runs `php artisan optimize` on container start,
+        // which bakes the pod's process env (DB_CONNECTION=pgsql, etc.) into
+        // bootstrap/cache/config.php. Laravel reads that file BEFORE consulting
+        // process env, so the env -u/set overrides above would be silently
+        // ignored and RefreshDatabase would wipe the dev DB.
+        $inPodCommand = sprintf(
+            'rm -f /var/www/html/bootstrap/cache/config.php /var/www/html/bootstrap/cache/routes-v7.php && php artisan test%s',
+            $artisanArgs,
+        );
+
+        $command = sprintf(
+            'kubectl exec -it -n %s -c php %s -- env %s sh -c %s',
+            escapeshellarg($namespace),
+            escapeshellarg($podName),
+            $envFragment,
+            escapeshellarg($inPodCommand),
+        );
+
+        passthru($command, $exitCode);
+
+        return $exitCode;
+    }
+
+    protected function provisionTestingDatabase($config, string $namespace): bool
+    {
+        $driver = $config->getDatabase();
+        if (! $driver instanceof DatabaseDriver) {
+            $this->laraKubeError('No database driver configured in .larakube.json.');
+
+            return false;
+        }
+
+        $testDbName = $config->getName().'_testing';
+        $provisionCommand = $driver->getTestDatabaseProvisionCommand($testDbName);
+
+        if ($provisionCommand === null) {
+            $this->laraKubeError(sprintf(
+                "--with-db is not supported for the %s driver yet. Either drop the flag (default SQLite tests work fine) or provision '%s' manually.",
+                $driver->getLabel() ?? $driver->value,
+                $testDbName,
+            ));
+
+            return false;
+        }
+
+        $dbPodName = $this->findPod($driver->getPodName($config), $namespace);
+        if (! $dbPodName) {
+            $this->laraKubeError("Could not find the '{$driver->getPodName($config)}' DB pod in '{$namespace}'. Is the cluster up?");
+
+            return false;
+        }
+
+        $this->laraKubeInfo("Ensuring testing database '{$testDbName}' exists on {$driver->getLabel()}...");
+
+        $exec = sprintf(
+            'kubectl exec -n %s %s -- sh -c %s 2>&1',
+            escapeshellarg($namespace),
+            escapeshellarg($dbPodName),
+            escapeshellarg($provisionCommand),
+        );
+
+        passthru($exec, $exitCode);
+
+        return $exitCode === 0;
+    }
+
+    /**
+     * Extract any args after `larakube test` that aren't our own options,
+     * to pass through to `php artisan test`. Mirrors ExecCommand's pattern.
+     */
+    protected function extractPassthroughArgs(): string
+    {
+        $argv = $_SERVER['argv'] ?? [];
+        $testIndex = array_search('test', $argv, true);
+        if ($testIndex === false) {
+            return '';
+        }
+
+        $ours = ['--db', '--with-db', '--environment', '--service'];
+        $passthrough = [];
+
+        foreach (array_slice($argv, $testIndex + 1) as $arg) {
+            $isOurs = false;
+            foreach ($ours as $flag) {
+                if ($arg === $flag || str_starts_with($arg, $flag.'=')) {
+                    $isOurs = true;
                     break;
                 }
             }
-
-            if (! $success) {
-                $this->laraKubeError('FAILED. Could not reach your application after several attempts.');
-                $this->line("Check your /etc/hosts and ensure your pods are running with 'larakube console'.");
-
-                return 1;
+            if (! $isOurs) {
+                $passthrough[] = escapeshellarg($arg);
             }
         }
 
-        return 0;
+        return implode(' ', $passthrough);
+    }
+
+    /**
+     * @param  array<int, string>  $stripVars
+     * @param  array<string, string>  $setVars
+     */
+    protected function buildEnvFragment(array $stripVars, array $setVars): string
+    {
+        $parts = [];
+        foreach ($stripVars as $name) {
+            $parts[] = '-u '.escapeshellarg($name);
+        }
+        foreach ($setVars as $name => $value) {
+            $parts[] = escapeshellarg($name.'='.$value);
+        }
+
+        return implode(' ', $parts);
+    }
+
+    protected function findPod(string $service, string $namespace): ?string
+    {
+        $labels = ["app={$service}", "app=laravel-{$service}"];
+
+        if ($service === 'queues') {
+            $labels[] = 'app=queue';
+            $labels[] = 'app=laravel-queue';
+        }
+
+        foreach ($labels as $label) {
+            $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null") ?? '');
+            if ($podName !== '') {
+                return $podName;
+            }
+        }
+
+        return null;
     }
 }

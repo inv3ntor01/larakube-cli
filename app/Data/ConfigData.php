@@ -66,9 +66,22 @@ class ConfigData extends Data
         public bool $isSystem = false,
         public bool $isScaffolding = false,
         public bool $withCompanions = true,
+        public bool $provisionTestDb = false,
         public ?IngressController $ingressController = IngressController::TRAEFIK,
         public array $managedServices = [],
         public array $lockedFiles = [],
+        /** @var array<int, string> */
+        public array $watchPaths = [
+            'app',
+            'bootstrap',
+            'config',
+            'database',
+            'public',
+            'resources',
+            'routes',
+            'composer.lock',
+            '.env',
+        ],
         /** @var array<CloudData> */
         public array $cloud = [],
     ) {
@@ -158,6 +171,26 @@ class ConfigData extends Data
     public function getFeatures(): array
     {
         return $this->features;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function getWatchPaths(): array
+    {
+        return $this->watchPaths;
+    }
+
+    /**
+     * Whether `larakube test` should provision <app>_testing on the project's
+     * DB engine instead of running on in-memory SQLite. Useful for projects
+     * with engine-specific tests (Postgres JSONB, full-text search, MySQL
+     * JSON ops, etc.) that SQLite can't execute. Auto-set to true the first
+     * time the user runs `larakube test --db`.
+     */
+    public function getProvisionTestDb(): bool
+    {
+        return $this->provisionTestDb;
     }
 
     public function hasFeatures(): bool

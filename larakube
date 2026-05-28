@@ -5,6 +5,54 @@ define('LARAVEL_START', microtime(true));
 
 /*
 |--------------------------------------------------------------------------
+| Pre-process --help for passthrough commands
+|--------------------------------------------------------------------------
+|
+| When the user runs `larakube art migrate --help`, Symfony Console
+| intercepts `--help` at the Application level and shows help for `art`
+| (the proxy), not for `migrate` (the inner command they actually want).
+| `ignoreValidationErrors()` on the command can't prevent this since the
+| interception happens before any command's run() method is invoked.
+|
+| Fix: swap `--help`/`-h` for a non-Symfony placeholder when it follows
+| `art`/`artisan` in argv. ArtisanCommand swaps it back when assembling
+| the final artisan command sent to the pod.
+|
+*/
+
+$_SERVER['argv'] = (function (array $argv): array {
+    // Commands that proxy arbitrary command lines into pods. For these, --help
+    // means "help for the inner command", not "help for the proxy".
+    $passthroughCommands = [
+        'art', 'artisan', 'exec', 'php', 'node',
+        'composer', 'npm', 'yarn', 'pnpm', 'bun',
+    ];
+
+    // Find the first positional arg after the script name — that's the command.
+    $commandIndex = null;
+    $count = count($argv);
+    for ($i = 1; $i < $count; $i++) {
+        if (! str_starts_with($argv[$i], '-')) {
+            $commandIndex = $i;
+            break;
+        }
+    }
+
+    if ($commandIndex === null || ! in_array($argv[$commandIndex], $passthroughCommands, true)) {
+        return $argv;
+    }
+
+    for ($j = $commandIndex + 1; $j < $count; $j++) {
+        if ($argv[$j] === '--help' || $argv[$j] === '-h') {
+            $argv[$j] = '__LARAKUBE_PASSTHROUGH_HELP__';
+        }
+    }
+
+    return $argv;
+})($_SERVER['argv'] ?? []);
+
+/*
+|--------------------------------------------------------------------------
 | Register The Auto Loader
 |--------------------------------------------------------------------------
 |

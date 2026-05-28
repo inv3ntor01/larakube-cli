@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\CapturesPassthroughArgs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class ArtisanCommand extends Command
 {
-    use LaraKubeOutput;
+    use CapturesPassthroughArgs, LaraKubeOutput;
 
     public function __construct()
     {
@@ -42,43 +43,15 @@ class ArtisanCommand extends Command
      */
     public function handle()
     {
-        // Capture everything from the original command line after the trigger ('art' or 'artisan')
-        $rawArgs = $_SERVER['argv'];
+        ['command' => $artisanCommand, 'options' => $opts] = $this->capturePassthroughArgs(['art', 'artisan']);
 
-        $trigger = 'art';
-        $artIndex = array_search('art', $rawArgs);
-
-        if ($artIndex === false) {
-            $artIndex = array_search('artisan', $rawArgs);
-            $trigger = 'artisan';
-        }
-
-        if ($artIndex !== false) {
-            // Get everything after the trigger, but filter out options that belong to larakube itself if needed
-            $passedArgs = array_slice($rawArgs, $artIndex + 1);
-
-            // Filter out --environment from the passed args so it's not passed to artisan twice
-            $commands = [];
-            $env = $this->option('environment');
-
-            foreach ($passedArgs as $arg) {
-                if (str_starts_with($arg, '--environment=')) {
-                    $env = str_replace('--environment=', '', $arg);
-
-                    continue;
-                }
-                $commands[] = $arg;
-            }
-
-            $artisanCommand = implode(' ', $commands);
-        } else {
-            $artisanCommand = implode(' ', $this->argument('commands'));
-            $env = $this->option('environment');
+        if (static::looksLikeTestRunner($artisanCommand)) {
+            return $this->delegateToTestCommand();
         }
 
         return $this->call('exec', [
             'commands' => ["php artisan {$artisanCommand}"],
-            '--environment' => $env,
+            '--environment' => $opts['environment'],
             '--service' => 'web',
         ]);
     }

@@ -15,6 +15,7 @@ use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
+use App\Contracts\HasReloadCommand;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -22,7 +23,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
+enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasReloadCommand, HasSelectOptions, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -32,6 +33,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     case REVERB = 'reverb';
     case SCOUT = 'scout';
     case OCTANE = 'octane';
+    case SSR = 'ssr';
     case MONITORING = 'monitoring';
     case METALLB = 'metallb';
     case MAILPIT = 'mailpit';
@@ -47,6 +49,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             'horizon' => self::HORIZON,
             'queues' => self::QUEUES,
             'reverb' => self::REVERB,
+            'node-ssr' => self::SSR,
             default => self::tryFrom($podName),
         };
     }
@@ -56,7 +59,17 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         return match ($this) {
             self::TASK_SCHEDULING => 'scheduler',
             self::QUEUES => 'queues',
+            self::SSR => 'node-ssr',
             default => $this->value,
+        };
+    }
+
+    public function getReloadCommand(): ?string
+    {
+        return match ($this) {
+            self::HORIZON => 'php artisan horizon:terminate',
+            self::QUEUES => 'php artisan queue:restart',
+            default => null,
         };
     }
 
@@ -69,6 +82,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::REVERB => 'Reverb',
             self::SCOUT => 'Scout',
             self::OCTANE => 'Octane (requires FrankenPHP)',
+            self::SSR => 'Inertia SSR (Server-Side Rendering)',
             self::AI => 'Laravel AI',
             self::MCP => 'Laravel MCP',
             self::BOOST => 'Laravel Boost',
@@ -131,6 +145,10 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::QUEUES => [
                 'QUEUE_CONNECTION' => 'database',
             ],
+            self::SSR => $environment === 'production' ? [
+                'INERTIA_SSR_ENABLED' => 'true',
+                'INERTIA_SSR_URL' => 'http://'.($config ? $config->getInternalFqdn($this, $environment) : 'node-ssr').':13714',
+            ] : [],
             self::BOOST => [
                 'BOOST_PHP_EXECUTABLE_PATH' => '"larakube php"',
                 'BOOST_COMPOSER_EXECUTABLE_PATH' => '"larakube composer"',
@@ -175,6 +193,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::HORIZON => array_merge($config->getCoreDependencies(), [$config->getServerVariation(), CacheDriver::REDIS]),
             self::OCTANE => [ServerVariation::FRANKENPHP],
             self::QUEUES, self::TASK_SCHEDULING, self::REVERB => array_merge($config->getCoreDependencies(), [$config->getServerVariation()]),
+            self::SSR => [$config->getServerVariation()],
             default => [],
         };
     }
@@ -352,6 +371,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::HORIZON => 'k8s.horizon.deployment',
             self::QUEUES => 'k8s.queues.deployment',
             self::REVERB => 'k8s.reverb.deployment',
+            self::SSR => 'k8s.ssr.deployment',
             self::MAILPIT => 'k8s.mailpit.deployment',
             self::MONITORING => 'k8s.monitoring.prometheus',
             default => null,
@@ -365,6 +385,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::HORIZON => 'base/horizon-deployment.yaml',
             self::QUEUES => 'base/queues-deployment.yaml',
             self::REVERB => 'base/reverb-deployment.yaml',
+            self::SSR => 'overlays/production/ssr-deployment.yaml',
             self::MAILPIT => 'overlays/local/mailpit.yaml',
             self::MONITORING => 'base/prometheus.yaml',
             default => null,
@@ -436,6 +457,9 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             ],
             self::REVERB => [
                 'base' => ['reverb-deployment.yaml'],
+            ],
+            self::SSR => [
+                'production' => ['ssr-deployment.yaml'],
             ],
             self::MAILPIT => [
                 'local' => ['mailpit.yaml'],
