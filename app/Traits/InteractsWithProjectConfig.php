@@ -48,7 +48,7 @@ trait InteractsWithProjectConfig
      * orphaned hostPath mounts, image-tag mismatches, etc.). When the user
      * clones a repo whose default folder name differs from the project name
      * (case-only difference being the common case, e.g. `MyApp` vs
-     * `pilot-app`), this guard fails fast with explicit rename instructions
+     * `myapp`), this guard fails fast with explicit rename instructions
      * instead of letting `up`/`heal` partially execute and leave a broken
      * state. Returns true when names match (so callers can early-return on
      * false).

@@ -5,7 +5,7 @@ Refactor `.larakube.json` so per-environment overrides (ingress, managed service
 
 ## 🚦 Mode: clean break, no backward compatibility
 
-Confirmed during the partial Phase 1 attempt: only 1-2 projects use LaraKube today (pilot-app + maybe one other). Maintaining a two-shape compat layer is more cost than the cutover. **No `migrateLegacySchema()`, no dual reads, no deprecation period.** Existing blueprints must be edited to the new shape.
+Confirmed during the partial Phase 1 attempt: only 1-2 projects use LaraKube today (the pilot project + maybe one other). Maintaining a two-shape compat layer is more cost than the cutover. **No `migrateLegacySchema()`, no dual reads, no deprecation period.** Existing blueprints must be edited to the new shape.
 
 ## 🧩 Design Principles
 
@@ -44,7 +44,7 @@ After dogfooding the naïve "stick everything per-env" design, two refinements l
 }
 ```
 
-**Notice what's missing from `environments[*]`**: no `features` (auto-filtered by enum), no `ingress` (inherits top-level). Only the fields that genuinely vary per env (`managed`, `hosts`) live in each bucket. pilot-app's blueprint actually *shrinks* under this design.
+**Notice what's missing from `environments[*]`**: no `features` (auto-filtered by enum), no `ingress` (inherits top-level). Only the fields that genuinely vary per env (`managed`, `hosts`) live in each bucket. the pilot project's blueprint actually *shrinks* under this design.
 
 ### Feature resolution (the hybrid)
 
@@ -57,7 +57,7 @@ For env `local`:
 For env `production`:
 - Same logic with `production` as the env context.
 
-For pilot-app: top-level lists `[horizon, queues, reverb, scheduler, boost, ssr, mcp]`. After enum-driven filtering:
+For the pilot project: top-level lists `[horizon, queues, reverb, scheduler, boost, ssr, mcp]`. After enum-driven filtering:
 - **local**: `[horizon, queues, reverb, scheduler, boost, mcp]` (ssr filtered out — production-only)
 - **production**: `[horizon, queues, reverb, scheduler, ssr]` (boost, mcp filtered out — local-only)
 
@@ -211,7 +211,7 @@ Per-env `addFeatures` / `excludeFeatures` only matter when a user wants to overr
 - After step 4: spot-check 1-2 snapshot diffs visually before bulk `--update-snapshots`. Confirm structural-only changes (no surprise reordering, no lost volume mounts).
 - After step 5: full `pest` green.
 
-## 🏗 pilot-app blueprint migration
+## 🏗 Pilot project blueprint migration
 
 Manual edit, current shape (top-level fields):
 

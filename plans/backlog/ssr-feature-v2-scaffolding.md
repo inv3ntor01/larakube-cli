@@ -1,4 +1,34 @@
-# speckit.plan: SSR Feature v2 — Project-side Scaffolding
+# speckit.plan: SSR Feature v2 — Project-side Scaffolding (BACKLOG / DECLINED)
+
+> ## ⚠️ Why this plan was moved to backlog (2026-05-29)
+>
+> Discovery showed the "canonical proven shape" cited below is really just **the pilot project's specific stack** — React+Inertia v2, Ziggy via `tightenco/ziggy`, Laravel-Vite-Plugin, Breeze-style `Pages/*.jsx`, plus a `NODE_OPTIONS=--max-old-space-size=4096` heap workaround specific to PrimeReact. Auto-scaffolding for the general case would have to fork across:
+>
+> - Inertia v2 vs v3 (completely different SSR mechanics — v3 uses `@inertiajs/vite` for native SSR, no separate node process)
+> - With Ziggy vs without
+> - JSX vs TSX (and Vue vs Svelte for other frontends)
+> - Wayfinder vs Ziggy vs neither for the routing helper
+> - Existing partial setups (the pilot project-style hand-rolled SSR)
+>
+> Each branch produces stubs that need hand-editing to work in any given project, defeating the value of auto-scaffolding. The honest assessment: **project-side Inertia setup varies too much for LaraKube to generate cleanly without becoming a brittle code generator that fights the user.**
+>
+> ### What LaraKube already owns (and ships in v0.4.0)
+> - SSR deployment manifest, prod-only via `overlays/production/`
+> - Configmap env vars (`INERTIA_SSR_ENABLED`, `INERTIA_SSR_URL`) self-gated to production
+> - Per-env feature filtering so SSR stays out of local entirely via `LaravelFeature::SSR->defaultEnvironments(): ['production']`
+>
+> The K8s side of SSR support is solid. The project-side wiring stays the user's responsibility.
+>
+> ### If we revisit this
+> A `larakube ssr --print-example` command that dumps the pilot project's stack with a clear "this is a reference, your project may need adjustments" preface would be honest without claiming to generalize. Cheaper than the patcher fleet below and doesn't pretend to be a generator.
+>
+> ### Strategic finding worth preserving (Phase 5 / SSR-local-pod design flaw)
+> The bottom-half section "🔥 Strategic finding from dogfooding" was implemented in v0.4.0 (SSR moved to `overlays/production/`, env-filtered out of local). That part of this plan landed; the auto-scaffolding part is what's declined.
+>
+> ---
+>
+> ## Original plan below (kept for reference)
+
 
 ## 🎯 Objective
 Auto-scaffold the project-side files needed for Inertia SSR when a user enables the `ssr` feature, so they don't have to hand-roll the wiring per project. Currently (v1), `larakube add ssr` provisions the K8s topology (deployment, service, configmap env vars) but the user still has to manually:
@@ -28,7 +58,7 @@ Called from `LaravelFeature::SSR->onPostInstall($projectPath, $config)`.
 
 ### 2. Frontend stack detection drives the SSR entry template
 The `FrontendStack` enum already has cases. Each variant needs a different ssr entry:
-- **React (Inertia v2)** — `createServer` + `@inertiajs/react/server` + `ReactDOMServer.renderToString` (the pilot-app shape)
+- **React (Inertia v2)** — `createServer` + `@inertiajs/react/server` + `ReactDOMServer.renderToString` (the the pilot project shape)
 - **React (Inertia v3)** — same as above but with the new `@inertiajs/vite` plugin assumptions (auto-on SSR; we'd need to be careful here)
 - **Vue** — `createSSRApp` + `renderToString` from `@vue/server-renderer`
 - **Svelte** — Svelte's built-in SSR with `@inertiajs/svelte`
@@ -44,7 +74,7 @@ For files we're modifying (not creating fresh), each patcher must be **idempoten
 - **`app.blade.php`**: scan for the CSS path string in the `@vite([...])` call before inserting.
 
 ### 4. Conflict handling
-If a user has already hand-rolled some SSR wiring (like pilot-app did before v1):
+If a user has already hand-rolled some SSR wiring (like the pilot project did before v1):
 - **Detect existing `ssr.jsx`**: skip the create step; warn the user.
 - **Detect existing `ssr:` in vite.config.js**: skip the patch; warn.
 - **Detect existing Ziggy share**: skip.
@@ -73,20 +103,20 @@ For each patcher, test:
 - **Empty file case**: file exists but minimal/default → patches cleanly
 - **Already-patched case**: file already has the addition → idempotent no-op
 - **Conflicting case**: file has a similar but wrong version → detect + warn + don't break
-- **Hand-rolled case** (pilot-app-style): user did it themselves → detect + skip
+- **Hand-rolled case** (the pilot project-style): user did it themselves → detect + skip
 
 ## 🚦 Phases
 
-- **Phase 2.1** — React/Inertia v2 only (covers pilot-app-shaped projects, the proven case)
+- **Phase 2.1** — React/Inertia v2 only (covers the pilot project-shaped projects, the proven case)
 - **Phase 2.2** — Vue + Svelte stub variants
 - **Phase 2.3** — Inertia v3 (will need to rethink ssr.jsx pattern given v3's plugin changes)
 - **Phase 2.4** — Doctor integration
 
-## 🔥 Strategic finding from pilot-app dogfooding (must fix in v2 OR v1.5)
+## 🔥 Strategic finding from dogfooding (must fix in v2 OR v1.5)
 
 **The current v1 deploys the SSR pod in `base/`, which means BOTH local and production overlays get it. This is wrong.**
 
-After pilot-app ran with always-on local SSR for a session, the verdict is:
+After the pilot project ran with always-on local SSR for a session, the verdict is:
 - **Local SSR adds a 50-200ms round-trip per page load**. Dev iteration becomes noticeably sluggish (browser → web → SSR pod → render → web → browser). Compounding with Vite recompiles, this is annoying enough to make devs disable SSR locally.
 - **Local SSR gives no value**: no SEO scrapers, no cold visitors, no real users. The only reason to have it on locally is parity testing of the SSR-rendered output, which is occasional, not constant.
 - **Inertia v3 makes local SSR pod *actively redundant*** — `@inertiajs/vite` plugin v3+ uses `vite-node` to do SSR rendering inside Vite's dev server. Same HMR loop, no separate process. **For v3 projects, deploying a separate `node-ssr` pod for local dev does nothing.**
@@ -107,7 +137,7 @@ After pilot-app ran with always-on local SSR for a session, the verdict is:
 3. **Configmap env var injection**: only set `INERTIA_SSR_ENABLED=true` in the production overlay's configmap. Local stays `false` (or absent) by default.
 4. **Local opt-in flag** (`--with-local-ssr` or `"localSsr": true` in `.larakube.json`): if set, deploy SSR pod to local AND set `INERTIA_SSR_ENABLED=true` in local configmap.
 
-### pilot-app's migration path
+### the pilot project's migration path
 
 Once v2 (or v1.5) ships:
 1. `larakube heal` regenerates manifests with the new prod-only default
@@ -124,11 +154,11 @@ kubectl rollout restart deploy/web -n <project>-local
 
 ## 📚 Reference
 
-- pilot-app's hand-rolled v2 implementation (in `/Users/jsluchavez/Codes/Acme/codes/pilot-app`) is the canonical proven shape — use it as the source-of-truth for the React-Inertia-v2 stub.
+- The pilot project's hand-rolled v2 implementation is the canonical proven shape — use it as the source-of-truth for the React-Inertia-v2 stub.
 - Inertia v2 SSR docs: https://inertiajs.com/docs/v2/advanced/server-side-rendering
 - FrankenPHP SSR docs (alternative we evaluated and rejected): https://frankenphp.dev/docs/hot-reload/
 
-## 🚧 Known Gotchas From v1 / pilot-app Experience
+## 🚧 Known Gotchas From v1 / the pilot project Experience
 
 - **`ssr.noExternal: true` is the practical default** — most React apps pull in CJS/directory-import packages that crash Node ESM otherwise. The build cost is acceptable.
 - **`window`/`document` access in component bodies is the #1 manual fix needed** — patchers can't auto-fix this; needs to be a doctor check + clear error message pointing user to the file.
