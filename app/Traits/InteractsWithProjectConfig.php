@@ -42,6 +42,50 @@ trait InteractsWithProjectConfig
     }
 
     /**
+     * Guard: the project folder name must exactly match the `name` field in
+     * .larakube.json. LaraKube uses the folder name in several places where a
+     * mismatch produces confusing failures (manifest application errors,
+     * orphaned hostPath mounts, image-tag mismatches, etc.). When the user
+     * clones a repo whose default folder name differs from the project name
+     * (case-only difference being the common case, e.g. `MyApp` vs
+     * `pilot-app`), this guard fails fast with explicit rename instructions
+     * instead of letting `up`/`heal` partially execute and leave a broken
+     * state. Returns true when names match (so callers can early-return on
+     * false).
+     */
+    protected function assertProjectFolderMatchesName(ConfigData $config): bool
+    {
+        $folderName = basename(getcwd());
+        $projectName = $config->getName();
+
+        if ($folderName === $projectName) {
+            return true;
+        }
+
+        $this->renderHeader();
+        $this->laraKubeError(
+            "Project folder '{$folderName}' doesn't match the project name '{$projectName}' in .larakube.json."
+        );
+        $this->newLine();
+
+        if (strtolower($folderName) === strtolower($projectName)) {
+            // Case-only difference — the common case for users cloning a repo
+            // whose GitHub name uses capitalization.
+            $this->line("  LaraKube currently requires an exact (case-sensitive) match. Rename the folder, then re-run:");
+            $this->newLine();
+            $this->line("  <fg=yellow>cd ..</>");
+            $this->line("  <fg=yellow>mv {$folderName} {$projectName}</>");
+            $this->line("  <fg=yellow>cd {$projectName}</>");
+        } else {
+            $this->line("  Either rename the folder to '{$projectName}', or update the <fg=cyan>name</> field in .larakube.json to '{$folderName}'.");
+        }
+
+        $this->newLine();
+
+        return false;
+    }
+
+    /**
      * Get the project configuration object.
      */
     protected function getProjectConfigObject(string $projectPath): ConfigData

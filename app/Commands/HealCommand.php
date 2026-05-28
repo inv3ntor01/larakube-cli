@@ -68,6 +68,10 @@ class HealCommand extends Command
             $config->setName($name);
         }
 
+        if (! $this->assertProjectFolderMatchesName($config)) {
+            return 1;
+        }
+
         $appName = $config->getName();
         $this->laraKubeInfo("Healing architectural masterpiece: {$appName}...");
 

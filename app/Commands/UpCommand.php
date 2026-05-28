@@ -185,6 +185,10 @@ class UpCommand extends Command
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
 
+        if ($config && ! $this->assertProjectFolderMatchesName($config)) {
+            return 1;
+        }
+
         // --- 🏗 COMPANION TOGGLE ---
         if ($this->option('companions')) {
             $config->withCompanions = true;

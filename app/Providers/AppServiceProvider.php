@@ -33,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
                     'make:tool',
 
                     // MCP Boilerplate
+                    'make:mcp-app-resource',
                     'make:mcp-prompt',
                     'make:mcp-resource',
                     'make:mcp-server',
