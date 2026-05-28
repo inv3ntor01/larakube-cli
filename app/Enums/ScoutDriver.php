@@ -300,9 +300,11 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             $files['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
-        // If the service is managed externally in production, remove it from the production manifest list
-        if (in_array($this->value, $config?->managedServices ?? [])) {
-            unset($files['production']);
+        // Drop overlay manifests for envs where this service is externally managed.
+        foreach ($config?->getEnvironments() ?? [] as $env) {
+            if (in_array($this->value, $config->getManaged($env), true)) {
+                unset($files[$env]);
+            }
         }
 
         return $files;

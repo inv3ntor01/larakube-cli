@@ -1,6 +1,7 @@
 <?php
 
 use App\Data\ConfigData;
+use App\Data\EnvironmentData;
 use App\Enums\IngressController;
 use App\Enums\PhpVersion;
 use App\Enums\ServerVariation;
@@ -9,7 +10,7 @@ test('Kustomize: AWS ALB production patch has valid indentation', function () {
     $config = new ConfigData(name: 'indent-test');
     $config->setServerVariation(ServerVariation::FPM_NGINX);
     $config->setPhpVersion(PhpVersion::PHP_8_5);
-    $config->ingressController = IngressController::AWS_ALB;
+    $config->environments['production'] = new EnvironmentData(ingress: IngressController::AWS_ALB);
 
     $manifests = generateManifestsAsArray($config);
 
@@ -32,7 +33,7 @@ test('Kustomize: NGINX production patch has valid indentation', function () {
     $config = new ConfigData(name: 'indent-test-nginx');
     $config->setServerVariation(ServerVariation::FPM_NGINX);
     $config->setPhpVersion(PhpVersion::PHP_8_5);
-    $config->ingressController = IngressController::NGINX;
+    $config->environments['production'] = new EnvironmentData(ingress: IngressController::NGINX);
 
     $manifests = generateManifestsAsArray($config);
 

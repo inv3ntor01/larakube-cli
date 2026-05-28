@@ -181,9 +181,11 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
-        // If the service is managed externally in production, remove it from the production manifest list
-        if (in_array($this->value, $config?->managedServices ?? [])) {
-            unset($manifests['production']);
+        // Drop overlay manifests for envs where this service is externally managed.
+        foreach ($config?->getEnvironments() ?? [] as $env) {
+            if (in_array($this->value, $config->getManaged($env), true)) {
+                unset($manifests[$env]);
+            }
         }
 
         return $manifests;

@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Data\ConfigData;
+use App\Data\EnvironmentData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
@@ -268,18 +269,20 @@ trait GathersInfrastructureConfig
         }
 
         // 14. Ingress Controller (Production)
-        if (! $config->ingressController) {
+        $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
+        if (! $prodEnv->ingress) {
             $controller = select(
                 label: 'Which Ingress Controller will you use in production?',
                 options: IngressController::getSelectOptions($config),
                 default: IngressController::TRAEFIK->value
             );
 
-            $config->ingressController = IngressController::from($controller);
+            $prodEnv->ingress = IngressController::from($controller);
+            $config->environments['production'] = $prodEnv;
         }
 
         // 15. Managed Services (Production)
-        if (empty($config->managedServices)) {
+        if (empty($config->getManaged('production'))) {
             $managedOptions = [];
             foreach ($config->getComponents() as $component) {
                 if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
@@ -288,11 +291,15 @@ trait GathersInfrastructureConfig
             }
 
             if (! empty($managedOptions)) {
-                $config->managedServices = multiselect(
+                $managed = multiselect(
                     label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache)?',
                     options: $managedOptions,
                     hint: 'These services will be orchestrated locally but skipped in production manifests.'
                 );
+
+                $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
+                $prodEnv->managed = $managed;
+                $config->environments['production'] = $prodEnv;
             }
         }
 

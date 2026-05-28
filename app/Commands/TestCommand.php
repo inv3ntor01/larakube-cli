@@ -81,7 +81,7 @@ class TestCommand extends Command
         // warning forever.
         if ($flagPassed && ! $driverSupportsProvisioning) {
             if ($driver === DatabaseDriver::SQLITE) {
-                $this->laraKubeInfo("Note: your project uses SQLite, so --db is unnecessary. Tests already use in-memory SQLite.");
+                $this->laraKubeInfo('Note: your project uses SQLite, so --db is unnecessary. Tests already use in-memory SQLite.');
             } else {
                 $this->laraKubeWarn("--db isn't supported for {$driver?->getLabel()} yet. Falling back to in-memory SQLite for tests.");
             }

@@ -59,16 +59,21 @@ class ConfigData extends Data
         /** @var array<DatabaseDriver> */
         public array $databases = [],
         public DeploymentStrategy $strategy = DeploymentStrategy::SINGLE_NODE,
-        public array $environments = ['local', 'production'],
+        /**
+         * Per-environment overrides, keyed by env name (local, production, staging).
+         * Holds EnvironmentData instances at rest; constructor promotes raw
+         * arrays from JSON because Spatie Data v4 can't auto-cast
+         * array<string, EnvironmentData> maps.
+         *
+         * @var array<string, EnvironmentData>
+         */
+        public array $environments = [],
         public ?string $productionImage = null,
-        public ?string $productionHost = null,
         public bool $githubActions = true,
         public bool $isSystem = false,
         public bool $isScaffolding = false,
         public bool $withCompanions = true,
         public bool $provisionTestDb = false,
-        public ?IngressController $ingressController = IngressController::TRAEFIK,
-        public array $managedServices = [],
         public array $lockedFiles = [],
         /** @var array<int, string> */
         public array $watchPaths = [
@@ -87,6 +92,22 @@ class ConfigData extends Data
     ) {
         if (empty($this->id)) {
             $this->id = (string) Str::uuid();
+        }
+
+        // Fresh-init default: every project gets local + production.
+        if (empty($this->environments)) {
+            $this->environments = [
+                'local' => new EnvironmentData,
+                'production' => new EnvironmentData,
+            ];
+        }
+
+        // Spatie Data v4 can't auto-cast array<string, EnvironmentData> from
+        // JSON maps, so promote any plain arrays loaded from .larakube.json.
+        foreach ($this->environments as $env => $data) {
+            if (is_array($data)) {
+                $this->environments[$env] = EnvironmentData::from($data);
+            }
         }
     }
 
@@ -168,9 +189,39 @@ class ConfigData extends Data
         return ! empty($this->blueprints);
     }
 
-    public function getFeatures(): array
+    /**
+     * Return features enabled on the project (or filtered to a specific env).
+     *
+     * Without $environment: the raw top-level feature list (project-wide).
+     * With $environment: the effective set for that env — top-level features
+     * filtered by each feature's defaultEnvironments() and the env's
+     * excludeFeatures, then unioned with the env's addFeatures opt-ins.
+     */
+    public function getFeatures(?string $environment = null): array
     {
-        return $this->features;
+        if ($environment === null) {
+            return $this->features;
+        }
+
+        $envData = $this->environments[$environment] ?? new EnvironmentData;
+        $effective = [];
+
+        foreach ($this->features as $feature) {
+            if (in_array($feature, $envData->excludeFeatures, true)) {
+                continue;
+            }
+            if (in_array($environment, $feature->defaultEnvironments(), true)) {
+                $effective[] = $feature;
+            }
+        }
+
+        foreach ($envData->addFeatures as $feature) {
+            if (! in_array($feature, $effective, true)) {
+                $effective[] = $feature;
+            }
+        }
+
+        return $effective;
     }
 
     /**
@@ -203,9 +254,9 @@ class ConfigData extends Data
         return ! empty($this->cacheDrivers);
     }
 
-    public function hasFeature(LaravelFeature $feature): bool
+    public function hasFeature(LaravelFeature $feature, ?string $environment = null): bool
     {
-        return in_array($feature, $this->getFeatures());
+        return in_array($feature, $this->getFeatures($environment), true);
     }
 
     public function getDatabase(): ?DatabaseDriver
@@ -234,9 +285,44 @@ class ConfigData extends Data
         ]), SORT_REGULAR);
     }
 
+    /**
+     * Names of all configured environments (e.g. ['local', 'production']).
+     * Use getEnvironment() to access an environment's full overrides.
+     *
+     * @return array<int, string>
+     */
     public function getEnvironments(): array
     {
-        return $this->environments;
+        return array_keys($this->environments);
+    }
+
+    public function getEnvironment(string $environment): ?EnvironmentData
+    {
+        return $this->environments[$environment] ?? null;
+    }
+
+    /**
+     * Services treated as external (not deployed by LaraKube) in a given env.
+     * Empty for envs LaraKube manages end-to-end. Production typically lists
+     * managed Postgres/Redis/etc. when external providers handle them.
+     *
+     * @return array<int, string>
+     */
+    public function getManaged(string $environment): array
+    {
+        return $this->getEnvironment($environment)?->managed ?? [];
+    }
+
+    /**
+     * Ingress controller for a given env. Each env can pick its own
+     * controller — staging on Traefik, QA on Nginx, production on AWS ALB
+     * is a legitimate setup when envs live in separate VPCs. Falls back
+     * to Traefik for envs that don't specify one (k3d's default; matches
+     * local reality).
+     */
+    public function getIngress(string $environment): IngressController
+    {
+        return $this->getEnvironment($environment)?->ingress ?? IngressController::TRAEFIK;
     }
 
     public function getScoutDriver(): ?ScoutDriver
@@ -302,7 +388,8 @@ class ConfigData extends Data
 
     public function getProductionHost(): string
     {
-        return $this->productionHost ?? "{$this->getName()}.dev.test";
+        return $this->getEnvironment('production')?->hosts['web']
+            ?? "{$this->getName()}.dev.test";
     }
 
     public function getProductionImage(): ?string
@@ -465,14 +552,35 @@ class ConfigData extends Data
 
     public function setProductionHost(string $host): self
     {
-        $this->productionHost = $host;
+        if (! isset($this->environments['production'])) {
+            $this->environments['production'] = new EnvironmentData;
+        }
+        $this->environments['production']->hosts['web'] = $host;
 
         return $this;
     }
 
+    /**
+     * Replace the environment map. Accepts either:
+     *   - an associative map keyed by env name with EnvironmentData or array values
+     *   - a legacy flat list of env names (promoted to empty EnvironmentData)
+     *
+     * The list form is kept so callers that just need "give me local+staging+prod"
+     * can pass `['local', 'staging', 'production']` without constructing each entry.
+     */
     public function setEnvironments(array $envs): self
     {
-        $this->environments = $envs;
+        $map = [];
+        foreach ($envs as $key => $value) {
+            if (is_int($key) && is_string($value)) {
+                $map[$value] = new EnvironmentData;
+            } elseif (is_array($value)) {
+                $map[$key] = EnvironmentData::from($value);
+            } else {
+                $map[$key] = $value;
+            }
+        }
+        $this->environments = $map;
 
         return $this;
     }
@@ -633,7 +741,12 @@ class ConfigData extends Data
 
     // --- 🏗 ARCHITECTURAL MAPPING ---
 
-    public function getComponents(): array
+    /**
+     * All project components (blueprints, drivers, features). Pass
+     * $environment to filter features by env scope — drivers and
+     * blueprints are env-agnostic so they always appear.
+     */
+    public function getComponents(?string $environment = null): array
     {
         return array_filter([
             ...$this->blueprints,
@@ -642,7 +755,7 @@ class ConfigData extends Data
             ...$this->getCacheDrivers(),
             ...$this->getScoutDrivers(),
             ...$this->getObjectStorages(),
-            ...$this->getFeatures(),
+            ...$this->getFeatures($environment),
         ]);
     }
 
@@ -740,8 +853,9 @@ class ConfigData extends Data
 
     public function getAppUrl(string $environment = 'local'): string
     {
-        if ($environment === 'production' && $this->productionHost) {
-            return "https://{$this->productionHost}";
+        $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
+        if ($environment === 'production' && $webHost) {
+            return "https://{$webHost}";
         }
 
         return "https://{$this->getName()}.dev.test";
@@ -749,8 +863,9 @@ class ConfigData extends Data
 
     public function getServiceHost(string $service, string $environment = 'local'): string
     {
-        if ($environment === 'production' && $this->productionHost) {
-            return "{$service}-{$this->productionHost}";
+        $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
+        if ($environment === 'production' && $webHost) {
+            return "{$service}-{$webHost}";
         }
 
         return "{$service}-{$this->getName()}.dev.test";
@@ -786,7 +901,7 @@ class ConfigData extends Data
             $envs['VITE_URL'] = 'https://'.$this->getServiceHost('vite', 'local');
         }
 
-        foreach ($this->getComponents() as $component) {
+        foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasEnvironmentVariables && ! ($component instanceof ServerVariation)) {
                 $envs = array_merge($envs, $component->getPublicEnvironmentVariables($this, $environment));
             }
@@ -798,7 +913,7 @@ class ConfigData extends Data
     public function getAllSecretEnvironmentVariables(string $environment = 'local'): array
     {
         $envs = $this->serverVariation?->getSecretEnvironmentVariables($this, $environment) ?? [];
-        foreach ($this->getComponents() as $component) {
+        foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasEnvironmentVariables && ! ($component instanceof ServerVariation)) {
                 $envs = array_merge($envs, $component->getSecretEnvironmentVariables($this, $environment));
             }
@@ -828,12 +943,13 @@ class ConfigData extends Data
     {
         $hosts = [parse_url($this->getAppUrl($environment), PHP_URL_HOST) => 'Primary Application'];
         if ($this->frontend?->requiresNodePod()) {
-            $viteHost = ($environment === 'production' && $this->productionHost)
-                ? "vite-{$this->productionHost}"
+            $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
+            $viteHost = ($environment === 'production' && $webHost)
+                ? "vite-{$webHost}"
                 : "vite-{$this->getName()}.dev.test";
             $hosts[$viteHost] = 'Vite Asset Server';
         }
-        foreach ($this->getComponents() as $component) {
+        foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasHosts) {
                 $hosts = array_merge($hosts, $component->getHosts($this, $environment));
             }

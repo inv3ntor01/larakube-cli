@@ -5,6 +5,7 @@ namespace App\Commands;
 use App\Contracts\HasHiddenComponents;
 use App\Contracts\HasLifecycleHooks;
 use App\Data\ConfigData;
+use App\Data\EnvironmentData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
@@ -626,13 +627,15 @@ class AddCommand extends Command
     {
         $this->laraKubeInfo('Updating Cloud Configuration...');
 
-        // 1. Ingress Controller
+        // 1. Ingress Controller (production)
+        $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
         $controller = select(
             label: 'Which Ingress Controller will you use in production?',
             options: IngressController::getSelectOptions($config),
-            default: $config->ingressController?->value ?? IngressController::TRAEFIK->value
+            default: $prodEnv->ingress?->value ?? IngressController::TRAEFIK->value
         );
-        $config->ingressController = IngressController::from($controller);
+        $prodEnv->ingress = IngressController::from($controller);
+        $config->environments['production'] = $prodEnv;
 
         // 2. Managed Services
         $managedOptions = [];
@@ -643,12 +646,16 @@ class AddCommand extends Command
         }
 
         if (! empty($managedOptions)) {
-            $config->managedServices = multiselect(
+            $managed = multiselect(
                 label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache)?',
                 options: $managedOptions,
-                default: $config->managedServices,
+                default: $config->getManaged('production'),
                 hint: 'These services will be orchestrated locally but skipped in production manifests.'
             );
+
+            $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
+            $prodEnv->managed = $managed;
+            $config->environments['production'] = $prodEnv;
         }
 
         $this->finishArchitecturalPivot($config);

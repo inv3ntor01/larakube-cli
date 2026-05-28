@@ -73,6 +73,24 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
+    /**
+     * Environments where this feature is enabled by default when listed in
+     * ConfigData::$features. Per-environment addFeatures/excludeFeatures on
+     * EnvironmentData can override this for unusual setups, but the default
+     * keeps blueprints lean — boost stays out of production, ssr stays out
+     * of local, mailpit stays out of production, etc.
+     *
+     * @return array<int, string>
+     */
+    public function defaultEnvironments(): array
+    {
+        return match ($this) {
+            self::BOOST, self::AI, self::MCP, self::MAILPIT => ['local'],
+            self::SSR => ['production'],
+            default => ['local', 'production', 'staging'],
+        };
+    }
+
     public function getLabel(): string
     {
         return match ($this) {

@@ -6,9 +6,8 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     traefik.ingress.kubernetes.io/service.serversscheme: {{ $config->getServerVariation()->traefikScheme() }}
-@if($config->ingressController && $config->ingressController !== \App\Enums\IngressController::TRAEFIK)
-    # Production Controller Overrides (Local defaults shown above)
-    # The actual production annotations will be applied via patches
+@if($config->getIngress('local') !== \App\Enums\IngressController::TRAEFIK)
+    # Local environment overrides Traefik defaults via overlay patches
 @endif
 spec:
   rules:

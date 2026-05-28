@@ -3,11 +3,13 @@
 namespace Tests\Unit;
 
 use App\Data\ConfigData;
+use App\Data\EnvironmentData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\DeploymentStrategy;
 use App\Enums\FrontendStack;
+use App\Enums\IngressController;
 use App\Enums\LaravelFeature;
 use App\Enums\OperatingSystem;
 use App\Enums\PhpVersion;
@@ -70,10 +72,107 @@ class ConfigDataTest extends TestCase
         $config = ConfigData::from([]);
 
         $this->assertEquals(DeploymentStrategy::SINGLE_NODE, $config->strategy);
-        $this->assertEquals(['local', 'production'], $config->environments);
+        $this->assertSame(['local', 'production'], $config->getEnvironments());
+        $this->assertInstanceOf(EnvironmentData::class, $config->getEnvironment('local'));
+        $this->assertInstanceOf(EnvironmentData::class, $config->getEnvironment('production'));
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('local'));
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('production'));
         $this->assertTrue($config->githubActions);
         $this->assertFalse($config->isSystem);
         $this->assertFalse($config->isScaffolding);
+    }
+
+    public function test_environments_are_promoted_from_json_array_shape()
+    {
+        $config = ConfigData::from([
+            'environments' => [
+                'local' => ['managed' => [], 'hosts' => []],
+                'production' => [
+                    'managed' => ['postgres', 'redis'],
+                    'hosts' => ['web' => 'example.com'],
+                ],
+            ],
+        ]);
+
+        $this->assertInstanceOf(EnvironmentData::class, $config->getEnvironment('production'));
+        $this->assertSame(['postgres', 'redis'], $config->getManaged('production'));
+        $this->assertSame([], $config->getManaged('local'));
+        $this->assertSame('example.com', $config->getEnvironment('production')->hosts['web']);
+        $this->assertSame('https://example.com', $config->getAppUrl('production'));
+    }
+
+    public function test_features_filter_by_env_with_enum_defaults()
+    {
+        // BOOST + MCP default to local only; HORIZON to all envs; SSR to prod only.
+        $config = ConfigData::from([
+            'features' => ['boost', 'mcp', 'horizon', 'ssr'],
+        ]);
+
+        $local = $config->getFeatures('local');
+        $this->assertContains(LaravelFeature::BOOST, $local);
+        $this->assertContains(LaravelFeature::MCP, $local);
+        $this->assertContains(LaravelFeature::HORIZON, $local);
+        $this->assertNotContains(LaravelFeature::SSR, $local);
+
+        $prod = $config->getFeatures('production');
+        $this->assertContains(LaravelFeature::HORIZON, $prod);
+        $this->assertContains(LaravelFeature::SSR, $prod);
+        $this->assertNotContains(LaravelFeature::BOOST, $prod);
+        $this->assertNotContains(LaravelFeature::MCP, $prod);
+    }
+
+    public function test_environment_overrides_can_add_or_exclude_features()
+    {
+        $config = ConfigData::from([
+            'features' => ['horizon', 'boost'],
+            'environments' => [
+                'local' => [
+                    'excludeFeatures' => ['horizon'],
+                ],
+                'production' => [
+                    'addFeatures' => ['boost'],
+                ],
+            ],
+        ]);
+
+        $this->assertNotContains(LaravelFeature::HORIZON, $config->getFeatures('local'));
+        $this->assertContains(LaravelFeature::BOOST, $config->getFeatures('local'));
+        $this->assertContains(LaravelFeature::HORIZON, $config->getFeatures('production'));
+        $this->assertContains(LaravelFeature::BOOST, $config->getFeatures('production'));
+    }
+
+    public function test_set_production_host_writes_into_environment_map()
+    {
+        $config = ConfigData::from([]);
+        $config->setProductionHost('app.example.com');
+
+        $this->assertSame('app.example.com', $config->getProductionHost());
+        $this->assertSame('app.example.com', $config->getEnvironment('production')->hosts['web']);
+    }
+
+    public function test_each_environment_can_choose_its_own_ingress_controller()
+    {
+        $config = ConfigData::from([
+            'environments' => [
+                'local' => [],
+                'staging' => ['ingress' => 'traefik'],
+                'qa' => ['ingress' => 'nginx'],
+                'production' => ['ingress' => 'aws-alb'],
+            ],
+        ]);
+
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('local'));
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('staging'));
+        $this->assertEquals(IngressController::NGINX, $config->getIngress('qa'));
+        $this->assertEquals(IngressController::AWS_ALB, $config->getIngress('production'));
+    }
+
+    public function test_get_ingress_defaults_to_traefik_for_unconfigured_environments()
+    {
+        $config = ConfigData::from(['environments' => ['local' => [], 'production' => []]]);
+
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('local'));
+        $this->assertEquals(IngressController::TRAEFIK, $config->getIngress('production'));
     }
 
     public function test_build_wait_for_command()

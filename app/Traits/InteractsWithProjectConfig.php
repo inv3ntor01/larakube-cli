@@ -71,9 +71,9 @@ trait InteractsWithProjectConfig
         if (strtolower($folderName) === strtolower($projectName)) {
             // Case-only difference — the common case for users cloning a repo
             // whose GitHub name uses capitalization.
-            $this->line("  LaraKube currently requires an exact (case-sensitive) match. Rename the folder, then re-run:");
+            $this->line('  LaraKube currently requires an exact (case-sensitive) match. Rename the folder, then re-run:');
             $this->newLine();
-            $this->line("  <fg=yellow>cd ..</>");
+            $this->line('  <fg=yellow>cd ..</>');
             $this->line("  <fg=yellow>mv {$folderName} {$projectName}</>");
             $this->line("  <fg=yellow>cd {$projectName}</>");
         } else {
