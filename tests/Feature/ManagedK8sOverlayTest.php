@@ -103,3 +103,63 @@ test('Phase 2: in-cluster service FQDNs follow the overridden namespace', functi
     expect($config->getInternalFqdn(CacheDriver::REDIS, 'staging'))
         ->toEndWith('.eksapp-staging.svc.cluster.local');
 });
+
+// --- Phase 3: ServiceAccount + IRSA ---
+
+test('Phase 3: no ServiceAccount is emitted by default (matches today)', function () {
+    $manifests = generateManifestsAsArray(eksConfig([]));
+
+    expect($manifests)->not->toHaveKey('overlays/production/serviceaccount.yaml');
+    expect(prodWebPatch(eksConfig([])) ['spec']['template']['spec'])
+        ->not->toHaveKey('serviceAccountName');
+});
+
+test('Phase 3: opting into a serviceAccount emits the SA + IRSA annotation and binds the pods', function () {
+    $config = eksConfig([
+        'serviceAccount' => 'eksapp-sa',
+        'serviceAccountAnnotations' => ['eks.amazonaws.com/role-arn' => 'arn:aws:iam::123:role/eksapp'],
+    ]);
+    $manifests = generateManifestsAsArray($config);
+
+    // ServiceAccount resource with the IRSA annotation.
+    $sa = $manifests['overlays/production/serviceaccount.yaml'];
+    expect($sa['kind'])->toBe('ServiceAccount')
+        ->and($sa['metadata']['name'])->toBe('eksapp-sa')
+        ->and($sa['metadata']['annotations']['eks.amazonaws.com/role-arn'])
+            ->toBe('arn:aws:iam::123:role/eksapp');
+
+    // Registered as an overlay resource.
+    expect($manifests['overlays/production/kustomization.yaml']['resources'])
+        ->toContain('serviceaccount.yaml');
+
+    // App pods reference it.
+    expect(prodWebPatch($config)['spec']['template']['spec']['serviceAccountName'])
+        ->toBe('eksapp-sa');
+});
+
+// --- Phase 4: ingress annotation passthrough ---
+
+test('Phase 4: ingress-patch carries only controller defaults when no extras set', function () {
+    $ingress = generateManifestsAsArray(eksConfig([]))['overlays/production/ingress-patch.yaml'];
+    $annotations = $ingress['metadata']['annotations'];
+
+    expect($annotations)->toHaveKey('traefik.ingress.kubernetes.io/router.tls')
+        ->and($annotations)->not->toHaveKey('alb.ingress.kubernetes.io/certificate-arn');
+});
+
+test('Phase 4: per-env annotations merge in, free-form JSON values survive as valid YAML', function () {
+    $config = eksConfig(['ingressAnnotations' => [
+        'alb.ingress.kubernetes.io/certificate-arn' => 'arn:aws:acm::123:certificate/abc',
+        'alb.ingress.kubernetes.io/conditions.web' => '[{"field":"host-header","hostHeaderConfig":{"values":["eksapp.com"]}}]',
+    ]]);
+
+    $annotations = generateManifestsAsArray($config)['overlays/production/ingress-patch.yaml']['metadata']['annotations'];
+
+    expect($annotations['alb.ingress.kubernetes.io/certificate-arn'])
+        ->toBe('arn:aws:acm::123:certificate/abc')
+        // round-trips through json_encode + YAML parse unchanged
+        ->and($annotations['alb.ingress.kubernetes.io/conditions.web'])
+        ->toBe('[{"field":"host-header","hostHeaderConfig":{"values":["eksapp.com"]}}]')
+        // controller defaults still present
+        ->and($annotations)->toHaveKey('traefik.ingress.kubernetes.io/router.tls');
+});

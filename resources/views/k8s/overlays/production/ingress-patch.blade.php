@@ -12,6 +12,14 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 @endif
 @endif
+@if($extraAnnotations = $config->getIngressAnnotations($environment))
+{{-- Per-env passthrough (ACM cert ARN, security groups, ALB conditions/actions).
+     JSON-encoded so free-form values stay valid YAML. Dumb merge: extends the
+     controller defaults above. --}}
+@foreach($extraAnnotations as $key => $value)
+    {{ $key }}: {!! json_encode($value) !!}
+@endforeach
+@endif
 spec:
 @if($config->getIngress($environment)?->getIngressClass())
   ingressClassName: {{ $config->getIngress($environment)->getIngressClass() }}

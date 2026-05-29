@@ -11,6 +11,9 @@ spec:
   replicas: {{ $config->getStrategy($environment) === \App\Enums\DeploymentStrategy::MULTI_NODE_HA ? 2 : 1 }}
   template:
     spec:
+@if($serviceAccount = $config->getServiceAccount($environment))
+      serviceAccountName: {{ $serviceAccount }}
+@endif
       containers:
         - name: php
           imagePullPolicy: Always

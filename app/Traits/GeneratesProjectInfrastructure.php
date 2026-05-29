@@ -219,6 +219,15 @@ trait GeneratesProjectInfrastructure
             }
         }
 
+        // Per-env ServiceAccount (e.g. IRSA on EKS) — only when the env opts
+        // in. User app pods have no SA by default, so this is purely additive.
+        foreach ($cloudEnvs as $env) {
+            if ($config->getServiceAccount($env)) {
+                $renderStub("overlays/$env/serviceaccount.yaml", $env, $config->getNamespace($env), 'k8s.overlays.production.serviceaccount');
+                $this->appendToKustomization($k8sPath, "overlays/$env", 'serviceaccount.yaml');
+            }
+        }
+
         // App storage PVCs live in each environment's overlay (not base), so
         // their accessMode can follow that env's deployment strategy
         // (ReadWriteOnce for single-node, ReadWriteMany for multi-node-HA).
