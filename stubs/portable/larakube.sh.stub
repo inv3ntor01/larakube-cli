@@ -227,21 +227,34 @@ cmd_tls() {
     local ns crt="${CERT_DIR}/local-dev.pem" key="${CERT_DIR}/local-dev-key.pem"
     [ -f "$crt" ] && [ -f "$key" ] || die "Local dev cert not found in ${CERT_DIR}."
     ns="$(traefik_ns)" || die "No Traefik ingress controller found (looked in kube-system, traefik). On k3s it's built-in; otherwise install an ingress controller or use the LaraKube CLI."
+
+    # Pick the TLSStore API version from whichever CRD is actually installed
+    # (Traefik v3 = traefik.io, v2 = traefik.containo.us).
+    local api=""
+    if kubectl get crd tlsstores.traefik.io >/dev/null 2>&1; then
+        api="traefik.io/v1alpha1"
+    elif kubectl get crd tlsstores.traefik.containo.us >/dev/null 2>&1; then
+        api="traefik.containo.us/v1alpha1"
+    else
+        die "Traefik in namespace '${ns}' has no TLSStore CRD, so 'tls' can't configure it.
+   • If you set up local TLS with the LaraKube CLI, it's already handled — skip this command; HTTPS already works.
+   • A vanilla k3s Traefik ships the TLSStore CRD, so this command works there."
+    fi
+
     info "Loading local cert into Traefik namespace '${ns}'…"
     kubectl create secret tls larakube-local-tls -n "$ns" --cert="$crt" --key="$key" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-    info "Setting it as Traefik's default certificate…"
-    # Traefik v3 uses traefik.io; older v2 uses traefik.containo.us. Try v3, fall back.
-    local store='
+    info "Setting it as Traefik's default certificate (${api})…"
+    kubectl apply -f - <<YAML >/dev/null
+apiVersion: ${api}
+kind: TLSStore
 metadata:
   name: default
-  namespace: '"${ns}"'
+  namespace: ${ns}
 spec:
   defaultCertificate:
-    secretName: larakube-local-tls'
-    printf 'apiVersion: traefik.io/v1alpha1\nkind: TLSStore%s\n' "$store" | kubectl apply -f - >/dev/null 2>&1 \
-        || printf 'apiVersion: traefik.containo.us/v1alpha1\nkind: TLSStore%s\n' "$store" | kubectl apply -f - >/dev/null \
-        || die "Could not create a Traefik TLSStore (unrecognized Traefik version). See LOCAL_DEV.md."
+    secretName: larakube-local-tls
+YAML
     info "Done. Run './larakube.sh trust' so your machine accepts the cert."
 }
 
