@@ -194,7 +194,7 @@ class ConfigData extends Data
      *
      * Without $environment: the raw top-level feature list (project-wide).
      * With $environment: the effective set for that env — top-level features
-     * filtered by each feature's defaultEnvironments() and the env's
+     * filtered by each feature's appliesToEnvironment() rule and the env's
      * excludeFeatures, then unioned with the env's addFeatures opt-ins.
      */
     public function getFeatures(?string $environment = null): array
@@ -210,7 +210,7 @@ class ConfigData extends Data
             if (in_array($feature, $envData->excludeFeatures, true)) {
                 continue;
             }
-            if (in_array($environment, $feature->defaultEnvironments(), true)) {
+            if ($feature->appliesToEnvironment($environment)) {
                 $effective[] = $feature;
             }
         }
@@ -299,6 +299,21 @@ class ConfigData extends Data
     public function getEnvironment(string $environment): ?EnvironmentData
     {
         return $this->environments[$environment] ?? null;
+    }
+
+    /**
+     * Configured environments excluding 'local' — i.e. the cloud/remote
+     * environments that share the production-style overlay shape. Drives
+     * environment-aware manifest generation.
+     *
+     * @return array<int, string>
+     */
+    public function getCloudEnvironments(): array
+    {
+        return array_values(array_filter(
+            $this->getEnvironments(),
+            fn (string $env) => $env !== 'local'
+        ));
     }
 
     public function hasEnvironment(string $environment): bool
@@ -448,10 +463,20 @@ class ConfigData extends Data
         return $this->packageManager ?? PackageManager::NPM;
     }
 
+    /**
+     * Resolved web hostname for an environment — the env's configured `web`
+     * host, or the local dev.test fallback. Used by ingress generation so
+     * every environment routes to its own domain.
+     */
+    public function getWebHost(string $environment): string
+    {
+        return $this->getEnvironment($environment)?->hosts['web']
+            ?? "{$this->getName()}.dev.test";
+    }
+
     public function getProductionHost(): string
     {
-        return $this->getEnvironment('production')?->hosts['web']
-            ?? "{$this->getName()}.dev.test";
+        return $this->getWebHost('production');
     }
 
     public function getProductionImage(): ?string

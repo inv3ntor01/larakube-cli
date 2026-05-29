@@ -6,6 +6,7 @@ use App\Contracts\HasPromptableHosts;
 use App\Data\ConfigData;
 use App\Data\EnvironmentData;
 use App\Enums\IngressController;
+use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
@@ -16,7 +17,7 @@ use function Laravel\Prompts\text;
 
 class EnvCommand extends Command
 {
-    use InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -45,7 +46,6 @@ class EnvCommand extends Command
 
         $projectPath = getcwd();
         $config = $this->getProjectConfigObject($projectPath);
-        $appName = $config->getName() ?? basename($projectPath);
 
         $envName = $this->argument('name') ?? text(
             label: 'What is the name of the new environment?',
@@ -53,66 +53,42 @@ class EnvCommand extends Command
             required: true
         );
 
-        $baseOverlayPath = "{$projectPath}/.infrastructure/k8s/overlays";
-        $newEnvPath = "{$baseOverlayPath}/{$envName}";
-
-        if (! is_dir("{$baseOverlayPath}/production")) {
-            $this->laraKubeError('Base production environment not found.');
-
-            return 1;
+        // 1. Per-environment .env file (seeded from the base .env).
+        $newEnvFile = ".env.{$envName}";
+        if (! file_exists($projectPath.'/'.$newEnvFile) && file_exists($projectPath.'/.env')) {
+            copy($projectPath.'/.env', $projectPath.'/'.$newEnvFile);
+            $this->laraKubeInfo("Created {$newEnvFile}");
         }
 
-        if (is_dir($newEnvPath)) {
-            $this->laraKubeInfo("Environment '{$envName}' filesystem structure already exists.");
-        } else {
-            $this->laraKubeInfo("Creating environment '{$envName}'...");
-
-            @mkdir($newEnvPath, 0755, true);
-
-            // 1. Create .env.{env} file
-            $newEnvFile = ".env.{$envName}";
-            if (! file_exists($projectPath.'/'.$newEnvFile)) {
-                copy($projectPath.'/.env', $projectPath.'/'.$newEnvFile);
-                $this->laraKubeInfo("Created {$newEnvFile}");
-            }
-
-            // 2. Update .gitignore
-            $gitignorePath = $projectPath.'/.gitignore';
-            if (file_exists($gitignorePath)) {
-                $gitignore = file_get_contents($gitignorePath);
-                if (! str_contains($gitignore, '.env.*')) {
-                    $gitignore .= "\n.env.*\n";
-                    file_put_contents($gitignorePath, $gitignore);
-                    $this->laraKubeInfo('Updated .gitignore to exclude .env.* files');
-                }
-            }
-
-            // Copy from production as a safe base
-            $files = ['kustomization.yaml', 'namespace.yaml', 'deployment-patch.yaml', 'ingress-patch.yaml'];
-            foreach ($files as $file) {
-                if (! file_exists("{$baseOverlayPath}/production/{$file}")) {
-                    continue;
-                }
-
-                $content = file_get_contents("{$baseOverlayPath}/production/{$file}");
-
-                // Update the namespace in the new files
-                $oldNamespace = "{$appName}-production";
-                $newNamespace = "{$appName}-{$envName}";
-                $content = str_replace($oldNamespace, $newNamespace, $content);
-
-                file_put_contents("{$newEnvPath}/{$file}", $content);
+        // 2. Keep .env.* out of version control.
+        $gitignorePath = $projectPath.'/.gitignore';
+        if (file_exists($gitignorePath)) {
+            $gitignore = file_get_contents($gitignorePath);
+            if (! str_contains($gitignore, '.env.*')) {
+                file_put_contents($gitignorePath, $gitignore."\n.env.*\n");
+                $this->laraKubeInfo('Updated .gitignore to exclude .env.* files');
             }
         }
 
-        // 3. Update Project DNA — gather per-env settings if this is a fresh env
+        // 3. Update Project DNA — gather per-env settings if this is a fresh env.
         if (! $config->hasEnvironment($envName)) {
+            $this->laraKubeInfo("Creating environment '{$envName}'...");
             $envData = $this->gatherEnvironmentData($config, $envName);
             $config->addEnvironment($envName, $envData);
         } else {
             $this->laraKubeInfo("Environment '{$envName}' already exists in DNA; keeping current settings.");
         }
         $this->saveProjectConfig($projectPath, $config);
+
+        // 4. Regenerate manifests from the blueprint. The architectural engine
+        // is environment-aware, so this produces a complete overlays/{$envName}
+        // reflecting THIS env's ingress, hosts, managed services, and feature
+        // set — not a copy of production.
+        $this->withSpin("Generating manifests for '{$envName}' (and refreshing all environments)...", function () use ($config) {
+            $this->orchestrateProjectScaffolding($config, false, false);
+
+            return true;
+        });
 
         $this->laraKubeInfo("Environment '{$envName}' is now part of your project DNA.");
         $this->newLine();

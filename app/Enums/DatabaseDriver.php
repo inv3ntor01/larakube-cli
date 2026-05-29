@@ -15,13 +15,14 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\RemovableWhenManaged;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
+enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -214,19 +215,19 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MYSQL => [
                 'base' => ['mysql-deployment.yaml'],
                 'local' => ['mysql-volumes.yaml'],
-                'production' => ['mysql-volumes.yaml'],
+                'cloud' => ['mysql-volumes.yaml'],
                 'patches' => ['mysql-patch.yaml'],
             ],
             self::MARIADB => [
                 'base' => ['mariadb-deployment.yaml'],
                 'local' => ['mariadb-volumes.yaml'],
-                'production' => ['mariadb-volumes.yaml'],
+                'cloud' => ['mariadb-volumes.yaml'],
                 'patches' => ['mariadb-patch.yaml'],
             ],
             self::POSTGRESQL => [
                 'base' => ['postgres-deployment.yaml'],
                 'local' => ['postgres-volumes.yaml'],
-                'production' => ['postgres-volumes.yaml'],
+                'cloud' => ['postgres-volumes.yaml'],
                 'patches' => ['postgres-patch.yaml'],
             ],
             self::MONGODB => [
@@ -240,14 +241,21 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
-        // Drop overlay manifests for envs where this service is externally managed.
-        foreach ($config?->getEnvironments() ?? [] as $env) {
-            if (in_array($this->value, $config->getManaged($env), true)) {
-                unset($manifests[$env]);
-            }
+        return $manifests;
+    }
+
+    public function getManagedResources(ConfigData $config): array
+    {
+        if ($this === self::SQLITE) {
+            return [];
         }
 
-        return $manifests;
+        $name = $this->getPodName($config);
+
+        return [
+            ['kind' => $this === self::MONGODB ? 'StatefulSet' : 'Deployment', 'name' => $name],
+            ['kind' => 'Service', 'name' => $name],
+        ];
     }
 
     public function getDockerImage(?ConfigData $config = null): string

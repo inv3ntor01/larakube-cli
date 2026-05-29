@@ -24,7 +24,7 @@ use Spatie\LaravelData\Data;
  * Common-case features (horizon, queues, reverb, scheduler, ssr, boost,
  * mailpit, etc.) live in ConfigData::$features at the project level. Each
  * LaravelFeature enum case declares its natural environment scope via
- * defaultEnvironments(), and ConfigData::getFeatures($env) filters by it.
+ * appliesToEnvironment(), and ConfigData::getFeatures($env) filters by it.
  * That keeps blueprints lean — most projects need neither addFeatures
  * nor excludeFeatures.
  */
@@ -49,14 +49,14 @@ class EnvironmentData extends Data
         public array $hosts = [],
         /**
          * Features to enable in this env that would otherwise be excluded
-         * by their enum's defaultEnvironments() rule.
+         * by their enum's appliesToEnvironment() rule.
          *
          * @var array<int, LaravelFeature>
          */
         public array $addFeatures = [],
         /**
          * Features to disable in this env that would otherwise be enabled
-         * by their enum's defaultEnvironments() rule.
+         * by their enum's appliesToEnvironment() rule.
          *
          * @var array<int, LaravelFeature>
          */

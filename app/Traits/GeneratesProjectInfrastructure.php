@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Contracts\HasKubernetesFiles;
+use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use Random\RandomException;
@@ -144,46 +145,44 @@ trait GeneratesProjectInfrastructure
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');
 
-        // 1. Generate consolidated core stubs (Stacked Architecture)
-        $stubs = [
+        // 1. Generate consolidated core stubs (Stacked Architecture).
+        // Cloud overlays (production, staging, qa, …) all share the same
+        // environment-parameterized templates that live under
+        // resources/views/k8s/overlays/production — they're rendered once per
+        // cloud environment with that env's namespace + environment context.
+        $cloudEnvs = $config->getCloudEnvironments();
+
+        $baseStubs = [
             'base/kustomization.yaml',
             'base/laravel.yaml',
             'base/config.yaml',
             'base/volumes.yaml',
+        ];
+
+        $localStubs = [
             'overlays/local/kustomization.yaml',
             'overlays/local/infrastructure.yaml',
             'overlays/local/patches.yaml',
             'overlays/local/config-patch.yaml',
             'overlays/local/pvc-patch.yaml',
-            'overlays/production/kustomization.yaml',
-            'overlays/production/namespace.yaml',
-            'overlays/production/deployment-patch.yaml',
-            'overlays/production/ingress-patch.yaml',
-            'overlays/production/config-patch.yaml',
         ];
-
         if ($config->getFrontend()?->requiresNodePod()) {
-            $stubs[] = 'overlays/local/node-deployment.yaml';
+            $localStubs[] = 'overlays/local/node-deployment.yaml';
         }
 
-        foreach ($stubs as $stub) {
-            $namespace = $appName;
-            $environment = 'local';
+        $cloudStubFiles = [
+            'kustomization.yaml',
+            'namespace.yaml',
+            'deployment-patch.yaml',
+            'ingress-patch.yaml',
+            'config-patch.yaml',
+        ];
 
-            if (str_contains($stub, 'overlays/local')) {
-                $namespace .= '-local';
-                $environment = 'local';
-            } elseif (str_contains($stub, 'overlays/production')) {
-                $namespace .= '-production';
-                $environment = 'production';
-            }
+        $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
+        $workspacePath = dirname($config->getPath());
 
-            // Calculate environment-aware command
+        $renderStub = function (string $stub, string $environment, string $namespace, string $viewName) use ($config, $k8sPath, $binaryPath, $workspacePath) {
             $command = $config->getServerVariation()?->getStartCommand($environment === 'local') ?? '[]';
-            $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
-            $workspacePath = dirname($config->getPath());
-
-            $viewName = 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub);
             $content = view($viewName, [
                 'config' => $config,
                 'namespace' => $namespace,
@@ -193,49 +192,130 @@ trait GeneratesProjectInfrastructure
                 'workspacePath' => $workspacePath,
             ])->render();
 
-            $fullPath = "$k8sPath/$stub";
             if (! $config->isLocked(".infrastructure/k8s/{$stub}")) {
-                file_put_contents($fullPath, $content);
+                file_put_contents("$k8sPath/$stub", $content);
+            }
+        };
+
+        // Base layer (environment-agnostic; rendered with the local command
+        // context and the bare app namespace, matching prior behaviour).
+        foreach ($baseStubs as $stub) {
+            $renderStub($stub, 'local', $appName, 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub));
+        }
+
+        // Local overlay.
+        foreach ($localStubs as $stub) {
+            $renderStub($stub, 'local', "{$appName}-local", 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub));
+        }
+
+        // Cloud overlays — one directory per non-local environment.
+        foreach ($cloudEnvs as $env) {
+            @mkdir("$k8sPath/overlays/$env", 0755, true);
+            foreach ($cloudStubFiles as $file) {
+                $stub = "overlays/$env/$file";
+                $viewName = 'k8s.overlays.production.'.str_replace('.yaml', '', $file);
+                $renderStub($stub, $env, "{$appName}-{$env}", $viewName);
             }
         }
 
-        // 2. APPLY ACTIONS & COLLECT CATEGORIZED MANIFESTS
-        $manifests = [
-            'base' => [],
-            'local' => [],
-            'production' => [],
-            'patches' => [],
-        ];
-
-        // Add Features, Databases, Cache, Object Storage
-        $pods = $config->getComponents();
-
-        foreach ($pods as $pod) {
+        // 2. APPLY ACTIONS (write component-owned manifest files to disk)
+        foreach ($config->getComponents() as $pod) {
             if ($pod instanceof HasKubernetesFiles) {
                 $pod->updateK8s($config);
-                $actionFiles = $pod->getManifestFiles($config);
-                foreach (['base', 'local', 'production', 'patches'] as $key) {
-                    if (isset($actionFiles[$key])) {
-                        $manifests[$key] = array_merge($manifests[$key], $actionFiles[$key]);
-                    }
-                }
             }
         }
 
         // 3. SYNCHRONIZED REGISTRATION (Explicit Deduplication)
-        foreach (array_unique($manifests['base']) as $file) {
+        // Base + local are environment-agnostic — collected from the full
+        // component set.
+        $base = $local = $localPatches = [];
+        foreach ($config->getComponents() as $pod) {
+            if (! $pod instanceof HasKubernetesFiles) {
+                continue;
+            }
+            $files = $pod->getManifestFiles($config);
+            $base = array_merge($base, $files['base'] ?? []);
+            $local = array_merge($local, $files['local'] ?? []);
+            $localPatches = array_merge($localPatches, $files['patches'] ?? []);
+        }
+
+        foreach (array_unique($base) as $file) {
             $this->appendToKustomization($k8sPath, 'base', $file);
         }
-        foreach (array_unique($manifests['local']) as $file) {
+        foreach (array_unique($local) as $file) {
             $this->appendToKustomization($k8sPath, 'overlays/local', $file);
         }
-        foreach (array_unique($manifests['production']) as $file) {
-            $this->appendToKustomization($k8sPath, 'overlays/production', $file);
-        }
-        $this->appendToKustomization($k8sPath, 'overlays/production', 'ingress-patch.yaml', 'patches');
-        foreach (array_unique($manifests['patches']) as $file) {
+        foreach (array_unique($localPatches) as $file) {
             $this->appendToKustomization($k8sPath, 'overlays/local', $file, 'patches');
         }
+
+        // Cloud overlays — registered per environment, honouring per-env
+        // feature filtering (getComponents($env)) and skipping services that
+        // are externally managed in that env.
+        foreach ($cloudEnvs as $env) {
+            $managed = $config->getManaged($env);
+            $cloudFiles = [];
+
+            foreach ($config->getComponents($env) as $pod) {
+                if (! $pod instanceof HasKubernetesFiles) {
+                    continue;
+                }
+
+                // Externally managed in this env: don't register its cloud
+                // volumes, and emit a delete-patch so its base Deployment/
+                // Service is removed from this overlay (local keeps it).
+                if (in_array($pod->value, $managed, true)) {
+                    if ($pod instanceof RemovableWhenManaged) {
+                        $this->writeManagedDeletePatch($k8sPath, $env, $pod, $config);
+                    }
+
+                    continue;
+                }
+
+                $files = $pod->getManifestFiles($config);
+                $cloudFiles = array_merge($cloudFiles, $files['cloud'] ?? []);
+            }
+
+            foreach (array_unique($cloudFiles) as $file) {
+                $this->appendToKustomization($k8sPath, "overlays/$env", $file);
+            }
+            $this->appendToKustomization($k8sPath, "overlays/$env", 'ingress-patch.yaml', 'patches');
+        }
+    }
+
+    /**
+     * Write (and register) a kustomize delete-patch that removes an externally
+     * managed service's base resources from a cloud environment's overlay.
+     */
+    protected function writeManagedDeletePatch(string $k8sPath, string $env, RemovableWhenManaged $pod, ConfigData $config): void
+    {
+        $resources = $pod->getManagedResources($config);
+        if (empty($resources)) {
+            return;
+        }
+
+        $apiVersionFor = fn (string $kind): string => match ($kind) {
+            'Service' => 'v1',
+            default => 'apps/v1',
+        };
+
+        $docs = [];
+        foreach ($resources as $resource) {
+            $docs[] = implode("\n", [
+                'apiVersion: '.$apiVersionFor($resource['kind']),
+                'kind: '.$resource['kind'],
+                'metadata:',
+                '  name: '.$resource['name'],
+                '$patch: delete',
+            ]);
+        }
+
+        $filename = "{$pod->value}-managed-delete.yaml";
+        $dest = "overlays/$env/$filename";
+        if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+            file_put_contents("$k8sPath/$dest", implode("\n---\n", $docs)."\n");
+        }
+        $this->appendToKustomization($k8sPath, "overlays/$env", $filename, 'patches');
     }
 
     protected function appendToKustomization(string $k8sPath, string $folder, string $filename, string $type = 'resources'): void

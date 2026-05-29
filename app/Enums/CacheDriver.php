@@ -14,13 +14,14 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\RemovableWhenManaged;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RequiresPhpExtensions
+enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -181,14 +182,18 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
-        // Drop overlay manifests for envs where this service is externally managed.
-        foreach ($config?->getEnvironments() ?? [] as $env) {
-            if (in_array($this->value, $config->getManaged($env), true)) {
-                unset($manifests[$env]);
-            }
-        }
-
         return $manifests;
+    }
+
+    public function getManagedResources(ConfigData $config): array
+    {
+        return match ($this) {
+            self::REDIS, self::MEMCACHED => [
+                ['kind' => 'Deployment', 'name' => $this->getPodName($config)],
+                ['kind' => 'Service', 'name' => $this->getPodName($config)],
+            ],
+            default => [],
+        };
     }
 
     public function getDockerImage(?ConfigData $config = null): string

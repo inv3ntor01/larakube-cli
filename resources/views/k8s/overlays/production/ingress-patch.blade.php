@@ -17,7 +17,7 @@ spec:
   ingressClassName: {{ $config->getIngress($environment)->getIngressClass() }}
 @endif
   rules:
-    - host: {{ $config->getProductionHost() }}
+    - host: {{ $config->getWebHost($environment) }}
       http:
         paths:
           - path: /
@@ -29,7 +29,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - {{ $config->getProductionHost() }}
+        - {{ $config->getWebHost($environment) }}
 @if($config->getStrategy() === \App\Enums\DeploymentStrategy::SINGLE_NODE)
       secretName: {{ $config->getName() }}-tls
 @endif

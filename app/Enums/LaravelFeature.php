@@ -76,20 +76,24 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     }
 
     /**
-     * Environments where this feature is enabled by default when listed in
-     * ConfigData::$features. Per-environment addFeatures/excludeFeatures on
-     * EnvironmentData can override this for unusual setups, but the default
-     * keeps blueprints lean — boost stays out of production, ssr stays out
-     * of local, mailpit stays out of production, etc.
+     * Whether this feature is enabled by default in the given environment
+     * when listed in ConfigData::$features. Env-name-agnostic so it works
+     * for any environment the user creates (staging, qa, …), not just the
+     * conventional local/production pair:
      *
-     * @return array<int, string>
+     *   - local-only tooling (boost, ai, mcp, mailpit) → only 'local'
+     *   - ssr → every cloud (non-local) env
+     *   - everything else (horizon, queues, reverb, scheduler, …) → all envs
+     *
+     * Per-environment addFeatures/excludeFeatures on EnvironmentData override
+     * this for unusual setups.
      */
-    public function defaultEnvironments(): array
+    public function appliesToEnvironment(string $environment): bool
     {
         return match ($this) {
-            self::BOOST, self::AI, self::MCP, self::MAILPIT => ['local'],
-            self::SSR => ['production'],
-            default => ['local', 'production'],
+            self::BOOST, self::AI, self::MCP, self::MAILPIT => $environment === 'local',
+            self::SSR => $environment !== 'local',
+            default => true,
         };
     }
 
@@ -201,7 +205,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
      * Declarative list of ingress-exposed services per feature, used by the
      * env wizard to ask "do you want a custom subdomain for {label}?". Local
      * env-gating (e.g. Mailpit, Boost) is handled at the
-     * defaultEnvironments() layer so non-applicable features never get here.
+     * appliesToEnvironment() layer so non-applicable features never get here.
      *
      * @return array<string, string>
      */
@@ -372,15 +376,39 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         $workspacePath = dirname($config->getPath());
 
         if ($viewName = $this->getWorkloadViewName()) {
-            $dest = $this->getWorkloadYamlDestination();
-            if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
-                $content = view($viewName, [
-                    'config' => $config,
-                    'feature' => $this,
-                    'binaryPath' => $binaryPath,
-                    'workspacePath' => $workspacePath,
-                ])->render();
-                file_put_contents("$k8sPath/{$dest}", $content);
+            // SSR is the one overlay-bound workload (it must run in cloud envs
+            // but never locally), so it's written once per cloud env it
+            // applies to. Every other workload lives in base/ and is shared.
+            if ($this === self::SSR) {
+                foreach ($config->getCloudEnvironments() as $env) {
+                    if (! $this->appliesToEnvironment($env)) {
+                        continue;
+                    }
+                    $dest = "overlays/{$env}/ssr-deployment.yaml";
+                    if ($config->isLocked(".infrastructure/k8s/{$dest}")) {
+                        continue;
+                    }
+                    @mkdir("$k8sPath/overlays/{$env}", 0755, true);
+                    $content = view($viewName, [
+                        'config' => $config,
+                        'feature' => $this,
+                        'environment' => $env,
+                        'binaryPath' => $binaryPath,
+                        'workspacePath' => $workspacePath,
+                    ])->render();
+                    file_put_contents("$k8sPath/{$dest}", $content);
+                }
+            } else {
+                $dest = $this->getWorkloadYamlDestination();
+                if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+                    $content = view($viewName, [
+                        'config' => $config,
+                        'feature' => $this,
+                        'binaryPath' => $binaryPath,
+                        'workspacePath' => $workspacePath,
+                    ])->render();
+                    file_put_contents("$k8sPath/{$dest}", $content);
+                }
             }
         }
 
@@ -506,7 +534,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 'base' => ['reverb-deployment.yaml'],
             ],
             self::SSR => [
-                'production' => ['ssr-deployment.yaml'],
+                'cloud' => ['ssr-deployment.yaml'],
             ],
             self::MAILPIT => [
                 'local' => ['mailpit.yaml'],

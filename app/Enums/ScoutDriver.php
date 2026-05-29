@@ -14,13 +14,14 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
+enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -211,7 +212,8 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         }
 
         if ($this === self::MEILISEARCH || $this === self::TYPESENSE) {
-            foreach (['local', 'production'] as $env) {
+            foreach (array_merge(['local'], $config->getCloudEnvironments()) as $env) {
+                @mkdir("$k8sPath/overlays/$env", 0755, true);
                 $dest = "overlays/$env/{$this->value}-volumes.yaml";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
                     $vols = view("k8s.{$this->value}.volumes", ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
@@ -291,12 +293,12 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             'local' => [
                 basename($this->getNetworkYamlDestination()),
             ],
-            'production' => [],
+            'cloud' => [],
         ];
 
         if ($this === self::MEILISEARCH || $this === self::TYPESENSE) {
             $files['local'][] = "{$this->value}-volumes.yaml";
-            $files['production'][] = "{$this->value}-volumes.yaml";
+            $files['cloud'][] = "{$this->value}-volumes.yaml";
         }
 
         if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
@@ -304,14 +306,18 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
             $files['local'][] = "{$this->value}-companion-ingress.yaml";
         }
 
-        // Drop overlay manifests for envs where this service is externally managed.
-        foreach ($config?->getEnvironments() ?? [] as $env) {
-            if (in_array($this->value, $config->getManaged($env), true)) {
-                unset($files[$env]);
-            }
-        }
-
         return $files;
+    }
+
+    public function getManagedResources(ConfigData $config): array
+    {
+        return match ($this) {
+            self::MEILISEARCH, self::TYPESENSE => [
+                ['kind' => 'Deployment', 'name' => $this->getPodName($config)],
+                ['kind' => 'Service', 'name' => $this->getPodName($config)],
+            ],
+            default => [],
+        };
     }
 
     public function getPhpExtensions(): array

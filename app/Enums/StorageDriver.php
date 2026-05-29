@@ -14,13 +14,14 @@ use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasPromptableHosts;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasSelectOptions
+enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasSelectOptions, RemovableWhenManaged
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -98,7 +99,8 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
         // Write storage
         if ($viewName = $this->getStorageViewName()) {
-            foreach (['local', 'production'] as $env) {
+            foreach (array_merge(['local'], $config->getCloudEnvironments()) as $env) {
+                @mkdir("$k8sPath/overlays/$env", 0755, true);
                 $dest = "overlays/$env/{$this->getStorageYamlDestination()}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
                     $vols = view($viewName, ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
@@ -328,21 +330,22 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
                 basename($this->getStorageYamlDestination()),
                 basename($this->getNetworkYamlDestination()),
             ],
-            'production' => [
+            'cloud' => [
                 basename($this->getStorageYamlDestination()),
             ],
         ];
 
-        // Drop overlay manifests for envs where storage is externally managed
-        // (e.g. AWS S3 / DO Spaces in production). Parity with the DB/cache/
-        // scout drivers' managed-skip behaviour.
-        foreach ($config?->getEnvironments() ?? [] as $env) {
-            if (in_array($this->value, $config->getManaged($env), true)) {
-                unset($files[$env]);
-            }
-        }
-
         return $files;
+    }
+
+    public function getManagedResources(ConfigData $config): array
+    {
+        $name = $this->getPodName($config);
+
+        return [
+            ['kind' => 'Deployment', 'name' => $name],
+            ['kind' => 'Service', 'name' => $name],
+        ];
     }
 
     public function getPhpExtensions(): array
