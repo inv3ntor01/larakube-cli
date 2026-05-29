@@ -11,6 +11,19 @@ function portableProject(): string
     return $tmp;
 }
 
+test('box.json bundles the stubs directory into the PHAR', function () {
+    // Regression guard: if stubs/ is dropped from box.json, `larakube portable`
+    // ships broken (the stub isn't inside the binary). This bit us once when a
+    // revert reset box.json.
+    $box = json_decode(file_get_contents(base_path('box.json')), true);
+    expect($box['directories'] ?? [])->toContain('stubs');
+});
+
+test('portable stubs exist on disk', function () {
+    expect(file_exists(base_path('stubs/portable/larakube.sh.stub')))->toBeTrue()
+        ->and(file_exists(base_path('stubs/portable/LOCAL_DEV.md.stub')))->toBeTrue();
+});
+
 test('portable command writes the wrapper script and guide', function () {
     $original = getcwd();
     $tmp = portableProject();
