@@ -87,7 +87,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         return match ($this) {
             self::BOOST, self::AI, self::MCP, self::MAILPIT => ['local'],
             self::SSR => ['production'],
-            default => ['local', 'production', 'staging'],
+            default => ['local', 'production'],
         };
     }
 
