@@ -141,6 +141,32 @@ class ConfigDataTest extends TestCase
         $this->assertContains(LaravelFeature::BOOST, $config->getFeatures('production'));
     }
 
+    public function test_save_to_file_omits_transient_fields()
+    {
+        $tmp = sys_get_temp_dir().'/larakube-save-'.uniqid();
+        mkdir($tmp, 0755, true);
+
+        try {
+            $config = ConfigData::from(['name' => 'demo', 'isScaffolding' => true]);
+            $config->setPath($tmp);
+            $config->saveToFile($tmp);
+
+            $json = json_decode(file_get_contents("{$tmp}/.larakube.json"), true);
+
+            // Transient/machine-specific fields are not persisted...
+            $this->assertArrayNotHasKey('isScaffolding', $json);
+            $this->assertArrayNotHasKey('path', $json);
+            // ...but real fields are.
+            $this->assertSame('demo', $json['name']);
+
+            // And it still round-trips with sane defaults.
+            $reloaded = ConfigData::from($json);
+            $this->assertFalse($reloaded->isScaffolding());
+        } finally {
+            exec('rm -rf '.escapeshellarg($tmp));
+        }
+    }
+
     public function test_add_environment_creates_a_new_env_idempotently()
     {
         $config = ConfigData::from([]);

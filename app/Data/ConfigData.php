@@ -1133,11 +1133,19 @@ class ConfigData extends Data
 
     public function saveToFile(string $directory): void
     {
-        $path = "$directory/".self::CONFIG_FILE;
+        $filePath = "$directory/".self::CONFIG_FILE;
         if (! is_dir($directory)) {
             @mkdir($directory, 0755, true);
         }
-        file_put_contents($path, $this->toJson(JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        // Drop transient / machine-specific fields from the committed blueprint:
+        //  - isScaffolding: only ever true mid `larakube new`; meaningless at rest.
+        //  - path: an absolute filesystem path set at runtime (getPath() falls
+        //    back to cwd), which shouldn't be committed or shared between machines.
+        $data = $this->toArray();
+        unset($data['isScaffolding'], $data['path']);
+
+        file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     public function backupToCluster(string $namespace): bool
