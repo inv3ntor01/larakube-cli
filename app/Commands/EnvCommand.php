@@ -2,17 +2,14 @@
 
 namespace App\Commands;
 
-use App\Contracts\HasHosts;
+use App\Contracts\HasPromptableHosts;
 use App\Data\ConfigData;
 use App\Data\EnvironmentData;
-use App\Enums\CacheDriver;
-use App\Enums\DatabaseDriver;
 use App\Enums\IngressController;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
-use function Laravel\Prompts\info;
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
@@ -118,7 +115,10 @@ class EnvCommand extends Command
         $this->saveProjectConfig($projectPath, $config);
 
         $this->laraKubeInfo("Environment '{$envName}' is now part of your project DNA.");
-        info("Next steps: larakube up {$envName}");
+        $this->newLine();
+        $this->line('  <fg=gray>Next steps:</>');
+        $this->line("  1. Preview the merged manifests:  <fg=yellow>larakube kustomize {$envName}</>");
+        $this->line("  2. Deploy via your CI/CD pipeline, or manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
     }
 
     /**
@@ -138,16 +138,12 @@ class EnvCommand extends Command
         );
         $envData->ingress = IngressController::from($ingress);
 
-        // Managed services: only meaningful if the project has databases/caches.
-        $managedOptions = [];
-        foreach ($config->getComponents() as $component) {
-            if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
-                $managedOptions[$component->value] = $component->getLabel();
-            }
-        }
+        // Managed services: every backing service this project could offload
+        // to a managed provider (DB, cache, search, object storage).
+        $managedOptions = $config->getManageableServices();
         if (! empty($managedOptions)) {
             $envData->managed = multiselect(
-                label: "Which services are managed externally in {$envName} (e.g. AWS RDS, ElastiCache)?",
+                label: "Which services are managed externally in {$envName} (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?",
                 options: $managedOptions,
                 hint: 'Selected services will be skipped in this env\'s manifests.',
             );
@@ -163,20 +159,17 @@ class EnvCommand extends Command
             $envData->hosts['web'] = $webHost;
         }
 
-        // Per-service host overrides — fully data-driven. Iterates every
-        // component active in this env that declares overrideable services
-        // via HasHosts::getHostServices(). The canonical case is Reverb on
-        // ws.example.com (subdomain that doesn't share the web host prefix
-        // scheme); StorageDriver's s3/s3-console and other features benefit
-        // the same way. Skipping web here — already prompted above.
+        // Per-service host overrides — only for genuinely client-facing
+        // endpoints worth a vanity subdomain (Reverb's WebSocket host, an
+        // object-storage S3/CDN host). Admin consoles (search dashboards,
+        // Mailpit, metrics) are intentionally NOT prompted — they still get
+        // a derived ingress host, but the wizard stays quiet. Anything can
+        // still be set by hand in .larakube.json.
         foreach ($this->resolveEnvComponents($config, $envName, $envData) as $component) {
-            if (! $component instanceof HasHosts) {
+            if (! $component instanceof HasPromptableHosts) {
                 continue;
             }
-            foreach ($component->getHostServices() as $service => $label) {
-                if ($service === 'web') {
-                    continue;
-                }
+            foreach ($component->getPromptableHostServices() as $service => $label) {
                 $override = text(
                     label: "Custom host for {$label} in {$envName} (optional)",
                     placeholder: 'leave blank to derive from web host',

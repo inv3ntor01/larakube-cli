@@ -283,16 +283,11 @@ trait GathersInfrastructureConfig
 
         // 15. Managed Services (Production)
         if (empty($config->getManaged('production'))) {
-            $managedOptions = [];
-            foreach ($config->getComponents() as $component) {
-                if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
-                    $managedOptions[$component->value] = $component->getLabel();
-                }
-            }
+            $managedOptions = $config->getManageableServices();
 
             if (! empty($managedOptions)) {
                 $managed = multiselect(
-                    label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache)?',
+                    label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?',
                     options: $managedOptions,
                     hint: 'These services will be orchestrated locally but skipped in production manifests.'
                 );

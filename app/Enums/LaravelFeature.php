@@ -15,6 +15,7 @@ use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
+use App\Contracts\HasPromptableHosts;
 use App\Contracts\HasReloadCommand;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
@@ -24,7 +25,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasReloadCommand, HasSelectOptions, RequiresPhpExtensions
+enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasReloadCommand, HasSelectOptions, RequiresPhpExtensions
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -213,6 +214,22 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 'grafana' => 'Grafana Dashboard',
                 'prometheus' => 'Prometheus Dashboard',
             ],
+            default => [],
+        };
+    }
+
+    /**
+     * Only Reverb is a client-facing endpoint worth a vanity subdomain
+     * (ws.example.com). Mailpit and the monitoring dashboards are admin
+     * consoles — they still publish a derived host but the env wizard
+     * doesn't prompt for them.
+     *
+     * @return array<string, string>
+     */
+    public function getPromptableHostServices(): array
+    {
+        return match ($this) {
+            self::REVERB => ['reverb' => 'Reverb WebSocket'],
             default => [],
         };
     }

@@ -218,6 +218,37 @@ class ConfigDataTest extends TestCase
         $this->assertSame('https://example.com', $config->getAppUrl('main'));
     }
 
+    public function test_get_manageable_services_lists_all_externalizable_backing_services()
+    {
+        $config = ConfigData::from([
+            'database' => 'postgres',
+            'cacheDriver' => 'redis',
+            'scoutDriver' => 'meilisearch',
+            'objectStorage' => 'minio',
+        ]);
+
+        $services = $config->getManageableServices();
+
+        // DB, cache, search, and object storage are all offload-able.
+        $this->assertArrayHasKey('postgres', $services);
+        $this->assertArrayHasKey('redis', $services);
+        $this->assertArrayHasKey('meilisearch', $services);
+        $this->assertArrayHasKey('minio', $services);
+    }
+
+    public function test_get_manageable_services_excludes_drivers_with_no_network_service()
+    {
+        // SQLite, database-backed cache, and database-backed scout have nothing
+        // to offload to a managed provider — they must not appear.
+        $config = ConfigData::from([
+            'database' => 'sqlite',
+            'cacheDriver' => 'database',
+            'scoutDriver' => 'database',
+        ]);
+
+        $this->assertSame([], $config->getManageableServices());
+    }
+
     public function test_set_production_host_writes_into_environment_map()
     {
         $config = ConfigData::from([]);

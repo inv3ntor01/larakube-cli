@@ -341,6 +341,41 @@ class ConfigData extends Data
     }
 
     /**
+     * Backing services this project runs that could instead be supplied by an
+     * external managed provider (RDS, ElastiCache, Meilisearch Cloud, an
+     * S3-compatible object store, …). These are the candidates the wizards
+     * offer when asking which services are `managed` in an environment.
+     *
+     * Driver variants with no standalone network service are excluded:
+     * SQLite, the database-backed cache, and the database-backed Scout driver
+     * have nothing to offload. Detection is by network port (0 = no service),
+     * except Scout's database driver which reports a placeholder port and is
+     * matched explicitly.
+     *
+     * @return array<string, string> service value => human label
+     */
+    public function getManageableServices(): array
+    {
+        $services = [];
+
+        foreach ($this->getComponents() as $component) {
+            $manageable = match (true) {
+                $component instanceof DatabaseDriver => $component->dbPort() > 0,
+                $component instanceof CacheDriver => $component->dbPort() > 0,
+                $component instanceof ScoutDriver => $component !== ScoutDriver::DATABASE,
+                $component instanceof StorageDriver => true,
+                default => false,
+            };
+
+            if ($manageable) {
+                $services[$component->value] = $component->getLabel();
+            }
+        }
+
+        return $services;
+    }
+
+    /**
      * Ingress controller for a given env. Each env can pick its own
      * controller — staging on Traefik, QA on Nginx, production on AWS ALB
      * is a legitimate setup when envs live in separate VPCs. Falls back

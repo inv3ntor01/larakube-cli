@@ -1,6 +1,7 @@
 <?php
 
 use App\Contracts\HasHosts;
+use App\Contracts\HasPromptableHosts;
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use App\Enums\CacheDriver;
@@ -110,6 +111,45 @@ test('storage driver exposes both s3 and console as overrideable services', func
     expect($hosts)
         ->toHaveKey('cdn.example.com', 'MinIO S3 API')
         ->toHaveKey('s3-console-example.com', 'MinIO Console');
+});
+
+test('storage driver skips its manifests in envs where it is externally managed', function () {
+    $config = ConfigData::from([
+        'name' => 'demo',
+        'objectStorage' => 'minio',
+        'environments' => [
+            'local' => [],
+            'production' => ['managed' => ['minio']],
+        ],
+    ]);
+
+    $files = StorageDriver::MINIO->getManifestFiles($config);
+
+    // Local still deploys MinIO; production is skipped (managed via S3/Spaces).
+    expect($files)->toHaveKey('local')
+        ->and($files)->not->toHaveKey('production');
+});
+
+test('only client-facing endpoints are promptable for custom hosts', function () {
+    // Reverb (ws) and S3 are worth a vanity subdomain prompt...
+    expect(LaravelFeature::REVERB)->toBeInstanceOf(HasPromptableHosts::class)
+        ->and(LaravelFeature::REVERB->getPromptableHostServices())->toHaveKey('reverb')
+        ->and(StorageDriver::MINIO)->toBeInstanceOf(HasPromptableHosts::class)
+        ->and(StorageDriver::MINIO->getPromptableHostServices())->toHaveKey('s3');
+
+    // The MinIO admin console is not promptable; only the S3 API is.
+    expect(StorageDriver::MINIO->getPromptableHostServices())->not->toHaveKey('s3-console');
+
+    // Search drivers do NOT implement HasPromptableHosts at all, so the env
+    // wizard never prompts for a Meilisearch/Typesense console host (they
+    // still publish a derived ingress host via getHostServices()).
+    expect(ScoutDriver::MEILISEARCH)->not->toBeInstanceOf(HasPromptableHosts::class)
+        ->and(ScoutDriver::TYPESENSE)->not->toBeInstanceOf(HasPromptableHosts::class);
+
+    // Mailpit and monitoring dashboards belong to LaravelFeature (which does
+    // implement the interface) but expose no promptable services.
+    expect(LaravelFeature::MAILPIT->getPromptableHostServices())->toBe([])
+        ->and(LaravelFeature::MONITORING->getPromptableHostServices())->toBe([]);
 });
 
 test('all HasHosts implementers conform to the new contract', function () {

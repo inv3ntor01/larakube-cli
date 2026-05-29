@@ -12,6 +12,7 @@ use App\Contracts\HasKubernetesFiles;
 use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
+use App\Contracts\HasPromptableHosts;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
 use App\Traits\DerivesHostsFromServices;
@@ -19,7 +20,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
+enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasSelectOptions
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -269,6 +270,21 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         };
     }
 
+    /**
+     * The S3 API endpoint is the client-facing one worth a vanity host
+     * (e.g. cdn.example.com); the admin console/filer UI is not prompted.
+     *
+     * @return array<string, string>
+     */
+    public function getPromptableHostServices(): array
+    {
+        return match ($this) {
+            self::MINIO => ['s3' => 'MinIO S3 API'],
+            self::SEAWEEDFS => ['s3' => 'SeaweedFS S3 API'],
+            self::GARAGE => ['s3' => 'Garage S3 API'],
+        };
+    }
+
     public function getDependencyConfig(ConfigData $config): array
     {
         return [$this->getPodName($config) => $this->port()];
@@ -304,7 +320,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function getManifestFiles(?ConfigData $config = null): array
     {
-        return [
+        $files = [
             'base' => [
                 basename($this->getWorkloadYamlDestination()),
             ],
@@ -316,6 +332,17 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
                 basename($this->getStorageYamlDestination()),
             ],
         ];
+
+        // Drop overlay manifests for envs where storage is externally managed
+        // (e.g. AWS S3 / DO Spaces in production). Parity with the DB/cache/
+        // scout drivers' managed-skip behaviour.
+        foreach ($config?->getEnvironments() ?? [] as $env) {
+            if (in_array($this->value, $config->getManaged($env), true)) {
+                unset($files[$env]);
+            }
+        }
+
+        return $files;
     }
 
     public function getPhpExtensions(): array
