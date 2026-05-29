@@ -7,6 +7,7 @@ use App\Data\EnvironmentData;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\IngressController;
+use App\Enums\LaravelFeature;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
@@ -160,6 +161,24 @@ class EnvCommand extends Command
         );
         if ($webHost !== '') {
             $envData->hosts['web'] = $webHost;
+        }
+
+        // Per-service host overrides. Reverb is the canonical case: a
+        // WebSocket service typically lives on its own subdomain (e.g.
+        // ws.example.com, ws-stg.example.com) independent of the web host's
+        // prefix scheme. We only prompt when the feature is actually active
+        // in this env — Horizon/Queues/Scheduler aren't here because they
+        // mount under /horizon and /queues on the web host itself.
+        if ($config->hasFeature(LaravelFeature::REVERB)
+            && in_array($envName, LaravelFeature::REVERB->defaultEnvironments(), true)) {
+            $reverbHost = text(
+                label: "Reverb WebSocket host for {$envName} (optional, e.g. ws.example.com)",
+                placeholder: 'leave blank to derive from web host',
+                required: false,
+            );
+            if ($reverbHost !== '') {
+                $envData->hosts['reverb'] = $reverbHost;
+            }
         }
 
         return $envData;

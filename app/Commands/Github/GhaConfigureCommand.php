@@ -19,7 +19,9 @@ class GhaConfigureCommand extends Command
     {
         $this->renderHeader();
 
-        $environment = $this->argument('environment') ?? 'production';
+        $environment = $this->argument('environment') ?: $this->askForCloudEnvironment(
+            label: 'Which environment are you configuring GitHub Actions for?'
+        );
         $upperEnv = strtoupper($environment);
         $projectPath = getcwd();
 

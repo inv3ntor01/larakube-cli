@@ -7,43 +7,34 @@ use function Laravel\Prompts\select;
 trait InteractsWithEnvironments
 {
     /**
-     * Get the available Kubernetes environment overlays.
+     * Get the available environments for this project. Sole source of truth
+     * is `.larakube.json` — so if the user renames "production" to "main" or
+     * adds a "qa" env, `larakube heal` is the only step needed; no command
+     * code references hardcoded env names. Falls back to the conventional
+     * pair only when no project config exists yet (fresh init).
      */
     protected function getAvailableEnvironments(): array
     {
         $projectPath = getcwd();
-        $overlayPath = $projectPath.'/.infrastructure/k8s/overlays';
-        $environments = [];
+        $config = method_exists($this, 'getProjectConfigObject')
+            ? $this->getProjectConfigObject($projectPath)
+            : null;
 
-        // 1. Filesystem is source of truth for local manifests
-        if (is_dir($overlayPath)) {
-            $environments = array_merge($environments, array_diff(scandir($overlayPath), ['.', '..']));
-        }
+        $envs = $config?->getEnvironments() ?? [];
 
-        // 2. Query the cluster for active environments using labels
-        $config = method_exists($this, 'getProjectConfigObject') ? $this->getProjectConfigObject($projectPath) : null;
-        $appName = $config?->getName() ?? basename($projectPath);
+        return ! empty($envs) ? $envs : ['local', 'production'];
+    }
 
-        $json = shell_exec("kubectl get namespaces -l larakube.io/project={$appName} -o json 2>/dev/null");
-        if ($json) {
-            $data = json_decode($json, true);
-            foreach ($data['items'] ?? [] as $item) {
-                $ns = $item['metadata']['name'];
-                // Extract environment suffix (e.g. app-staging -> staging)
-                if (str_starts_with($ns, "{$appName}-")) {
-                    $environments[] = str_replace("{$appName}-", '', $ns);
-                }
-            }
-        }
-
-        // 3. Fallback to Config DNA
-        if ($config) {
-            $environments = array_merge($environments, $config->getEnvironments());
-        }
-
-        $environments = array_unique($environments);
-
-        return ! empty($environments) ? array_values($environments) : ['local', 'production'];
+    /**
+     * Get the available environments excluding 'local'. Used by cloud
+     * commands that, by definition, don't operate on the local cluster.
+     */
+    protected function getCloudEnvironments(): array
+    {
+        return array_values(array_filter(
+            $this->getAvailableEnvironments(),
+            fn (string $env) => $env !== 'local'
+        ));
     }
 
     /**
@@ -55,6 +46,31 @@ trait InteractsWithEnvironments
             label: $label,
             options: $this->getAvailableEnvironments(),
             default: $default
+        );
+    }
+
+    /**
+     * Prompt for a non-local environment. Used by cloud/gha commands where
+     * targeting 'local' makes no sense. Auto-selects when only one cloud
+     * env exists; falls back to the first available env when there are none
+     * (defensive — shouldn't happen in practice).
+     */
+    protected function askForCloudEnvironment(string $label = 'Which environment would you like to target?'): string
+    {
+        $envs = $this->getCloudEnvironments();
+
+        if (count($envs) === 1) {
+            return $envs[0];
+        }
+
+        if (empty($envs)) {
+            return $this->askForEnvironment($label);
+        }
+
+        return select(
+            label: $label,
+            options: $envs,
+            default: $envs[0],
         );
     }
 

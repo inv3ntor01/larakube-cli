@@ -150,10 +150,13 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 'REVERB_APP_ID' => 'larakube',
                 'REVERB_APP_KEY' => 'larakubekey',
                 'REVERB_HOST' => $config ? $config->getInternalFqdn($this, $environment) : 'reverb',
-                'REVERB_PORT' => $environment === 'production' ? '443' : '8080',
-                'REVERB_SCHEME' => $environment === 'production' ? 'https' : 'http',
+                // Local cluster uses plain HTTP on the internal Reverb port;
+                // any cloud env (production/staging/qa/etc.) terminates TLS
+                // at the ingress, so the client connects via WSS on 443.
+                'REVERB_PORT' => $environment === 'local' ? '8080' : '443',
+                'REVERB_SCHEME' => $environment === 'local' ? 'http' : 'https',
             ],
-            self::MAILPIT => $environment !== 'production' ? [
+            self::MAILPIT => $environment === 'local' ? [
                 'MAIL_MAILER' => 'smtp',
                 'MAIL_HOST' => $config ? $config->getInternalFqdn($this, $environment) : $this->getPodName(),
                 'MAIL_PORT' => '1025',
@@ -163,7 +166,9 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::QUEUES => [
                 'QUEUE_CONNECTION' => 'database',
             ],
-            self::SSR => $environment === 'production' ? [
+            // Any non-local env runs SSR (production by default; users can
+            // opt staging/qa in via addFeatures on EnvironmentData).
+            self::SSR => $environment !== 'local' ? [
                 'INERTIA_SSR_ENABLED' => 'true',
                 'INERTIA_SSR_URL' => 'http://'.($config ? $config->getInternalFqdn($this, $environment) : 'node-ssr').':13714',
             ] : [],
@@ -183,7 +188,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::REVERB => [
                 'REVERB_APP_SECRET' => 'larakubesecret',
             ],
-            self::MAILPIT => $environment !== 'production' ? [
+            self::MAILPIT => $environment === 'local' ? [
                 'MAIL_PASSWORD' => 'null',
             ] : [],
             default => [],
@@ -196,7 +201,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 
         return match ($this) {
             self::REVERB => [$config->getServiceHost('reverb', $environment) => 'Reverb Console'],
-            self::MAILPIT => $environment !== 'production' ? [$config->getServiceHost('mailpit', $environment) => 'Mailpit Dashboard'] : [],
+            self::MAILPIT => $environment === 'local' ? [$config->getServiceHost('mailpit', $environment) => 'Mailpit Dashboard'] : [],
             self::MONITORING => [
                 $config->getServiceHost('grafana', $environment) => 'Grafana Dashboard',
                 $config->getServiceHost('prometheus', $environment) => 'Prometheus Dashboard',

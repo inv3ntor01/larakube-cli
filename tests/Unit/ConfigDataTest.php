@@ -167,6 +167,57 @@ class ConfigDataTest extends TestCase
         $this->assertNotContains('staging', $config->getEnvironments());
     }
 
+    public function test_set_host_writes_per_env_and_per_service()
+    {
+        $config = ConfigData::from([]);
+
+        $config->setHost('staging', 'web', 'staging.example.com');
+        $config->setHost('staging', 'reverb', 'ws-stg.example.com');
+
+        $this->assertSame('staging.example.com', $config->getHost('staging', 'web'));
+        $this->assertSame('ws-stg.example.com', $config->getHost('staging', 'reverb'));
+        $this->assertNull($config->getHost('staging', 'mailpit'));
+        $this->assertNull($config->getHost('production', 'web'));
+    }
+
+    public function test_get_service_host_honours_explicit_per_service_override()
+    {
+        // Reverb on its own subdomain should not get prefixed off the web host.
+        $config = ConfigData::from([
+            'name' => 'demo',
+            'environments' => [
+                'production' => [
+                    'hosts' => [
+                        'web' => 'example.com',
+                        'reverb' => 'ws.example.com',
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('ws.example.com', $config->getServiceHost('reverb', 'production'));
+        // Services without explicit overrides still derive from the web host.
+        $this->assertSame('vite-example.com', $config->getServiceHost('vite', 'production'));
+    }
+
+    public function test_get_service_host_works_for_any_non_local_env_not_just_production()
+    {
+        // If the user renames "production" to "main" or adds a "qa" env,
+        // service-host resolution must still honour the configured web host.
+        $config = ConfigData::from([
+            'name' => 'demo',
+            'environments' => [
+                'qa' => ['hosts' => ['web' => 'qa.example.com']],
+                'main' => ['hosts' => ['web' => 'example.com']],
+            ],
+        ]);
+
+        $this->assertSame('vite-qa.example.com', $config->getServiceHost('vite', 'qa'));
+        $this->assertSame('vite-example.com', $config->getServiceHost('vite', 'main'));
+        $this->assertSame('https://qa.example.com', $config->getAppUrl('qa'));
+        $this->assertSame('https://example.com', $config->getAppUrl('main'));
+    }
+
     public function test_set_production_host_writes_into_environment_map()
     {
         $config = ConfigData::from([]);

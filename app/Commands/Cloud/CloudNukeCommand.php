@@ -37,9 +37,8 @@ class CloudNukeCommand extends Command
             return 1;
         }
 
-        $environment = $this->askForEnvironment(
-            label: 'Which environment would you like to NUKE from the cluster?',
-            default: 'production'
+        $environment = $this->askForCloudEnvironment(
+            label: 'Which environment would you like to NUKE from the cluster?'
         );
 
         if (! $this->validateContextForEnvironment($environment)) {

@@ -577,14 +577,32 @@ class ConfigData extends Data
         return $this;
     }
 
-    public function setProductionHost(string $host): self
+    /**
+     * Get a service's externally-configured host for the given env, or null
+     * if no override is set. Use getServiceHost() for the resolved value
+     * with fallbacks; this is the raw config accessor.
+     */
+    public function getHost(string $environment, string $service = 'web'): ?string
     {
-        if (! isset($this->environments['production'])) {
-            $this->environments['production'] = new EnvironmentData;
-        }
-        $this->environments['production']->hosts['web'] = $host;
+        return $this->getEnvironment($environment)?->hosts[$service] ?? null;
+    }
+
+    /**
+     * Set a service's host for the given env. Creates the env if missing.
+     * This is the generic form that env-aware cloud commands should use
+     * (instead of setProductionHost) so they don't hardcode env names.
+     */
+    public function setHost(string $environment, string $service, string $host): self
+    {
+        $this->addEnvironment($environment);
+        $this->environments[$environment]->hosts[$service] = $host;
 
         return $this;
+    }
+
+    public function setProductionHost(string $host): self
+    {
+        return $this->setHost('production', 'web', $host);
     }
 
     /**
@@ -881,18 +899,44 @@ class ConfigData extends Data
     public function getAppUrl(string $environment = 'local'): string
     {
         $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
-        if ($environment === 'production' && $webHost) {
+
+        // Any non-local env with a configured web host wins. This is the
+        // path that lets users rename "production" to "main" or add a
+        // "staging" env without code changes — the env name no longer
+        // gates the URL shape.
+        if ($environment !== 'local' && $webHost) {
             return "https://{$webHost}";
         }
 
         return "https://{$this->getName()}.dev.test";
     }
 
+    /**
+     * Resolve a service's external hostname for a given environment.
+     *
+     * Resolution order (first match wins):
+     *   1. Per-service explicit host on EnvironmentData (e.g. reverb
+     *      lives on its own subdomain like ws.example.com that does NOT
+     *      share the web host's prefix scheme).
+     *   2. Local env always uses the `{service}-{name}.dev.test` pattern.
+     *   3. Non-local env with a web host → `{service}-{webHost}` prefix.
+     *   4. Fallback: `{service}-{name}.dev.test` (so a cloud env without
+     *      hosts configured still produces something usable for previews).
+     */
     public function getServiceHost(string $service, string $environment = 'local'): string
     {
-        $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
-        if ($environment === 'production' && $webHost) {
-            return "{$service}-{$webHost}";
+        $envData = $this->getEnvironment($environment);
+
+        if ($envData && isset($envData->hosts[$service])) {
+            return $envData->hosts[$service];
+        }
+
+        if ($environment === 'local') {
+            return "{$service}-{$this->getName()}.dev.test";
+        }
+
+        if ($envData && isset($envData->hosts['web'])) {
+            return "{$service}-{$envData->hosts['web']}";
         }
 
         return "{$service}-{$this->getName()}.dev.test";
@@ -970,11 +1014,10 @@ class ConfigData extends Data
     {
         $hosts = [parse_url($this->getAppUrl($environment), PHP_URL_HOST) => 'Primary Application'];
         if ($this->frontend?->requiresNodePod()) {
-            $webHost = $this->getEnvironment($environment)?->hosts['web'] ?? null;
-            $viteHost = ($environment === 'production' && $webHost)
-                ? "vite-{$webHost}"
-                : "vite-{$this->getName()}.dev.test";
-            $hosts[$viteHost] = 'Vite Asset Server';
+            // Vite host derives from web host on any non-local env (so a
+            // renamed/added env like "main" or "staging" works the same
+            // as "production" used to).
+            $hosts[$this->getServiceHost('vite', $environment)] = 'Vite Asset Server';
         }
         foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasHosts) {

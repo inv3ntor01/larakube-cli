@@ -64,9 +64,8 @@ class CloudConfigureCommand extends Command
 
     protected function configureBase(): int
     {
-        $environment = $this->askForEnvironment(
-            label: 'Which environment are you configuring?',
-            default: 'production'
+        $environment = $this->askForCloudEnvironment(
+            label: 'Which environment are you configuring?'
         );
 
         $projectPath = getcwd();
@@ -104,23 +103,23 @@ class CloudConfigureCommand extends Command
             'key' => $key,
         ]);
 
-        // 🌐 Ensure Production Domain is set if this is production
-        if ($environment === 'production') {
-            $currentHost = $config->getRealProductionHost();
-            if (! $currentHost || $currentHost === "{$config->getName()}.com") {
-                $this->newLine();
-                $this->info(' 🌐 ARCHITECTURAL ALIGNMENT');
-                $this->line('   Remote deployments require a real production domain.');
+        // 🌐 Ensure Web Domain is set for this env (fires for any non-local env)
+        $currentHost = $config->getHost($environment, 'web');
+        if (! $currentHost || $currentHost === "{$config->getName()}.com") {
+            $this->newLine();
+            $this->info(' 🌐 ARCHITECTURAL ALIGNMENT');
+            $this->line("   Remote deployments require a real web domain for '{$environment}'.");
 
-                $host = text(
-                    label: 'What is your REAL production domain/subdomain?',
-                    placeholder: "{$config->getName()}.com",
-                    default: $currentHost ?: "{$config->getName()}.com",
-                    required: true
-                );
+            $host = text(
+                label: "What is the REAL web domain/subdomain for '{$environment}'?",
+                placeholder: $environment === 'production'
+                    ? "{$config->getName()}.com"
+                    : "{$environment}.{$config->getName()}.com",
+                default: $currentHost ?: '',
+                required: true
+            );
 
-                $config->setProductionHost($host);
-            }
+            $config->setHost($environment, 'web', $host);
         }
 
         $this->saveProjectConfig($projectPath, $config);
@@ -131,9 +130,8 @@ class CloudConfigureCommand extends Command
 
     protected function configureServer(): int
     {
-        $environment = $this->askForEnvironment(
-            label: 'Which environment are you configuring for server setup?',
-            default: 'production'
+        $environment = $this->askForCloudEnvironment(
+            label: 'Which environment are you configuring for server setup?'
         );
 
         $projectPath = getcwd();
@@ -189,9 +187,8 @@ BASH;
 
     protected function configureGha(): int
     {
-        $environment = $this->askForEnvironment(
-            label: 'Which environment are you configuring for GitHub Actions?',
-            default: 'production'
+        $environment = $this->askForCloudEnvironment(
+            label: 'Which environment are you configuring for GitHub Actions?'
         );
 
         $envFile = ".env.{$environment}";
@@ -222,7 +219,7 @@ BASH;
 
         $branch = text(
             label: "Which git branch should trigger the {$environment} deployment?",
-            default: $environment === 'production' ? 'main' : 'develop',
+            default: 'main',
             required: true
         );
 
@@ -328,9 +325,8 @@ BASH;
 
     protected function configureUsers(): int
     {
-        $environment = $this->askForEnvironment(
-            label: 'Which environment are you syncing users to?',
-            default: 'production'
+        $environment = $this->askForCloudEnvironment(
+            label: 'Which environment are you syncing users to?'
         );
 
         $projectPath = getcwd();

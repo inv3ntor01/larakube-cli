@@ -22,7 +22,9 @@ class CloudDeployCommand extends Command
     {
         $this->renderHeader();
 
-        $environment = $this->argument('environment') ?? 'production';
+        $environment = $this->argument('environment') ?: $this->askForCloudEnvironment(
+            label: 'Which environment are you deploying to?'
+        );
 
         if ($environment === 'local') {
             $this->laraKubeInfo("For local development, please use 'larakube up'.");
@@ -49,33 +51,34 @@ class CloudDeployCommand extends Command
 
         $appName = $config->getName() ?? basename($projectPath);
 
-        // --- 🌐 PRODUCTION DOMAIN GUARD ---
-        if ($environment === 'production') {
-            $currentHost = $config->getRealProductionHost();
-            $defaultHost = "{$appName}.com";
+        // --- 🌐 WEB DOMAIN GUARD (any cloud env) ---
+        // Fires for every non-local env — if user renamed `production` to
+        // `main` or added `staging`, we still demand a real web host before
+        // pushing to the cluster.
+        $currentHost = $config->getHost($environment, 'web');
+        $defaultHost = "{$appName}.com";
 
-            if (empty($currentHost) || $currentHost === $defaultHost) {
-                $this->newLine();
-                $this->warn(' 🌐 PRODUCTION DOMAIN REQUIRED');
-                $this->line("   You are about to deploy to production, but your domain is set to: <fg=yellow>{$currentHost}</>");
-                $this->newLine();
+        if (empty($currentHost) || $currentHost === $defaultHost) {
+            $this->newLine();
+            $this->warn(" 🌐 WEB DOMAIN REQUIRED FOR '{$environment}'");
+            $this->line("   Current web host: <fg=yellow>".($currentHost ?: '(not set)').'</>');
+            $this->newLine();
 
-                $newHost = \Laravel\Prompts\text(
-                    label: 'What is your REAL production domain/subdomain?',
-                    placeholder: 'myapp.com',
-                    required: true
-                );
+            $newHost = \Laravel\Prompts\text(
+                label: "What is the REAL web domain/subdomain for '{$environment}'?",
+                placeholder: $environment === 'production' ? 'myapp.com' : "{$environment}.myapp.com",
+                required: true
+            );
 
-                $config->setProductionHost($newHost);
-                $this->saveProjectConfig($projectPath, $config);
+            $config->setHost($environment, 'web', $newHost);
+            $this->saveProjectConfig($projectPath, $config);
 
-                $this->withSpin('Updating architectural manifests with your domain...', function () use ($config) {
-                    // Force a re-generation of manifests with the new domain
-                    $this->orchestrateProjectScaffolding($config, installFeatures: false, buildImage: false, syncEnv: false);
+            $this->withSpin('Updating architectural manifests with your domain...', function () use ($config) {
+                // Force a re-generation of manifests with the new domain
+                $this->orchestrateProjectScaffolding($config, installFeatures: false, buildImage: false, syncEnv: false);
 
-                    return true;
-                });
-            }
+                return true;
+            });
         }
 
         $this->laraKubeInfo("Starting deployment to '{$environment}'...");

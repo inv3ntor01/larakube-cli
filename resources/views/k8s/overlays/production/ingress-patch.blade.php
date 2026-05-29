@@ -3,7 +3,7 @@ kind: Ingress
 metadata:
   name: {{ $config->getServerVariation()->getPodName($config) }}
   annotations:
-@if($view = $config->getIngress('production')?->getAnnotationView())
+@if($view = $config->getIngress($environment)?->getAnnotationView())
 {{-- We use a custom indent filter to ensure every line of the included view is aligned --}}
 {!! preg_replace('/^/m', '    ', trim(view($view, ['config' => $config])->render())) !!}
 @else
@@ -13,8 +13,8 @@ metadata:
 @endif
 @endif
 spec:
-@if($config->getIngress('production')?->getIngressClass())
-  ingressClassName: {{ $config->getIngress('production')->getIngressClass() }}
+@if($config->getIngress($environment)?->getIngressClass())
+  ingressClassName: {{ $config->getIngress($environment)->getIngressClass() }}
 @endif
   rules:
     - host: {{ $config->getProductionHost() }}
