@@ -29,7 +29,6 @@ class InitCommand extends Command
      * @var string
      */
     protected $signature = 'init {--fast : Skip the wizard and use ideal defaults}
-                                 {--production-image= : The container registry image to use for production}
                                  {--dry-run : Show what will be done without making any changes}';
 
     /**

@@ -68,7 +68,6 @@ class ConfigData extends Data
          * @var array<string, EnvironmentData>
          */
         public array $environments = [],
-        public ?string $productionImage = null,
         public bool $githubActions = true,
         public bool $isSystem = false,
         public bool $isScaffolding = false,
@@ -583,11 +582,6 @@ class ConfigData extends Data
     public function getProductionHost(): string
     {
         return $this->getWebHost('production');
-    }
-
-    public function getProductionImage(): ?string
-    {
-        return $this->productionImage;
     }
 
     public function hasOs(): bool

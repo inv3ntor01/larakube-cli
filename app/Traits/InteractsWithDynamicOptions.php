@@ -217,10 +217,6 @@ trait InteractsWithDynamicOptions
             }
         }
 
-        if ($this->hasOption('production-image') && $this->option('production-image')) {
-            $config->setProductionImage($this->option('production-image'));
-        }
-
         // Default to fast-mode compatible values if not provided
         if ($this->option('fast')) {
             if (! $config->hasBlueprints()) {
