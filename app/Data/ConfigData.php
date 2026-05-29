@@ -1057,9 +1057,8 @@ class ConfigData extends Data
     public function getInternalFqdn(HasPodName $dependency, string $environment = 'local'): string
     {
         $podName = $dependency->getPodName($this);
-        $namespace = "{$this->getName()}-{$environment}";
 
-        return "{$podName}.{$namespace}.svc.cluster.local";
+        return "{$podName}.{$this->getNamespace($environment)}.svc.cluster.local";
     }
 
     public function getAppUrl(string $environment = 'local'): string

@@ -204,16 +204,18 @@ trait GeneratesProjectInfrastructure
 
         // Local overlay.
         foreach ($localStubs as $stub) {
-            $renderStub($stub, 'local', "{$appName}-local", 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub));
+            $renderStub($stub, 'local', $config->getNamespace('local'), 'k8s.'.str_replace(['/', '.yaml'], ['.', ''], $stub));
         }
 
-        // Cloud overlays — one directory per non-local environment.
+        // Cloud overlays — one directory per non-local environment. Namespace
+        // is resolved per env (getNamespace), so a managed-cluster env can
+        // land in an existing namespace instead of the derived {name}-{env}.
         foreach ($cloudEnvs as $env) {
             @mkdir("$k8sPath/overlays/$env", 0755, true);
             foreach ($cloudStubFiles as $file) {
                 $stub = "overlays/$env/$file";
                 $viewName = 'k8s.overlays.production.'.str_replace('.yaml', '', $file);
-                $renderStub($stub, $env, "{$appName}-{$env}", $viewName);
+                $renderStub($stub, $env, $config->getNamespace($env), $viewName);
             }
         }
 
@@ -222,7 +224,7 @@ trait GeneratesProjectInfrastructure
         // (ReadWriteOnce for single-node, ReadWriteMany for multi-node-HA).
         foreach (array_merge(['local'], $cloudEnvs) as $env) {
             @mkdir("$k8sPath/overlays/$env", 0755, true);
-            $renderStub("overlays/$env/app-volumes.yaml", $env, "{$appName}-{$env}", 'k8s.base.volumes');
+            $renderStub("overlays/$env/app-volumes.yaml", $env, $config->getNamespace($env), 'k8s.base.volumes');
         }
 
         // 2. APPLY ACTIONS (write component-owned manifest files to disk)

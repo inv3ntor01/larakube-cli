@@ -1,7 +1,7 @@
 <?php
 
 use App\Data\ConfigData;
-use App\Enums\ServerVariation;
+use App\Enums\CacheDriver;
 
 /**
  * Managed-K8s overlay compatibility: optional per-env knobs that let a
@@ -75,4 +75,31 @@ test('Phase 1: omitImagePullSecret drops the imagePullSecrets block (ECR/IRSA)',
 test('Phase 1: a custom pull secret name flows into the patch', function () {
     $web = prodWebPatch(eksConfig(['imagePullSecret' => 'ecr-creds']));
     expect($web['spec']['template']['spec']['imagePullSecrets'][0]['name'])->toBe('ecr-creds');
+});
+
+// --- Phase 2: namespace override in the manifests ---
+
+test('Phase 2: namespace override lands the overlay in an existing namespace', function () {
+    $manifests = generateManifestsAsArray(eksConfig(['namespace' => 'eksapp']));
+
+    // Overlay kustomization sets the overridden namespace…
+    expect($manifests['overlays/production/kustomization.yaml']['namespace'])->toBe('eksapp');
+
+    // …and the Namespace object it creates matches.
+    expect($manifests['overlays/production/namespace.yaml']['metadata']['name'])->toBe('eksapp');
+
+    // Local overlay is untouched by a production-only override.
+    expect($manifests['overlays/local/kustomization.yaml']['namespace'])->toBe('eksapp-local');
+});
+
+test('Phase 2: in-cluster service FQDNs follow the overridden namespace', function () {
+    $config = eksConfig(['namespace' => 'eksapp']);
+    $config->setCacheDriver(CacheDriver::REDIS);
+
+    expect($config->getInternalFqdn(CacheDriver::REDIS, 'production'))
+        ->toEndWith('.eksapp.svc.cluster.local');
+
+    // Default-namespace env still resolves the derived namespace.
+    expect($config->getInternalFqdn(CacheDriver::REDIS, 'staging'))
+        ->toEndWith('.eksapp-staging.svc.cluster.local');
 });
