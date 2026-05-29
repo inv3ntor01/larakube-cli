@@ -76,5 +76,44 @@ class EnvironmentData extends Data
          * @var array<int, LaravelFeature>
          */
         public array $excludeFeatures = [],
+        // --- ☁️ Managed-K8s overlay knobs (EKS/GKE/AKS) ---
+        // All optional; each no-ops to today's Single-Node-Hero output when
+        // unset, so existing blueprints and the snapshot suite are unchanged.
+        /**
+         * Override the derived `{name}-{env}` namespace, so the overlay can
+         * land in an existing cluster namespace (e.g. `myapp` on EKS).
+         */
+        public ?string $namespace = null,
+        /**
+         * ServiceAccount name for the app pods. Null = today's behavior (no
+         * SA on user pods). Set for IRSA/Workload-Identity setups.
+         */
+        public ?string $serviceAccount = null,
+        /**
+         * Annotations for the generated ServiceAccount — e.g.
+         * `eks.amazonaws.com/role-arn` for IRSA. Only emitted when
+         * $serviceAccount is set.
+         *
+         * @var array<string, string>
+         */
+        public array $serviceAccountAnnotations = [],
+        /**
+         * Image pull secret name. Defaults to `ghcr-login` (Single-Node-Hero)
+         * when null and not omitted. Set to point at a different secret.
+         */
+        public ?string $imagePullSecret = null,
+        /**
+         * Drop the imagePullSecrets block entirely — for clusters that pull
+         * via the node role/IRSA (e.g. ECR on EKS) and need no secret.
+         */
+        public bool $omitImagePullSecret = false,
+        /**
+         * Extra ingress annotations merged into the env's ingress-patch —
+         * ACM cert ARN, security groups, ALB conditions/actions, etc. Raw
+         * passthrough (dumb merge); the controller's defaults still apply.
+         *
+         * @var array<string, string>
+         */
+        public array $ingressAnnotations = [],
     ) {}
 }

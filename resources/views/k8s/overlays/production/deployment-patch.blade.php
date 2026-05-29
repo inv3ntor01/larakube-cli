@@ -14,7 +14,9 @@ spec:
       containers:
         - name: php
           imagePullPolicy: Always
+@if($pullSecret = $config->getImagePullSecret($environment))
       imagePullSecrets:
-        - name: ghcr-login
+        - name: {{ $pullSecret }}
+@endif
 @endif
 @endforeach

@@ -51,8 +51,10 @@ spec:
               port: 13714
             initialDelaySeconds: 5
             periodSeconds: 5
+@if($pullSecret = $config->getImagePullSecret($environment))
       imagePullSecrets:
-        - name: ghcr-login
+        - name: {{ $pullSecret }}
+@endif
 ---
 apiVersion: v1
 kind: Service

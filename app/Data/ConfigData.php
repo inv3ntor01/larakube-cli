@@ -431,6 +431,64 @@ class ConfigData extends Data
         return $this->getEnvironment($environment)?->ingress ?? IngressController::TRAEFIK;
     }
 
+    // --- ☁️ Managed-K8s overlay resolution (EKS/GKE/AKS) ---
+    // Each mirrors getIngress($env): an env override wins, otherwise today's
+    // Single-Node-Hero default — so unset knobs reproduce current output.
+
+    /**
+     * Namespace for an env's overlay. Defaults to the derived `{name}-{env}`;
+     * override lets the overlay land in an existing cluster namespace.
+     */
+    public function getNamespace(string $environment): string
+    {
+        return $this->getEnvironment($environment)?->namespace
+            ?? "{$this->getName()}-{$environment}";
+    }
+
+    /**
+     * App-pod ServiceAccount for an env, or null for today's default (no SA
+     * on user pods). Set for IRSA / Workload Identity.
+     */
+    public function getServiceAccount(string $environment): ?string
+    {
+        return $this->getEnvironment($environment)?->serviceAccount;
+    }
+
+    /**
+     * Annotations for the generated ServiceAccount (e.g. IRSA role-arn).
+     *
+     * @return array<string, string>
+     */
+    public function getServiceAccountAnnotations(string $environment): array
+    {
+        return $this->getEnvironment($environment)?->serviceAccountAnnotations ?? [];
+    }
+
+    /**
+     * Image pull secret name for an env, or null when the env opts to pull
+     * via the node role/IRSA (omitImagePullSecret). Defaults to `ghcr-login`
+     * (Single-Node-Hero) so existing output is unchanged.
+     */
+    public function getImagePullSecret(string $environment): ?string
+    {
+        $env = $this->getEnvironment($environment);
+        if ($env?->omitImagePullSecret) {
+            return null;
+        }
+
+        return $env?->imagePullSecret ?? 'ghcr-login';
+    }
+
+    /**
+     * Extra ingress annotations to merge into an env's ingress-patch.
+     *
+     * @return array<string, string>
+     */
+    public function getIngressAnnotations(string $environment): array
+    {
+        return $this->getEnvironment($environment)?->ingressAnnotations ?? [];
+    }
+
     public function getScoutDriver(): ?ScoutDriver
     {
         return $this->scoutDriver;
