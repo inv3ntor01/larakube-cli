@@ -87,7 +87,14 @@ class ConfigData extends Data
             'composer.lock',
             '.env',
         ],
-        /** @var array<CloudData> */
+        /**
+         * @deprecated Legacy intake only. Older blueprints stored a top-level
+         * map of {env: {ip,user,port,key}} plus a shared `users` list. The
+         * constructor migrates it into environments[env].cloud and clears this;
+         * it is never written back (dropped in saveToFile).
+         *
+         * @var array<string, mixed>
+         */
         public array $cloud = [],
     ) {
         if (empty($this->id)) {
@@ -108,6 +115,28 @@ class ConfigData extends Data
             if (is_array($data)) {
                 $this->environments[$env] = EnvironmentData::from($data);
             }
+        }
+
+        // Legacy → per-env: an older top-level `cloud` map carried
+        // {env: {ip,user,port,key}} plus a shared `users` list. Fold each env's
+        // connection — and the shared teammates — into environments[env].cloud so
+        // cloud config lives with its environment. Only fills when env.cloud is
+        // still null, so it never clobbers new-shape data; the top-level field is
+        // cleared and dropped at rest (saveToFile).
+        if (! empty($this->cloud)) {
+            $legacyUsers = $this->cloud['users'] ?? [];
+            foreach ($this->cloud as $env => $conf) {
+                if ($env === 'users' || ! is_array($conf)) {
+                    continue;
+                }
+                $this->addEnvironment($env);
+                if ($this->environments[$env]->cloud === null) {
+                    $this->environments[$env]->cloud = CloudData::from(
+                        $legacyUsers ? array_merge($conf, ['teammates' => $legacyUsers]) : $conf
+                    );
+                }
+            }
+            $this->cloud = [];
         }
     }
 
@@ -1109,29 +1138,84 @@ class ConfigData extends Data
 
     // --- ☁️ CLOUD HELPERS ---
 
+    /**
+     * The environment's SSH connection config, or null if it has no remote
+     * host wired up yet. Cloud config lives on the environment (not a
+     * detached top-level map) so the two can't drift.
+     */
+    public function getCloud(string $environment = 'production'): ?CloudData
+    {
+        return $this->getEnvironment($environment)?->cloud;
+    }
+
+    /**
+     * Array form of the env's cloud config (or [] if none). Kept for callers
+     * that do array access (`$cloud['ip']`) and emptiness checks; prefer
+     * getCloud() for typed access.
+     *
+     * @return array<string, mixed>
+     */
     public function getCloudConfig(string $environment = 'production'): array
     {
-        return $this->cloud[$environment] ?? [];
+        return $this->getCloud($environment)?->toArray() ?? [];
     }
 
     public function getCloudIp(string $environment = 'production'): ?string
     {
-        return $this->getCloudConfig($environment)['ip'] ?? null;
+        return $this->getCloud($environment)?->ip;
     }
 
     public function getCloudUser(string $environment = 'production'): string
     {
-        return $this->getCloudConfig($environment)['user'] ?? 'larakube';
+        return $this->getCloud($environment)?->user ?? 'larakube';
     }
 
     public function getCloudPort(string $environment = 'production'): int
     {
-        return (int) ($this->getCloudConfig($environment)['port'] ?? 22);
+        return $this->getCloud($environment)?->port ?? 22;
     }
 
     public function getCloudKey(string $environment = 'production'): string
     {
-        return $this->getCloudConfig($environment)['key'] ?? ($_SERVER['HOME'] ?? '').'/.ssh/id_rsa';
+        return $this->getCloud($environment)?->key ?? ($_SERVER['HOME'] ?? '').'/.ssh/id_rsa';
+    }
+
+    /**
+     * Teammate SSH-key descriptors granted access to this env's host.
+     *
+     * @return array<int, array>
+     */
+    public function getTeammates(string $environment = 'production'): array
+    {
+        return $this->getCloud($environment)?->teammates ?? [];
+    }
+
+    /**
+     * Set an environment's cloud connection config. Creates the env if it
+     * doesn't exist yet. Accepts a CloudData or a raw array.
+     */
+    public function setCloud(string $environment, CloudData|array $cloud): self
+    {
+        $this->addEnvironment($environment);
+        $this->environments[$environment]->cloud = $cloud instanceof CloudData
+            ? $cloud
+            : CloudData::from($cloud);
+
+        return $this;
+    }
+
+    /**
+     * Append a teammate SSH-key descriptor to an environment's cloud access
+     * list. Creates the env (and an empty CloudData) if needed.
+     */
+    public function addTeammate(string $environment, array $teammate): self
+    {
+        $this->addEnvironment($environment);
+        $env = $this->environments[$environment];
+        $env->cloud ??= new CloudData;
+        $env->cloud->teammates[] = $teammate;
+
+        return $this;
     }
 
     // --- 💾 PERSISTENCE ---
@@ -1157,12 +1241,14 @@ class ConfigData extends Data
             @mkdir($directory, 0755, true);
         }
 
-        // Drop transient / machine-specific fields from the committed blueprint:
+        // Drop transient / machine-specific / legacy fields from the committed blueprint:
         //  - isScaffolding: only ever true mid `larakube new`; meaningless at rest.
         //  - path: an absolute filesystem path set at runtime (getPath() falls
         //    back to cwd), which shouldn't be committed or shared between machines.
+        //  - cloud: legacy top-level cloud map; migrated into environments[env].cloud
+        //    by the constructor, so it's always empty here and never written back.
         $data = $this->toArray();
-        unset($data['isScaffolding'], $data['path']);
+        unset($data['isScaffolding'], $data['path'], $data['cloud']);
 
         file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }

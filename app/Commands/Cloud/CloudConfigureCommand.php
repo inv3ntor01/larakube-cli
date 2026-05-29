@@ -96,7 +96,7 @@ class CloudConfigureCommand extends Command
             default: $cloud['key'] ?? $_SERVER['HOME'].'/.ssh/id_rsa'
         );
 
-        $config->setCloudConfig($environment, [
+        $config->setCloud($environment, [
             'ip' => $ip,
             'user' => $user,
             'port' => (int) $port,
@@ -339,11 +339,6 @@ BASH;
             return 1;
         }
 
-        $allCloud = $config->toArray()['cloud'] ?? [];
-        if (! isset($allCloud['users'])) {
-            $allCloud['users'] = [];
-        }
-
         $this->laraKubeInfo('LaraKube Teammate Access Manager');
 
         if (confirm('Would you like to add a new teammate?', true)) {
@@ -351,7 +346,7 @@ BASH;
             $name = text('Full Name', required: true);
             $key = text('Public SSH Key', required: true);
 
-            $allCloud['users'][] = [
+            $config->addTeammate($environment, [
                 'username' => $username,
                 'name' => $name,
                 'state' => 'present',
@@ -360,28 +355,24 @@ BASH;
                 'authorized_keys' => [
                     ['public_key' => $key],
                 ],
-            ];
+            ]);
 
-            $config->setCloudConfig($environment, $cloud); // Still need this to ensure it's in the array
-            // Actually users is cross-env usually, but let's keep it in the cloud object root
-            $configData = $config->toArray();
-            $configData['cloud']['users'] = $allCloud['users'];
-
-            $config = ConfigData::fromArray($configData);
             $this->saveProjectConfig($projectPath, $config);
             $this->laraKubeInfo("✅ Teammate '{$username}' added to .larakube.json");
         }
 
-        if (empty($allCloud['users'])) {
-            $this->laraKubeWarn('No users defined in cloud configuration. Skipping sync.');
+        $teammates = $config->getTeammates($environment);
+
+        if (empty($teammates)) {
+            $this->laraKubeWarn("No teammates defined for '{$environment}'. Skipping sync.");
 
             return 0;
         }
 
-        if (confirm('Sync all users to the remote server now?', true)) {
-            $this->laraKubeInfo("Syncing users to {$cloud['ip']}...");
+        if (confirm('Sync all teammates to the remote server now?', true)) {
+            $this->laraKubeInfo("Syncing teammates to {$cloud['ip']}...");
 
-            foreach ($allCloud['users'] as $user) {
+            foreach ($teammates as $user) {
                 $username = $user['username'];
                 if (($user['state'] ?? 'present') === 'present') {
                     $this->laraKubeInfo("  👤 Ensuring user: {$username}");
@@ -405,7 +396,7 @@ BASH;
                 }
             }
 
-            $this->laraKubeInfo('✅ All users synchronized.');
+            $this->laraKubeInfo('✅ All teammates synchronized.');
         }
 
         return 0;

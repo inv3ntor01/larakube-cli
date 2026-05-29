@@ -56,6 +56,13 @@ class EnvironmentData extends Data
          */
         public array $hosts = [],
         /**
+         * SSH connection + teammate access for deploying this env to a
+         * remote host. Null for envs not (yet) wired to a server — local
+         * never has one. Spatie Data auto-casts this nested object from a
+         * JSON array.
+         */
+        public ?CloudData $cloud = null,
+        /**
          * Features to enable in this env that would otherwise be excluded
          * by their enum's appliesToEnvironment() rule.
          *
