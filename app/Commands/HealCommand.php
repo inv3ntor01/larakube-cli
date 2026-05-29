@@ -23,7 +23,8 @@ class HealCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'heal {--force : Skip confirmation}';
+    protected $signature = 'heal {--force : Skip confirmation}
+                            {--prune : Delete generated manifests the blueprint no longer produces (locked files are preserved)}';
 
     /**
      * The console command description.
@@ -106,6 +107,24 @@ class HealCommand extends Command
 
             return true;
         });
+
+        if ($this->option('prune')) {
+            $pruned = [];
+            $this->withSpin('Pruning stale manifests...', function () use ($config, &$pruned) {
+                $pruned = $this->pruneStaleManifests($config);
+
+                return true;
+            });
+
+            if (empty($pruned)) {
+                $this->laraKubeInfo('No stale manifests to prune.');
+            } else {
+                $this->laraKubeInfo('Pruned '.count($pruned).' stale manifest(s):');
+                foreach ($pruned as $path) {
+                    $this->line("  <fg=red>- {$path}</>");
+                }
+            }
+        }
 
         $this->laraKubeInfo('Architectural integrity restored! 🚀');
         info('Next steps: larakube up');

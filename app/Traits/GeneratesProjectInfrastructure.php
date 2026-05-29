@@ -7,6 +7,7 @@ use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
 use Random\RandomException;
+use Symfony\Component\Yaml\Yaml;
 
 trait GeneratesProjectInfrastructure
 {
@@ -316,6 +317,126 @@ trait GeneratesProjectInfrastructure
             file_put_contents("$k8sPath/$dest", implode("\n---\n", $docs)."\n");
         }
         $this->appendToKustomization($k8sPath, "overlays/$env", $filename, 'patches');
+    }
+
+    /**
+     * Remove generated manifest files that the current blueprint no longer
+     * produces — stale volumes from a now-managed service, leftovers from a
+     * removed feature, and whole overlay directories for environments that
+     * have been dropped from the blueprint.
+     *
+     * Safe by construction: heal re-renders each kustomization.yaml from its
+     * template before appending, so its resources/patches lists are the
+     * authoritative "keep" set. Anything in a managed dir that isn't
+     * referenced there (and isn't locked) is stale. Locked files are always
+     * preserved; a stale env dir that still holds locked files is left in
+     * place rather than removed.
+     *
+     * @return array<int, string> relative paths that were pruned
+     */
+    protected function pruneStaleManifests(ConfigData $config): array
+    {
+        $k8sPath = $config->getK8sPath();
+        $overlaysPath = "$k8sPath/overlays";
+        $knownEnvs = $config->getEnvironments();
+        $pruned = [];
+
+        // 1. Overlay directories for environments no longer in the blueprint.
+        if (is_dir($overlaysPath)) {
+            foreach (array_diff(scandir($overlaysPath), ['.', '..']) as $entry) {
+                $dir = "$overlaysPath/$entry";
+                if (is_dir($dir) && ! in_array($entry, $knownEnvs, true)) {
+                    $pruned = array_merge($pruned, $this->pruneManifestDir($config, $dir, [], true));
+                }
+            }
+        }
+
+        // 2. Unreferenced files within base + each known overlay.
+        $dirs = ["$k8sPath/base"];
+        foreach ($knownEnvs as $env) {
+            $dirs[] = "$overlaysPath/$env";
+        }
+        foreach ($dirs as $dir) {
+            if (is_dir($dir)) {
+                $pruned = array_merge(
+                    $pruned,
+                    $this->pruneManifestDir($config, $dir, $this->referencedManifestFiles($dir))
+                );
+            }
+        }
+
+        return $pruned;
+    }
+
+    /**
+     * Local manifest filenames referenced by a directory's kustomization.yaml
+     * (resources + patch paths). Cross-directory references like ../../base
+     * are ignored.
+     *
+     * @return array<int, string>
+     */
+    protected function referencedManifestFiles(string $dir): array
+    {
+        $kustomizationFile = "$dir/kustomization.yaml";
+        if (! file_exists($kustomizationFile)) {
+            return [];
+        }
+
+        $parsed = Yaml::parse(file_get_contents($kustomizationFile)) ?: [];
+        $referenced = [];
+
+        foreach (($parsed['resources'] ?? []) as $resource) {
+            if (is_string($resource) && ! str_contains($resource, '/')) {
+                $referenced[] = $resource;
+            }
+        }
+        foreach (($parsed['patches'] ?? []) as $patch) {
+            $path = is_array($patch) ? ($patch['path'] ?? null) : $patch;
+            if (is_string($path) && ! str_contains($path, '/')) {
+                $referenced[] = $path;
+            }
+        }
+
+        return $referenced;
+    }
+
+    /**
+     * Delete *.yaml files in $dir that aren't in $referenced and aren't locked.
+     * When $removeAll is true the kustomization itself is eligible and an
+     * emptied directory is removed (used for dropped environments).
+     *
+     * @param  array<int, string>  $referenced
+     * @return array<int, string> relative paths pruned
+     */
+    protected function pruneManifestDir(ConfigData $config, string $dir, array $referenced, bool $removeAll = false): array
+    {
+        $k8sPath = $config->getK8sPath();
+        $pruned = [];
+
+        foreach (glob("$dir/*.yaml") ?: [] as $file) {
+            $name = basename($file);
+            if ($name === 'kustomization.yaml' && ! $removeAll) {
+                continue;
+            }
+            if (in_array($name, $referenced, true)) {
+                continue;
+            }
+
+            $stub = str_replace($k8sPath.'/', '', $file);
+            if ($config->isLocked(".infrastructure/k8s/{$stub}")) {
+                continue;
+            }
+
+            @unlink($file);
+            $pruned[] = $stub;
+        }
+
+        // Drop a now-empty dropped-environment directory.
+        if ($removeAll && empty(glob("$dir/*"))) {
+            @rmdir($dir);
+        }
+
+        return $pruned;
     }
 
     protected function appendToKustomization(string $k8sPath, string $folder, string $filename, string $type = 'resources'): void
