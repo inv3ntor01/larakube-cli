@@ -15,15 +15,15 @@ test('every host-publishing component declares its overrideable services', funct
     expect(LaravelFeature::REVERB->getHostServices())->toHaveKey('reverb')
         ->and(LaravelFeature::MAILPIT->getHostServices())->toHaveKey('mailpit')
         ->and(LaravelFeature::MONITORING->getHostServices())
-            ->toHaveKey('grafana')
-            ->toHaveKey('prometheus')
+        ->toHaveKey('grafana')
+        ->toHaveKey('prometheus')
         ->and(ScoutDriver::MEILISEARCH->getHostServices())->toHaveKey('meilisearch')
         ->and(ScoutDriver::TYPESENSE->getHostServices())
-            ->toHaveKey('typesense')
-            ->toHaveKey('typesense-dashboard')
+        ->toHaveKey('typesense')
+        ->toHaveKey('typesense-dashboard')
         ->and(StorageDriver::MINIO->getHostServices())
-            ->toHaveKey('s3')
-            ->toHaveKey('s3-console');
+        ->toHaveKey('s3')
+        ->toHaveKey('s3-console');
 });
 
 test('local-console components opt out of host overrides via empty getHostServices', function () {

@@ -147,7 +147,7 @@ class CloudProvisionCommand extends Command
 
     echo "Enabling IP Forwarding..."
     sysctl -w net.ipv4.ip_forward=1
-    echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
+    grep -qxF 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
 
     echo "Installing K3s..."
     curl -sfL https://get.k3s.io | sh -s - --disable=traefik --write-kubeconfig-mode 644
