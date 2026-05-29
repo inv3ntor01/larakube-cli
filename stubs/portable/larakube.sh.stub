@@ -36,10 +36,23 @@ ENV_FILE=".env"
 
 WEB_DEPLOY="web"     # PHP/app server (FrankenPHP/FPM)
 NODE_DEPLOY="node"   # Vite/Node frontend pod
+CERT_DIR=".infrastructure/traefik/certificates"
 
 ensure_ns()   { kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null; }
 has_feature() { jq -e --arg f "$1" '.features // [] | index($f)' .larakube.json >/dev/null 2>&1; }
 server_var()  { jq -r '.serverVariation // ""' .larakube.json; }
+
+# Find the namespace where the cluster's Traefik ingress controller runs
+# (k3s ships it in kube-system). Empty if none found.
+traefik_ns() {
+    for ns in kube-system traefik; do
+        if kubectl get deploy -n "$ns" -l app.kubernetes.io/name=traefik 2>/dev/null | grep -q . \
+           || kubectl get deploy traefik -n "$ns" >/dev/null 2>&1; then
+            echo "$ns"; return 0
+        fi
+    done
+    return 1
+}
 
 # Make the freshly-built image reachable by common local clusters that keep
 # their own image store. Docker Desktop / OrbStack share the daemon's images
@@ -164,6 +177,74 @@ cmd_shell()   { exec_in "${1:-$WEB_DEPLOY}" sh; }
 cmd_status()  { kubectl get pods,svc,ingress -n "$NS"; }
 cmd_forward() { local port="${1:-8080}"; info "http://localhost:${port} → ${WEB_DEPLOY} (Ctrl+C to stop)"; exec kubectl port-forward -n "$NS" "deploy/${WEB_DEPLOY}" "${port}:8080"; }
 
+# --- local URL access (so vite/reverb work over their *.dev.test hosts) ------
+
+# Map the project's ingress hostnames to 127.0.0.1 in /etc/hosts (sudo).
+cmd_hosts() {
+    local hosts
+    hosts="$(kubectl get ingress -n "$NS" -o jsonpath='{range .items[*]}{range .spec.rules[*]}{.host}{"\n"}{end}{end}' 2>/dev/null | sort -u | sed '/^$/d')"
+    [ -n "$hosts" ] || die "No ingress hosts in ${NS}. Run './larakube.sh up' first."
+    info "Mapping ingress hosts → 127.0.0.1 in /etc/hosts (sudo):"
+    while IFS= read -r h; do
+        [ -z "$h" ] && continue
+        if grep -qE "[[:space:]]${h}([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
+            echo "  = $h (already present)"
+        else
+            echo "127.0.0.1 $h" | sudo tee -a /etc/hosts >/dev/null
+            echo "  + $h"
+        fi
+    done <<< "$hosts"
+}
+
+# Trust the project's local CA so https://*.dev.test is valid (and Reverb WSS works).
+cmd_trust() {
+    local ca="${CERT_DIR}/local-ca.pem"
+    [ -f "$ca" ] || die "CA cert not found at ${ca}. Run './larakube.sh up' (or heal) first."
+    case "$(uname -s)" in
+        Darwin)
+            info "Trusting LaraKube local CA in the macOS System keychain (sudo)…"
+            sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$ca"
+            ;;
+        Linux)
+            info "Trusting LaraKube local CA (sudo)…"
+            if [ -d /usr/local/share/ca-certificates ]; then
+                sudo cp "$ca" /usr/local/share/ca-certificates/larakube-local-ca.crt && sudo update-ca-certificates
+            elif [ -d /etc/pki/ca-trust/source/anchors ]; then
+                sudo cp "$ca" /etc/pki/ca-trust/source/anchors/larakube-local-ca.crt && sudo update-ca-trust
+            else
+                die "Unknown Linux trust store. Install ${ca} into your CA store manually."
+            fi
+            info "If your browser still warns, it may use its own (NSS) store — import ${ca} there too."
+            ;;
+        *) die "Unsupported OS for 'trust'. Install ${ca} into your trust store manually." ;;
+    esac
+}
+
+# Make the cluster's Traefik serve the LaraKube local cert for every host, so
+# HTTPS is valid. Targets an existing Traefik (k3s ships one); does NOT install
+# Traefik. Pair with 'trust'.
+cmd_tls() {
+    local ns crt="${CERT_DIR}/local-dev.pem" key="${CERT_DIR}/local-dev-key.pem"
+    [ -f "$crt" ] && [ -f "$key" ] || die "Local dev cert not found in ${CERT_DIR}."
+    ns="$(traefik_ns)" || die "No Traefik ingress controller found (looked in kube-system, traefik). On k3s it's built-in; otherwise install an ingress controller or use the LaraKube CLI."
+    info "Loading local cert into Traefik namespace '${ns}'…"
+    kubectl create secret tls larakube-local-tls -n "$ns" --cert="$crt" --key="$key" \
+        --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    info "Setting it as Traefik's default certificate…"
+    # Traefik v3 uses traefik.io; older v2 uses traefik.containo.us. Try v3, fall back.
+    local store='
+metadata:
+  name: default
+  namespace: '"${ns}"'
+spec:
+  defaultCertificate:
+    secretName: larakube-local-tls'
+    printf 'apiVersion: traefik.io/v1alpha1\nkind: TLSStore%s\n' "$store" | kubectl apply -f - >/dev/null 2>&1 \
+        || printf 'apiVersion: traefik.containo.us/v1alpha1\nkind: TLSStore%s\n' "$store" | kubectl apply -f - >/dev/null \
+        || die "Could not create a Traefik TLSStore (unrecognized Traefik version). See LOCAL_DEV.md."
+    info "Done. Run './larakube.sh trust' so your machine accepts the cert."
+}
+
 usage() {
     cat <<EOF
 larakube.sh — local kubectl/docker wrapper for "${APP}"  (namespace: ${NS})
@@ -182,14 +263,22 @@ Dev loop:
   composer <args>    composer ...    in the web pod
   npm <args>         npm ...         in the node pod   (e.g. npm run dev)
 
+Local URLs (so the app, Vite HMR, and Reverb work over https://*.dev.test):
+  hosts              Map the project's ingress hosts → 127.0.0.1 in /etc/hosts (sudo)
+  tls                Make the cluster's Traefik serve the local cert (needs an
+                     existing ingress controller; k3s ships one)
+  trust              Trust the local CA so HTTPS is valid + Reverb WSS works (sudo)
+
 Introspection:
   status             Show pods / services / ingress
   logs [deploy]      Tail logs (default: web)
   shell [deploy]     Open a shell (default: web)
-  forward [port]     Port-forward the web pod to localhost (default: 8080)
+  forward [port]     Port-forward the web pod to localhost — quick check for
+                     simple apps; does NOT cover Vite/Reverb (use hosts+tls+trust)
 
   list | help        Show this list
 
+First run, full URLs:  up → tls → trust → hosts   (then open https://${APP}.dev.test)
 See LOCAL_DEV.md for the full guide.
 EOF
 }
@@ -210,6 +299,9 @@ case "$sub" in
     shell)         cmd_shell "$@" ;;
     status)        cmd_status ;;
     forward)       cmd_forward "$@" ;;
+    hosts)         cmd_hosts ;;
+    tls)           cmd_tls ;;
+    trust)         cmd_trust ;;
     list|help|-h|--help) usage ;;
     *) echo "Unknown command: ${sub}"; echo; usage; exit 1 ;;
 esac
