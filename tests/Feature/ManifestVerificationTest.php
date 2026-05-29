@@ -145,13 +145,19 @@ test('Deployment Strategies: PVC access modes', function () {
 
         $manifests = generateManifestsAsArray($config);
 
-        expect($manifests)->toHaveKey('base/volumes.yaml');
-        $volumes = $manifests['base/volumes.yaml'];
+        // App PVCs now live per-environment; the cloud overlay reflects the project strategy.
+        expect($manifests)->not->toHaveKey('base/volumes.yaml');
+        expect($manifests)->toHaveKey('overlays/production/app-volumes.yaml');
+        $volumes = $manifests['overlays/production/app-volumes.yaml'];
 
-        // base/volumes.yaml is a multi-document YAML (laravel-storage-pvc and laravel-data-pvc)
+        // app-volumes.yaml is a multi-document YAML (laravel-storage-pvc and laravel-data-pvc)
         expect($volumes)->toBeArray();
         expect($volumes[0]['spec']['accessModes'][0])->toBe($accessMode);
         expect($volumes[1]['spec']['accessModes'][0])->toBe($accessMode);
+
+        // Local is always single-node, so its PVCs are always ReadWriteOnce.
+        expect($manifests)->toHaveKey('overlays/local/app-volumes.yaml');
+        expect($manifests['overlays/local/app-volumes.yaml'][0]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
     }
 });
 

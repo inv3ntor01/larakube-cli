@@ -4,32 +4,29 @@ use App\Data\ConfigData;
 use App\Enums\DeploymentStrategy;
 use App\Enums\ServerVariation;
 
-test('Strategy: Multi-Node HA produces ReadWriteMany PVCs in base config', function () {
-    $config = new ConfigData(name: 'ha-test');
-    $config->setServerVariation(ServerVariation::FPM_NGINX);
-    $config->setStrategy(DeploymentStrategy::MULTI_NODE_HA);
+test('Strategy: cloud-overlay PVCs follow the strategy; local is always ReadWriteOnce', function () {
+    foreach ([
+        [DeploymentStrategy::SINGLE_NODE, 'ReadWriteOnce'],
+        [DeploymentStrategy::MULTI_NODE_HA, 'ReadWriteMany'],
+    ] as [$strategy, $mode]) {
+        $config = new ConfigData(name: 'strat-'.$strategy->value);
+        $config->setServerVariation(ServerVariation::FPM_NGINX);
+        $config->setStrategy($strategy);
 
-    $manifests = generateManifests($config);
+        $manifests = generateManifestsAsArray($config);
 
-    // Extract base/volumes.yaml part
-    preg_match('/--- FILE: base\/volumes\.yaml ---\n(.*?)--- FILE:/s', $manifests, $matches);
-    $baseConfig = $matches[1] ?? '';
+        // App PVCs now live per-environment, not in base/.
+        expect($manifests)->not->toHaveKey('base/volumes.yaml')
+            ->and($manifests)->toHaveKey('overlays/production/app-volumes.yaml')
+            ->and($manifests)->toHaveKey('overlays/local/app-volumes.yaml');
 
-    expect($baseConfig)->toContain('ReadWriteMany');
-    expect($baseConfig)->not->toContain('ReadWriteOnce');
-});
+        // The cloud env reflects the project strategy…
+        $prod = $manifests['overlays/production/app-volumes.yaml'];
+        expect($prod[0]['spec']['accessModes'][0])->toBe($mode)
+            ->and($prod[1]['spec']['accessModes'][0])->toBe($mode);
 
-test('Strategy: Single-Node Hero produces ReadWriteOnce PVCs in base config', function () {
-    $config = new ConfigData(name: 'single-test');
-    $config->setServerVariation(ServerVariation::FPM_NGINX);
-    $config->setStrategy(DeploymentStrategy::SINGLE_NODE);
-
-    $manifests = generateManifests($config);
-
-    // Extract base/volumes.yaml part
-    preg_match('/--- FILE: base\/volumes\.yaml ---\n(.*?)--- FILE:/s', $manifests, $matches);
-    $baseConfig = $matches[1] ?? '';
-
-    expect($baseConfig)->toContain('ReadWriteOnce');
-    expect($baseConfig)->not->toContain('ReadWriteMany');
+        // …while local is always ReadWriteOnce (single machine), regardless.
+        $local = $manifests['overlays/local/app-volumes.yaml'];
+        expect($local[0]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
+    }
 });

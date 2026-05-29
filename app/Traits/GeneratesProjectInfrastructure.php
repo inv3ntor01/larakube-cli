@@ -157,7 +157,6 @@ trait GeneratesProjectInfrastructure
             'base/kustomization.yaml',
             'base/laravel.yaml',
             'base/config.yaml',
-            'base/volumes.yaml',
         ];
 
         $localStubs = [
@@ -165,7 +164,6 @@ trait GeneratesProjectInfrastructure
             'overlays/local/infrastructure.yaml',
             'overlays/local/patches.yaml',
             'overlays/local/config-patch.yaml',
-            'overlays/local/pvc-patch.yaml',
         ];
         if ($config->getFrontend()?->requiresNodePod()) {
             $localStubs[] = 'overlays/local/node-deployment.yaml';
@@ -217,6 +215,14 @@ trait GeneratesProjectInfrastructure
                 $viewName = 'k8s.overlays.production.'.str_replace('.yaml', '', $file);
                 $renderStub($stub, $env, "{$appName}-{$env}", $viewName);
             }
+        }
+
+        // App storage PVCs live in each environment's overlay (not base), so
+        // their accessMode can follow that env's deployment strategy
+        // (ReadWriteOnce for single-node, ReadWriteMany for multi-node-HA).
+        foreach (array_merge(['local'], $cloudEnvs) as $env) {
+            @mkdir("$k8sPath/overlays/$env", 0755, true);
+            $renderStub("overlays/$env/app-volumes.yaml", $env, "{$appName}-{$env}", 'k8s.base.volumes');
         }
 
         // 2. APPLY ACTIONS (write component-owned manifest files to disk)
@@ -281,6 +287,11 @@ trait GeneratesProjectInfrastructure
                 $this->appendToKustomization($k8sPath, "overlays/$env", $file);
             }
             $this->appendToKustomization($k8sPath, "overlays/$env", 'ingress-patch.yaml', 'patches');
+        }
+
+        // Register the per-env app storage PVCs in every overlay.
+        foreach (array_merge(['local'], $cloudEnvs) as $env) {
+            $this->appendToKustomization($k8sPath, "overlays/$env", 'app-volumes.yaml');
         }
     }
 

@@ -10,7 +10,6 @@ resources:
   - typesense-companion-deployment.yaml
   - typesense-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -239,7 +238,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -320,6 +319,7 @@ kind: Kustomization
 namespace: typesense-test-local
 
 resources:
+  - app-volumes.yaml
   - typesense-companion-ingress.yaml
   - typesense-volumes.yaml
   - typesense-ingress.yaml
@@ -399,24 +399,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: typesense-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: typesense-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -427,24 +409,6 @@ spec:
   tls:
     - hosts:
         - typesense-test.dev.test
-
-
---- FILE: overlays/local/pvc-patch.yaml ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: typesense-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: typesense-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
 
 
 --- FILE: overlays/local/typesense-companion-ingress.yaml ---
@@ -529,6 +493,30 @@ spec:
       storage: 1Gi
 
 
+--- FILE: overlays/production/app-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typesense-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typesense-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
 --- FILE: overlays/production/config-patch.yaml ---
 # Managed by LaraKube CLI (Runtime Injection)
 
@@ -582,6 +570,7 @@ kind: Kustomization
 namespace: typesense-test-production
 
 resources:
+  - app-volumes.yaml
   - typesense-volumes.yaml
   - ../../base
   - namespace.yaml

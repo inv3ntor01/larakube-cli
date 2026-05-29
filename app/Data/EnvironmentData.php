@@ -2,6 +2,7 @@
 
 namespace App\Data;
 
+use App\Enums\DeploymentStrategy;
 use App\Enums\IngressController;
 use App\Enums\LaravelFeature;
 use Spatie\LaravelData\Data;
@@ -32,6 +33,13 @@ class EnvironmentData extends Data
 {
     public function __construct(
         public ?IngressController $ingress = null,
+        /**
+         * Deployment strategy for this env (single-node vs multi-node-HA).
+         * Lets a budget-tiered setup run e.g. staging single-node and
+         * production multi-node-HA. Falls back to the project-level
+         * strategy when null.
+         */
+        public ?DeploymentStrategy $strategy = null,
         /**
          * Services external to the cluster in this environment (e.g.
          * managed Postgres on RDS in production). LaraKube skips

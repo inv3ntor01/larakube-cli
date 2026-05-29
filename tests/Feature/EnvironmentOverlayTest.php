@@ -73,6 +73,43 @@ test('SSR applies to every cloud env, not only production', function () {
         ->and(LaravelFeature::SSR->appliesToEnvironment('local'))->toBeFalse();
 });
 
+test('per-environment strategy lets each cloud env pick its own PVC access mode', function () {
+    // Multi-VPC reality: production is an HA cluster (RWX), staging is a single
+    // box (RWO). Local is always single-node regardless.
+    $config = ConfigData::from([
+        'name' => 'perenv',
+        'serverVariation' => 'fpm-nginx',
+        'phpVersion' => '8.5',
+        'database' => 'sqlite',
+        'strategy' => 'single-node',
+        'environments' => [
+            'local' => [],
+            'production' => [
+                'hosts' => ['web' => 'perenv.com'],
+                'strategy' => 'multi-node-ha',
+            ],
+            'staging' => [
+                'hosts' => ['web' => 'stg.perenv.com'],
+                'strategy' => 'single-node',
+            ],
+        ],
+    ]);
+
+    $manifests = generateManifestsAsArray($config);
+
+    // Production overrides the project default → ReadWriteMany.
+    expect($manifests['overlays/production/app-volumes.yaml'][0]['spec']['accessModes'][0])
+        ->toBe('ReadWriteMany');
+
+    // Staging keeps single-node → ReadWriteOnce.
+    expect($manifests['overlays/staging/app-volumes.yaml'][0]['spec']['accessModes'][0])
+        ->toBe('ReadWriteOnce');
+
+    // Local is always ReadWriteOnce.
+    expect($manifests['overlays/local/app-volumes.yaml'][0]['spec']['accessModes'][0])
+        ->toBe('ReadWriteOnce');
+});
+
 test('a managed service is removed from the env that manages it via a delete-patch', function () {
     $config = ConfigData::from([
         'name' => 'mgd',

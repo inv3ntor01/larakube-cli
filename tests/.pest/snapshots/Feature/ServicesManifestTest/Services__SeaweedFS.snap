@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - seaweedfs-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -220,7 +219,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -301,6 +300,7 @@ kind: Kustomization
 namespace: seaweed-test-local
 
 resources:
+  - app-volumes.yaml
   - seaweedfs-ingress.yaml
   - seaweedfs-volumes.yaml
   - ../../base
@@ -379,24 +379,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: seaweed-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: seaweed-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -407,24 +389,6 @@ spec:
   tls:
     - hosts:
         - seaweed-test.dev.test
-
-
---- FILE: overlays/local/pvc-patch.yaml ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: seaweed-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: seaweed-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
 
 
 --- FILE: overlays/local/seaweedfs-ingress.yaml ---
@@ -495,6 +459,30 @@ spec:
       storage: 5Gi
 
 
+--- FILE: overlays/production/app-volumes.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-storage-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweed-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
 --- FILE: overlays/production/config-patch.yaml ---
 # Managed by LaraKube CLI (Runtime Injection)
 
@@ -548,6 +536,7 @@ kind: Kustomization
 namespace: seaweed-test-production
 
 resources:
+  - app-volumes.yaml
   - seaweedfs-volumes.yaml
   - ../../base
   - namespace.yaml

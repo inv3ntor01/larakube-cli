@@ -8,7 +8,7 @@ kind: Deployment
 metadata:
   name: {{ $name }}
 spec:
-  replicas: {{ $config->getStrategy() === \App\Enums\DeploymentStrategy::MULTI_NODE_HA ? 2 : 1 }}
+  replicas: {{ $config->getStrategy($environment) === \App\Enums\DeploymentStrategy::MULTI_NODE_HA ? 2 : 1 }}
   template:
     spec:
       containers:

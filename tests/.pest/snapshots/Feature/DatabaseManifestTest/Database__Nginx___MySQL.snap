@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - mysql-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -214,7 +213,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -278,6 +277,7 @@ kind: Kustomization
 namespace: mysql-test-local
 
 resources:
+  - app-volumes.yaml
   - mysql-companion-ingress.yaml
   - mysql-companion.yaml
   - mysql-volumes.yaml
@@ -472,16 +472,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mysql-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -494,7 +484,7 @@ spec:
         - mysql-test.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -502,6 +492,20 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -557,6 +561,7 @@ kind: Kustomization
 namespace: mysql-test-production
 
 resources:
+  - app-volumes.yaml
   - mysql-volumes.yaml
   - ../../base
   - namespace.yaml

@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - meilisearch-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -205,7 +204,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -286,6 +285,7 @@ kind: Kustomization
 namespace: meilisearch-test-local
 
 resources:
+  - app-volumes.yaml
   - meilisearch-volumes.yaml
   - meilisearch-ingress.yaml
   - ../../base
@@ -421,24 +421,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: meilisearch-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: meilisearch-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -451,7 +433,7 @@ spec:
         - meilisearch-test.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -459,6 +441,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -467,6 +452,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -522,6 +510,7 @@ kind: Kustomization
 namespace: meilisearch-test-production
 
 resources:
+  - app-volumes.yaml
   - meilisearch-volumes.yaml
   - ../../base
   - namespace.yaml

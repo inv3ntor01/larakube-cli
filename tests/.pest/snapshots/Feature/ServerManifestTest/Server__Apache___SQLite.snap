@@ -8,7 +8,6 @@ kind: Kustomization
 
 resources:
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -138,7 +137,7 @@ spec:
         - apache-sqlite.dev.test
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -219,6 +218,7 @@ kind: Kustomization
 namespace: apache-sqlite-local
 
 resources:
+  - app-volumes.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
@@ -295,24 +295,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: apache-sqlite-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: apache-sqlite-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -325,7 +307,7 @@ spec:
         - apache-sqlite.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -333,6 +315,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -341,6 +326,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -396,6 +384,7 @@ kind: Kustomization
 namespace: apache-sqlite-production
 
 resources:
+  - app-volumes.yaml
   - ../../base
   - namespace.yaml
   - config-patch.yaml

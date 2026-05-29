@@ -11,7 +11,6 @@ resources:
   - scheduler-cronjob.yaml
   - queues-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -368,7 +367,7 @@ spec:
                 claimName: kitchen-sink-laravel-data-pvc
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -449,6 +448,7 @@ kind: Kustomization
 namespace: kitchen-sink-local
 
 resources:
+  - app-volumes.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
@@ -700,24 +700,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kitchen-sink-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kitchen-sink-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -730,7 +712,7 @@ spec:
         - kitchen-sink.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -738,6 +720,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -746,6 +731,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -829,6 +817,7 @@ kind: Kustomization
 namespace: kitchen-sink-production
 
 resources:
+  - app-volumes.yaml
   - ../../base
   - namespace.yaml
   - config-patch.yaml

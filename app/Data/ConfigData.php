@@ -453,8 +453,27 @@ class ConfigData extends Data
         return $this->phpVersion ?? PhpVersion::PHP_8_5;
     }
 
-    public function getStrategy(): DeploymentStrategy
+    /**
+     * Deployment strategy, optionally per environment. With $environment, an
+     * env-level override wins; otherwise the project-level strategy applies.
+     * This is what lets staging run single-node while production runs
+     * multi-node-HA from one blueprint.
+     */
+    public function getStrategy(?string $environment = null): DeploymentStrategy
     {
+        // Local is always a single node (k3d/k3s on one machine), so its
+        // volumes are ReadWriteOnce regardless of the project/prod strategy.
+        if ($environment === 'local') {
+            return DeploymentStrategy::SINGLE_NODE;
+        }
+
+        if ($environment !== null) {
+            $envStrategy = $this->getEnvironment($environment)?->strategy;
+            if ($envStrategy !== null) {
+                return $envStrategy;
+            }
+        }
+
         return $this->strategy;
     }
 

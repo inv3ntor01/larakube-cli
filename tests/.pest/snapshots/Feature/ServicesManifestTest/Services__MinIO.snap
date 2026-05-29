@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - minio-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -207,7 +206,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -288,6 +287,7 @@ kind: Kustomization
 namespace: minio-test-local
 
 resources:
+  - app-volumes.yaml
   - minio-ingress.yaml
   - minio-volumes.yaml
   - ../../base
@@ -434,24 +434,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: minio-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: minio-test-laravel-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -464,7 +446,7 @@ spec:
         - minio-test.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -472,6 +454,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -480,6 +465,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -535,6 +523,7 @@ kind: Kustomization
 namespace: minio-test-production
 
 resources:
+  - app-volumes.yaml
   - minio-volumes.yaml
   - ../../base
   - namespace.yaml

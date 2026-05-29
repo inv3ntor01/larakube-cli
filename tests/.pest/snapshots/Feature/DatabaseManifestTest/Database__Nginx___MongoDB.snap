@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - mongodb-statefulset.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -191,7 +190,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -255,6 +254,7 @@ kind: Kustomization
 namespace: mongodb-test-local
 
 resources:
+  - app-volumes.yaml
   - mongodb-companion-ingress.yaml
   - mongodb-companion.yaml
   - ../../base
@@ -401,16 +401,6 @@ spec:
 
 ---
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mongodb-test-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-
----
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -423,7 +413,7 @@ spec:
         - mongodb-test.dev.test
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -431,6 +421,20 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-test-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -486,6 +490,7 @@ kind: Kustomization
 namespace: mongodb-test-production
 
 resources:
+  - app-volumes.yaml
   - ../../base
   - namespace.yaml
   - config-patch.yaml

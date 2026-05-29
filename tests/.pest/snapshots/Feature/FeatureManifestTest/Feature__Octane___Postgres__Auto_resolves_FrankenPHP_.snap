@@ -9,7 +9,6 @@ kind: Kustomization
 resources:
   - postgres-deployment.yaml
   - laravel.yaml
-  - volumes.yaml
 
 
 --- FILE: base/laravel.yaml ---
@@ -209,7 +208,7 @@ spec:
   type: ClusterIP
 
 
---- FILE: base/volumes.yaml ---
+--- FILE: overlays/local/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -273,6 +272,7 @@ kind: Kustomization
 namespace: octane-auto-franken-local
 
 resources:
+  - app-volumes.yaml
   - postgres-companion-ingress.yaml
   - postgres-companion.yaml
   - postgres-volumes.yaml
@@ -345,16 +345,6 @@ spec:
         - name: storage
           persistentVolumeClaim:
             claimName: octane-auto-franken-laravel-storage-pvc
-
----
-
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: octane-auto-franken-laravel-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
 
 ---
 
@@ -479,7 +469,7 @@ spec:
       storage: 1Gi
 
 
---- FILE: overlays/local/pvc-patch.yaml ---
+--- FILE: overlays/production/app-volumes.yaml ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -487,6 +477,20 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: octane-auto-franken-laravel-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 
 
 --- FILE: overlays/production/config-patch.yaml ---
@@ -542,6 +546,7 @@ kind: Kustomization
 namespace: octane-auto-franken-production
 
 resources:
+  - app-volumes.yaml
   - postgres-volumes.yaml
   - ../../base
   - namespace.yaml
