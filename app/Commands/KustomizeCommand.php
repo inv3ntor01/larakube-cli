@@ -16,7 +16,7 @@ class KustomizeCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'kustomize {environment? : The environment to preview (local or production)}';
+    protected $signature = 'kustomize {environment=local : The environment to preview (defaults to local)}';
 
     /**
      * The console command description.
@@ -34,11 +34,7 @@ class KustomizeCommand extends Command
             return 1;
         }
 
-        $environment = $this->argument('environment');
-
-        if (! $environment) {
-            $environment = $this->askForEnvironment('Which environment would you like to preview?');
-        }
+        $environment = $this->argument('environment') ?: 'local';
 
         $projectPath = getcwd();
         $overlayPath = "{$projectPath}/.infrastructure/k8s/overlays/{$environment}";

@@ -301,6 +301,33 @@ class ConfigData extends Data
         return $this->environments[$environment] ?? null;
     }
 
+    public function hasEnvironment(string $environment): bool
+    {
+        return isset($this->environments[$environment]);
+    }
+
+    /**
+     * Add an environment to the project DNA. Idempotent: if the env already
+     * exists, the existing EnvironmentData is preserved (so re-running
+     * `larakube env staging` after manual blueprint edits doesn't clobber
+     * configured managed/hosts/ingress overrides).
+     */
+    public function addEnvironment(string $environment, ?EnvironmentData $data = null): self
+    {
+        if (! $this->hasEnvironment($environment)) {
+            $this->environments[$environment] = $data ?? new EnvironmentData;
+        }
+
+        return $this;
+    }
+
+    public function removeEnvironment(string $environment): self
+    {
+        unset($this->environments[$environment]);
+
+        return $this;
+    }
+
     /**
      * Services treated as external (not deployed by LaraKube) in a given env.
      * Empty for envs LaraKube manages end-to-end. Production typically lists

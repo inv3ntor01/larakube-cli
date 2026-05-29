@@ -16,7 +16,7 @@ class K9sCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'k9s {environment? : The environment to monitor (local or production)}';
+    protected $signature = 'k9s {environment=local : The environment to monitor (defaults to local)}';
 
     /**
      * The console command description.
@@ -47,11 +47,9 @@ class K9sCommand extends Command
             return 1;
         }
 
-        $environment = $this->argument('environment');
-
-        if (! $environment) {
-            $environment = $this->askForEnvironment('Which environment would you like to monitor?');
-        }
+        // Defensive: signature default is 'local', but internal $this->call()
+        // invocations may pass null explicitly (e.g. from ConsoleCommand).
+        $environment = $this->argument('environment') ?: 'local';
 
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);

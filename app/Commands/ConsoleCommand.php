@@ -48,11 +48,15 @@ class ConsoleCommand extends Command
             return $this->showConsole();
         }
 
-        // If an environment is specified or --cli is forced, go to K9s
+        // If an environment is specified or --cli is forced, go to K9s.
+        // Only pass the env arg when actually set, so K9s's 'local' default
+        // takes over for `larakube console --cli` (no explicit env).
         if ($this->option('cli') || $this->argument('environment')) {
-            return $this->call('k9s', [
-                'environment' => $this->argument('environment'),
-            ]);
+            $args = $this->argument('environment')
+                ? ['environment' => $this->argument('environment')]
+                : [];
+
+            return $this->call('k9s', $args);
         }
 
         // Default behavior: Ask the user or promote K9s

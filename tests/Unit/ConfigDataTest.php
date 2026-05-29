@@ -141,6 +141,32 @@ class ConfigDataTest extends TestCase
         $this->assertContains(LaravelFeature::BOOST, $config->getFeatures('production'));
     }
 
+    public function test_add_environment_creates_a_new_env_idempotently()
+    {
+        $config = ConfigData::from([]);
+
+        $this->assertFalse($config->hasEnvironment('staging'));
+
+        $config->addEnvironment('staging');
+        $this->assertTrue($config->hasEnvironment('staging'));
+        $this->assertInstanceOf(EnvironmentData::class, $config->getEnvironment('staging'));
+
+        $config->getEnvironment('staging')->managed = ['postgres'];
+        $config->addEnvironment('staging');
+        $this->assertSame(['postgres'], $config->getManaged('staging'));
+    }
+
+    public function test_remove_environment_drops_it_from_the_map()
+    {
+        $config = ConfigData::from([]);
+        $config->addEnvironment('staging');
+        $this->assertTrue($config->hasEnvironment('staging'));
+
+        $config->removeEnvironment('staging');
+        $this->assertFalse($config->hasEnvironment('staging'));
+        $this->assertNotContains('staging', $config->getEnvironments());
+    }
+
     public function test_set_production_host_writes_into_environment_map()
     {
         $config = ConfigData::from([]);

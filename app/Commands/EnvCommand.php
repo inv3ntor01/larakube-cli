@@ -2,10 +2,18 @@
 
 namespace App\Commands;
 
+use App\Data\ConfigData;
+use App\Data\EnvironmentData;
+use App\Enums\CacheDriver;
+use App\Enums\DatabaseDriver;
+use App\Enums\IngressController;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
+use function Laravel\Prompts\info;
+use function Laravel\Prompts\multiselect;
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
 class EnvCommand extends Command
@@ -99,11 +107,61 @@ class EnvCommand extends Command
             }
         }
 
-        // 3. Update Project DNA
-        $config->addEnvironment($envName);
+        // 3. Update Project DNA — gather per-env settings if this is a fresh env
+        if (! $config->hasEnvironment($envName)) {
+            $envData = $this->gatherEnvironmentData($config, $envName);
+            $config->addEnvironment($envName, $envData);
+        } else {
+            $this->laraKubeInfo("Environment '{$envName}' already exists in DNA; keeping current settings.");
+        }
         $this->saveProjectConfig($projectPath, $config);
 
         $this->laraKubeInfo("Environment '{$envName}' is now part of your project DNA.");
         info("Next steps: larakube up {$envName}");
+    }
+
+    /**
+     * Prompt for the new environment's per-env overrides (ingress, managed
+     * services, web host). All optional — defaults produce an env that uses
+     * Traefik, deploys everything locally, and has no external web host.
+     */
+    protected function gatherEnvironmentData(ConfigData $config, string $envName): EnvironmentData
+    {
+        $envData = new EnvironmentData;
+
+        // Ingress: rare to differ from Traefik unless infra demands it.
+        $ingress = select(
+            label: "Which Ingress Controller will {$envName} use?",
+            options: IngressController::getSelectOptions($config),
+            default: IngressController::TRAEFIK->value,
+        );
+        $envData->ingress = IngressController::from($ingress);
+
+        // Managed services: only meaningful if the project has databases/caches.
+        $managedOptions = [];
+        foreach ($config->getComponents() as $component) {
+            if ($component instanceof DatabaseDriver || $component instanceof CacheDriver) {
+                $managedOptions[$component->value] = $component->getLabel();
+            }
+        }
+        if (! empty($managedOptions)) {
+            $envData->managed = multiselect(
+                label: "Which services are managed externally in {$envName} (e.g. AWS RDS, ElastiCache)?",
+                options: $managedOptions,
+                hint: 'Selected services will be skipped in this env\'s manifests.',
+            );
+        }
+
+        // Web host: optional. Empty = no host configured (env still works on internal/dev.test domains).
+        $webHost = text(
+            label: "Web host for {$envName} (optional, e.g. staging.example.com)",
+            placeholder: 'leave blank to skip',
+            required: false,
+        );
+        if ($webHost !== '') {
+            $envData->hosts['web'] = $webHost;
+        }
+
+        return $envData;
     }
 }
