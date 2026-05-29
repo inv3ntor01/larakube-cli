@@ -2,12 +2,12 @@
 
 namespace App\Commands;
 
+use App\Contracts\HasHosts;
 use App\Data\ConfigData;
 use App\Data\EnvironmentData;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\IngressController;
-use App\Enums\LaravelFeature;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
@@ -163,24 +163,56 @@ class EnvCommand extends Command
             $envData->hosts['web'] = $webHost;
         }
 
-        // Per-service host overrides. Reverb is the canonical case: a
-        // WebSocket service typically lives on its own subdomain (e.g.
-        // ws.example.com, ws-stg.example.com) independent of the web host's
-        // prefix scheme. We only prompt when the feature is actually active
-        // in this env — Horizon/Queues/Scheduler aren't here because they
-        // mount under /horizon and /queues on the web host itself.
-        if ($config->hasFeature(LaravelFeature::REVERB)
-            && in_array($envName, LaravelFeature::REVERB->defaultEnvironments(), true)) {
-            $reverbHost = text(
-                label: "Reverb WebSocket host for {$envName} (optional, e.g. ws.example.com)",
-                placeholder: 'leave blank to derive from web host',
-                required: false,
-            );
-            if ($reverbHost !== '') {
-                $envData->hosts['reverb'] = $reverbHost;
+        // Per-service host overrides — fully data-driven. Iterates every
+        // component active in this env that declares overrideable services
+        // via HasHosts::getHostServices(). The canonical case is Reverb on
+        // ws.example.com (subdomain that doesn't share the web host prefix
+        // scheme); StorageDriver's s3/s3-console and other features benefit
+        // the same way. Skipping web here — already prompted above.
+        foreach ($this->resolveEnvComponents($config, $envName, $envData) as $component) {
+            if (! $component instanceof HasHosts) {
+                continue;
+            }
+            foreach ($component->getHostServices() as $service => $label) {
+                if ($service === 'web') {
+                    continue;
+                }
+                $override = text(
+                    label: "Custom host for {$label} in {$envName} (optional)",
+                    placeholder: 'leave blank to derive from web host',
+                    required: false,
+                );
+                if ($override !== '') {
+                    $envData->hosts[$service] = $override;
+                }
             }
         }
 
         return $envData;
+    }
+
+    /**
+     * Project components that would be active in the new env, evaluated
+     * with the freshly-gathered EnvironmentData so per-env feature filters
+     * (addFeatures/excludeFeatures) are respected even before the env is
+     * persisted to the config.
+     */
+    protected function resolveEnvComponents(ConfigData $config, string $envName, EnvironmentData $envData): array
+    {
+        // Briefly install the in-progress EnvironmentData so getFeatures()
+        // sees the right addFeatures/excludeFeatures for this env, then
+        // restore the prior map.
+        $previous = $config->environments[$envName] ?? null;
+        $config->environments[$envName] = $envData;
+
+        try {
+            return $config->getComponents($envName);
+        } finally {
+            if ($previous === null) {
+                unset($config->environments[$envName]);
+            } else {
+                $config->environments[$envName] = $previous;
+            }
+        }
     }
 }

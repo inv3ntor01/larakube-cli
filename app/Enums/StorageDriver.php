@@ -14,13 +14,14 @@ use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
+use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
 enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
 {
-    use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
+    use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case MINIO = 'minio';
     case SEAWEEDFS = 'seaweedfs';
@@ -247,20 +248,23 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         ];
     }
 
-    public function getHosts(ConfigData $config, string $environment = 'local'): array
+    /**
+     * @return array<string, string>
+     */
+    public function getHostServices(): array
     {
         return match ($this) {
             self::MINIO => [
-                $config->getServiceHost('s3', $environment) => 'MinIO S3 API',
-                $config->getServiceHost('s3-console', $environment) => 'MinIO Console',
+                's3' => 'MinIO S3 API',
+                's3-console' => 'MinIO Console',
             ],
             self::SEAWEEDFS => [
-                $config->getServiceHost('s3', $environment) => 'SeaweedFS S3 API',
-                $config->getServiceHost('s3-admin', $environment) => 'SeaweedFS Filer UI',
+                's3' => 'SeaweedFS S3 API',
+                's3-admin' => 'SeaweedFS Filer UI',
             ],
             self::GARAGE => [
-                $config->getServiceHost('s3', $environment) => 'Garage S3 API',
-                $config->getServiceHost('s3-web', $environment) => 'Garage Static Web',
+                's3' => 'Garage S3 API',
+                's3-web' => 'Garage Static Web',
             ],
         };
     }

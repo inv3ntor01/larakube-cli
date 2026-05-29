@@ -340,6 +340,13 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
+        // Database admin consoles only publish in local — exposing them
+        // through cloud ingress would be a security disaster, and the
+        // dev.test pattern doesn't make sense outside k3d anyway.
+        if ($environment !== 'local') {
+            return [];
+        }
+
         $appName = $config->getName();
 
         return match ($this) {
@@ -350,6 +357,15 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::SQLITE => [],
             default => [],
         };
+    }
+
+    /**
+     * Database consoles aren't user-overrideable — they're either the
+     * baked-in local dev.test pattern or absent (in cloud envs).
+     */
+    public function getHostServices(): array
+    {
+        return [];
     }
 
     public function getDependencyConfig(ConfigData $config): array

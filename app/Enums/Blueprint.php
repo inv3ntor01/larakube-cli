@@ -92,6 +92,11 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
         return [];
     }
 
+    public function getHostServices(): array
+    {
+        return [];
+    }
+
     public function getComposerDependencies(?ConfigData $context = null): array
     {
         return match ($this) {

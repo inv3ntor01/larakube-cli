@@ -19,13 +19,14 @@ use App\Contracts\HasReloadCommand;
 use App\Contracts\HasSelectOptions;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
+use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
 enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasReloadCommand, HasSelectOptions, RequiresPhpExtensions
 {
-    use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
+    use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case TASK_SCHEDULING = 'scheduler';
     case HORIZON = 'horizon';
@@ -195,16 +196,22 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    public function getHosts(ConfigData $config, string $environment = 'local'): array
+    /**
+     * Declarative list of ingress-exposed services per feature, used by the
+     * env wizard to ask "do you want a custom subdomain for {label}?". Local
+     * env-gating (e.g. Mailpit, Boost) is handled at the
+     * defaultEnvironments() layer so non-applicable features never get here.
+     *
+     * @return array<string, string>
+     */
+    public function getHostServices(): array
     {
-        $appName = $config->getName();
-
         return match ($this) {
-            self::REVERB => [$config->getServiceHost('reverb', $environment) => 'Reverb Console'],
-            self::MAILPIT => $environment === 'local' ? [$config->getServiceHost('mailpit', $environment) => 'Mailpit Dashboard'] : [],
+            self::REVERB => ['reverb' => 'Reverb WebSocket'],
+            self::MAILPIT => ['mailpit' => 'Mailpit Dashboard'],
             self::MONITORING => [
-                $config->getServiceHost('grafana', $environment) => 'Grafana Dashboard',
-                $config->getServiceHost('prometheus', $environment) => 'Prometheus Dashboard',
+                'grafana' => 'Grafana Dashboard',
+                'prometheus' => 'Prometheus Dashboard',
             ],
             default => [],
         };

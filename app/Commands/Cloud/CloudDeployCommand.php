@@ -61,7 +61,7 @@ class CloudDeployCommand extends Command
         if (empty($currentHost) || $currentHost === $defaultHost) {
             $this->newLine();
             $this->warn(" 🌐 WEB DOMAIN REQUIRED FOR '{$environment}'");
-            $this->line("   Current web host: <fg=yellow>".($currentHost ?: '(not set)').'</>');
+            $this->line('   Current web host: <fg=yellow>'.($currentHost ?: '(not set)').'</>');
             $this->newLine();
 
             $newHost = \Laravel\Prompts\text(

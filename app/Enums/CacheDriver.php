@@ -260,6 +260,12 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
 
     public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
+        // Cache admin consoles only publish in local — same reasoning as
+        // DatabaseDriver: don't leak admin UIs through cloud ingress.
+        if ($environment !== 'local') {
+            return [];
+        }
+
         $appName = $config->getName();
 
         return match ($this) {
@@ -267,6 +273,11 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             self::MEMCACHED => ["memcached-{$appName}.dev.test" => 'Memcached Console'],
             default => [],
         };
+    }
+
+    public function getHostServices(): array
+    {
+        return [];
     }
 
     public function getDependencyConfig(ConfigData $config): array

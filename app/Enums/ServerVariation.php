@@ -80,6 +80,11 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
         return [];
     }
 
+    public function getHostServices(): array
+    {
+        return [];
+    }
+
     public function getDependencies(ConfigData $config): array
     {
         return match ($this) {

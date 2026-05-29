@@ -15,13 +15,14 @@ use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
 use App\Data\ConfigData;
+use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
 enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions
 {
-    use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
+    use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
     case MEILISEARCH = 'meilisearch';
     case TYPESENSE = 'typesense';
@@ -150,13 +151,16 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
         };
     }
 
-    public function getHosts(ConfigData $config, string $environment = 'local'): array
+    /**
+     * @return array<string, string>
+     */
+    public function getHostServices(): array
     {
         return match ($this) {
-            self::MEILISEARCH => [$config->getServiceHost('meilisearch', $environment) => 'Meilisearch Console'],
+            self::MEILISEARCH => ['meilisearch' => 'Meilisearch Console'],
             self::TYPESENSE => [
-                $config->getServiceHost('typesense', $environment) => 'Typesense API',
-                $config->getServiceHost('typesense-dashboard', $environment) => 'Typesense Dashboard',
+                'typesense' => 'Typesense API',
+                'typesense-dashboard' => 'Typesense Dashboard',
             ],
             default => [],
         };
