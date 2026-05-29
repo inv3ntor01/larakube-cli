@@ -23,6 +23,17 @@ class AppServiceProvider extends ServiceProvider
             @mkdir($viewCachePath, 0755, true);
         }
 
+        // The PHAR compiled-view dir is namespaced per build (see config/view.php).
+        // Sweep stale sibling caches from previous builds so /tmp doesn't grow.
+        if (Phar::running() !== '' && is_string($viewCachePath) && str_contains($viewCachePath, 'larakube-views-')) {
+            foreach (glob(dirname($viewCachePath).'/larakube-views-*') ?: [] as $stale) {
+                if ($stale !== $viewCachePath && is_dir($stale)) {
+                    array_map('unlink', glob("$stale/*") ?: []);
+                    @rmdir($stale);
+                }
+            }
+        }
+
         // Hide/Remove commands from binary for clean DX
         if (Phar::running() !== '') {
             Artisan::starting(function ($artisan) {
