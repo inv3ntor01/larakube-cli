@@ -11,6 +11,16 @@ USER root
 RUN install-php-extensions {{ implode(' ', $config->getAllPhpExtensions()) }}
 USER www-data
 @endif
+@if($config->hasFeature(\App\Enums\LaravelFeature::SSR))
+
+# Inertia SSR runs `node bootstrap/ssr/ssr.js` from this image — the node-ssr
+# pod reuses it in production — so Node.js must be present in every stage that
+# builds on `base` (development AND the production `deploy` image). Installed
+# once here rather than per stage.
+USER root
+RUN apk add --no-cache nodejs npm
+USER www-data
+@endif
 
 ############################################
 # Development Image
@@ -26,11 +36,8 @@ ARG GROUP_ID
 # Switch to root so we can set the user ID and group ID
 USER root
 
-# Set the user ID and group ID for www-data
-# Also install node/chokidar for Octane watch support
-RUN apk add --no-cache nodejs npm && \
-    npm install -g chokidar-cli && \
-    docker-php-serversideup-set-id www-data $USER_ID:$GROUP_ID  && \
+# Match www-data's UID/GID to the host user (for hostPath code mounts locally).
+RUN docker-php-serversideup-set-id www-data $USER_ID:$GROUP_ID  && \
     docker-php-serversideup-set-file-permissions --owner $USER_ID:$GROUP_ID && \
     mkdir -p storage bootstrap/cache && \
     chown -R www-data:www-data storage bootstrap/cache && \
