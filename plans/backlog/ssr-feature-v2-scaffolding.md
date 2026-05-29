@@ -169,3 +169,34 @@ kubectl rollout restart deploy/web -n <project>-local
 ## 🔗 Relationship to environments-config-schema refactor
 
 The schema refactor (`plans/active/environments-config-schema.md`) will eventually let users scope `ssr` to specific environments (e.g., `production.features: [ssr]`). v2 of SSR should land first or in parallel; it doesn't conflict.
+
+## 🧱 Production SSR runtime: Node + node_modules in the image (REVISIT)
+
+> Parked — SSR is on hold while stabilizing other things. Revisit before moving any project's SSR to production Kubernetes.
+
+The SSR pod (`node-ssr`) runs `node bootstrap/ssr/ssr.js` from the **app image**, so the production `deploy` image needs:
+
+1. **The `node` binary.** Fixed in the Dockerfile: Node is installed in the `base` stage, gated on the SSR feature (so it's inherited by `deploy`). Non-SSR projects get no Node.
+2. **`node_modules` at runtime — but only if the SSR bundle externalizes deps.** `vite.config.js`'s `ssr.noExternal` decides this:
+   - `noExternal: true` → bundle is self-contained → **no node_modules needed** (cleanest for prod, but can blow Node's heap on big apps).
+   - tight list (e.g. `noExternal: ['primereact']`) → everything else stays `require()`'d at runtime → **node_modules MUST be in the image**.
+
+   The pilot project uses the tight form, so its `deploy` image must ship `node_modules`. That works as long as `.dockerignore` doesn't exclude `node_modules` (LaraKube's `githubActions: true` keeps it included) AND CI runs a full `npm install` before `docker build`.
+
+### How to verify (before prod-on-K8s)
+
+```bash
+docker build --target deploy -t ssrcheck -f Dockerfile.php .
+docker run --rm ssrcheck node --version                                   # node present?
+docker run --rm ssrcheck sh -lc 'ls node_modules >/dev/null 2>&1 && echo OK || echo MISSING'
+docker run --rm ssrcheck sh -lc 'timeout 5 node bootstrap/ssr/ssr.js; echo exit=$?'  # boots without "Cannot find module"?
+# in-cluster: kubectl logs deploy/node-ssr -n <ns>   (watch for Cannot find module / CrashLoopBackOff)
+```
+
+### Gotcha
+
+A production-only install (`npm ci --omit=dev`) drops any SSR-externalized package that lives in `devDependencies` → `Cannot find module` at runtime. Either keep a full `npm install` for the image, or ensure every package the SSR bundle externalizes is in `dependencies`.
+
+### Possible future safeguard
+
+A `larakube doctor` check: when SSR is enabled, confirm the built `deploy` image can resolve the SSR bundle's modules (node present + `node bootstrap/ssr/ssr.js` boots) — turning the manual procedure above into an automated gate. Net-new; only if we revive SSR.
