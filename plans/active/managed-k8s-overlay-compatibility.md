@@ -58,6 +58,41 @@ Resolution helpers on ConfigData mirror `getIngress($env)` /
 The engine already threads `$environment` into every overlay template, so
 the templates just read these instead of hardcoded values.
 
+### Container registry & image push
+
+Today the generated CI/CD workflow (`cloud-pilot-deploy`) hardcodes **GHCR**:
+`registry: ghcr.io`, a `docker/login-action` using the GitHub actor +
+`GITHUB_TOKEN`, and an image ref of `ghcr.io/<repo>`. Teams on AWS ECR,
+Docker Hub, GCP Artifact Registry, or a private registry can't use it as-is.
+
+Make the push target a first-class choice — a `registry` block in
+`.larakube.json` (project-level default, optional per-env override):
+
+```json
+"registry": {
+  "provider": "ghcr",            // ghcr | ecr | dockerhub | gar | custom
+  "image": "<namespace>/<name>", // repo/path within the registry
+  "host": null                   // ECR account host / custom registry host
+}
+```
+
+This drives three things:
+
+1. **Image reference** everywhere — `{host}/{image}:{tag}` replaces the
+   `{name}:latest` placeholder through the existing kustomize `sed` step.
+2. **Workflow auth/push**, branched per provider by `cloud:configure gha`:
+   - `ghcr` → `docker/login-action` (actor + `GITHUB_TOKEN`)
+   - `ecr` → `aws-actions/configure-aws-credentials` (OIDC role) + `amazon-ecr-login`
+   - `dockerhub` → `docker/login-action` (`DOCKERHUB_USERNAME` + token)
+   - `gar` / `custom` → `docker/login-action` (host + creds)
+3. **Image pull secret** on the manifests — ties into the `imagePullSecret`
+   knob above (GHCR → `ghcr-login`; ECR → none/IRSA; Docker Hub → a
+   `dockerhub` pull secret). One source of truth: the registry choice.
+
+`larakube cloud:configure gha` gains a registry prompt and emits the correct
+login + build-push steps; default stays GHCR so existing projects are
+unchanged.
+
 ## 🚦 Phases (each independently shippable; each defaults to current output)
 
 1. **Image pull secret** — the sharpest edge. `deployment-patch` reads
@@ -75,8 +110,13 @@ the templates just read these instead of hardcoded values.
    per-env entries extend/override.
 5. **(Optional) env config/secret names** — `envConfigMapName` /
    `envSecretName` so the deployment's `envFrom` can point at an existing
-   an existing `myapp-env`. Lower priority — projects can instead create
+   `myapp-env`. Lower priority — projects can instead create
    `laravel-config`/`laravel-secrets` in CI.
+6. **Configurable container registry** — the `registry` block, provider-aware
+   login/build-push in the generated workflow, and registry-aware image refs.
+   Default GHCR (unchanged). Pairs with the imagePullSecret knob (Phase 1):
+   the registry choice picks the pull-secret strategy. This is what lets a
+   project push to ECR/Docker Hub/GAR instead of only GHCR.
 
 ## 🧪 Verification
 
