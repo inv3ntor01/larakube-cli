@@ -62,8 +62,13 @@ cmd_build() {
         target="--target development"
     fi
     info "Building image ${APP}:latest …"
+    # Pass the host UID/GID so the development stage's www-data matches the
+    # user owning the hostPath-mounted code (mirrors what the LaraKube CLI does).
     # shellcheck disable=SC2086
-    docker build $target -t "${APP}:latest" -f Dockerfile.php .
+    docker build $target \
+        --build-arg USER_ID="$(id -u)" \
+        --build-arg GROUP_ID="$(id -g)" \
+        -t "${APP}:latest" -f Dockerfile.php .
     cluster_import
 }
 

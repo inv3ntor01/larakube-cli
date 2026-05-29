@@ -41,7 +41,11 @@ test('portable command writes the wrapper script and guide', function () {
             ->toContain('cmd_up()')
             ->toContain('cmd_artisan()')
             ->toContain('cmd_watch()')
-            ->toContain('jq -r \'.name\' .larakube.json');
+            ->toContain('jq -r \'.name\' .larakube.json')
+            // Build must pass host UID/GID so the development stage's set-id
+            // doesn't fail with "UID and GID must be numeric".
+            ->toContain('--build-arg USER_ID="$(id -u)"')
+            ->toContain('--build-arg GROUP_ID="$(id -g)"');
 
         $guide = file_get_contents("$tmp/LOCAL_DEV.md");
         expect($guide)->toContain('Local development without the LaraKube CLI');
