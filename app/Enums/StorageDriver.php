@@ -100,6 +100,9 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         // Write storage
         if ($viewName = $this->getStorageViewName()) {
             foreach (array_merge(['local'], $config->getCloudEnvironments()) as $env) {
+                if (in_array($this->value, $config->getManaged($env), true)) {
+                    continue;
+                }
                 @mkdir("$k8sPath/overlays/$env", 0755, true);
                 $dest = "overlays/$env/{$this->getStorageYamlDestination()}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {

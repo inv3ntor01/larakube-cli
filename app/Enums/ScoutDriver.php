@@ -213,6 +213,9 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 
         if ($this === self::MEILISEARCH || $this === self::TYPESENSE) {
             foreach (array_merge(['local'], $config->getCloudEnvironments()) as $env) {
+                if (in_array($this->value, $config->getManaged($env), true)) {
+                    continue;
+                }
                 @mkdir("$k8sPath/overlays/$env", 0755, true);
                 $dest = "overlays/$env/{$this->value}-volumes.yaml";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {

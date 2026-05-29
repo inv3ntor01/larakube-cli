@@ -100,6 +100,12 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
 
             foreach ($config->getEnvironments() as $env) {
+                // Skip envs where this service is externally managed — it has
+                // no in-cluster volumes there (a delete-patch removes the
+                // workload instead).
+                if (in_array($this->value, $config->getManaged($env), true)) {
+                    continue;
+                }
                 $dest = "overlays/$env/{$storageDest}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
                     file_put_contents("$k8sPath/{$dest}", $vols);

@@ -110,4 +110,8 @@ test('a managed service is removed from the env that manages it via a delete-pat
     // And Postgres volumes are NOT registered as a production resource.
     expect($manifests['overlays/production/kustomization.yaml']['resources'] ?? [])
         ->not->toContain('postgres-volumes.yaml');
+
+    // The volume file is not even written to disk for a managed env (no
+    // stray, unreferenced manifest left behind).
+    expect($manifests)->not->toHaveKey('overlays/production/postgres-volumes.yaml');
 });
