@@ -45,7 +45,6 @@ class PurgeCommand extends Command
         $filesToRemove = [
             '.infrastructure',
             '.larakube.json',
-            '.larakube.yml',
             'Dockerfile.php',
             'Dockerfile.node',
             'docker-compose.yml',

@@ -44,7 +44,7 @@ class CloudConfigureCommand extends Command
             $action = select(
                 label: 'What would you like to configure?',
                 options: [
-                    'base' => 'Base Deployment Config (.larakube.yml)',
+                    'base' => 'Base Deployment Config (.larakube.json)',
                     'server' => 'Initial Server Setup (Clone & Env)',
                     'gha' => 'GitHub Actions (Secrets & Workflows)',
                     'users' => 'Manage Teammate Access (SSH Keys)',
