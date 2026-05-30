@@ -3,7 +3,9 @@
 > **Status (2026-05-30):** Phases 1–4 shipped (commits 7665e0a, 5cf45a0, 4aea79b)
 > — all snapshot-stable, default to current output. Remaining: Phase 5 (env
 > config/secret names, low-priority) and Phase 6 (configurable registry + GHA
-> workflow generation). Note corrected below: the `larakube-dashboard` SA is
+> workflow generation) — **Phase 6 now has its own detailed plan, made per-env:
+> see [per-environment-registry.md](./per-environment-registry.md)**. Note
+> corrected below: the `larakube-dashboard` SA is
 > `isSystem()`-gated, so it never leaked onto user app pods — Phase 3 was purely
 > additive (opt-in SA + IRSA), not a leak fix.
 
