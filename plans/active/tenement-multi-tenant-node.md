@@ -1,11 +1,11 @@
 # speckit.plan: The Tenement — Multiple Projects on One Node
 
 > **Resolved decisions (2026-05-30):**
-> - **Command name:** the feature/CLI verb is **`plex`** (short for du/tri/multi-plex —
->   one building, many units), not `tenement` (too long). So `larakube plex
->   init|join|status|leave`. Alternatives considered: `hive`, `den`, `block`.
->   The *shared-services bundle* is still called the **Commons**; each app is a
->   **Tenant**. (Easy to rename — it's just the command prefix.)
+> - **Name: CONFIRMED `Plex`** (user, 2026-05-30) — the feature *and* CLI verb are
+>   **`plex`** (short for du/tri/multi-plex — one building, many units), replacing
+>   "tenement" (kept only as this plan's filename/codename). So `larakube plex
+>   init|join|status|leave`. The *shared-services bundle* is the **Commons**; each
+>   app is a **Tenant**. Already used in the public docs (Scaling Journey).
 > - **Node coverage: works on single-node AND multi-node.** The Commons is a
 >   Postgres+Redis in `larakube-shared`; tenants reach it via `managed` + a host
 >   pointing at its in-cluster address — node-count-agnostic. On multi-node the
