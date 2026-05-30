@@ -1,5 +1,19 @@
 # speckit.plan: The Tenement — Multiple Projects on One Node
 
+> **Resolved decisions (2026-05-30):**
+> - **Command name:** the feature/CLI verb is **`plex`** (short for du/tri/multi-plex —
+>   one building, many units), not `tenement` (too long). So `larakube plex
+>   init|join|status|leave`. Alternatives considered: `hive`, `den`, `block`.
+>   The *shared-services bundle* is still called the **Commons**; each app is a
+>   **Tenant**. (Easy to rename — it's just the command prefix.)
+> - **Node coverage: works on single-node AND multi-node.** The Commons is a
+>   Postgres+Redis in `larakube-shared`; tenants reach it via `managed` + a host
+>   pointing at its in-cluster address — node-count-agnostic. On multi-node the
+>   in-cluster Commons is a single instance (shared-fate); graduate it to a
+>   managed DB for HA via the *same* `managed` mechanism (different host only).
+> - **Tier 0 is verified working today** — see the audit note in the Tier 0
+>   section below; two-apps-one-server needs no new code, only a runbook.
+
 ## 🎯 Objective
 
 Let a hobbyist run **two (or more) LaraKube projects on a single small VPS** (the $12/mo DigitalOcean 2GB tier) without each project needing its own server. The projects live in **separate GitHub repositories** and deploy to **separate namespaces** on the shared box.
@@ -30,6 +44,21 @@ Each project still runs **its own** data services in its own namespace, OR point
 4. **Docs.** A short "Two apps, one server" guide showing the two-repo → one-VPS → two-namespace flow end to end via CI/CD.
 
 Tier 0 is mostly **audit + verify + document**, with at most a small idempotency fix. Ship this first.
+
+> **Audit result (2026-05-30) — Tier 0 works today, no code needed:**
+> - `cloud:provision` is **project-agnostic and re-run-safe**: swap (`if [ ! -f
+>   /swapfile ]`), IP-forward (`grep -qxF || echo`), and the `larakube` user
+>   (`if ! id`) are all guarded; Traefik is `kubectl apply` / `--dry-run|apply`.
+>   The only heavy re-run is the K3s installer — so **provision once; for app B,
+>   skip provision (or decline the K3s step).** No auto-"already provisioned"
+>   detection yet (relies on confirm prompts) — minor UX gap, not a data risk.
+> - **A second app cannot nuke the first.** `down` deletes only
+>   `{name}-{env}` (its own namespace) and PVs via `-l larakube-project={name}`
+>   (label-scoped to the app). `uninstall` additionally requires typing the
+>   project name. App A's namespace + labeled volumes are untouched by app B.
+> - **Net:** two repos → two namespaces → one shared cluster, Traefik routing by
+>   host, each app running its own Postgres/Redis (or a managed DB). Deliverable
+>   is a runbook, not code.
 
 ---
 
@@ -134,14 +163,21 @@ No breaking changes to existing blueprints — a non-Tenement project is unaffec
 
 ## 🧰 New / changed commands (Tier 1 only — Tier 0 needs none)
 
-All Tenement commands must be **CI/CD-expressible** (callable from the GHA Cloud Pilot workflow) and behave identically whether the node is single- or multi-node. They are not part of Tier 0.
+Verb is **`plex`** (see Resolved decisions). All commands must be
+**CI/CD-expressible** (callable from the GHA Cloud Pilot workflow) and behave
+identically whether the node is single- or multi-node. They are not part of Tier 0.
 
-- `larakube tenement init` — provision the Commons on a node (or a `--shared` flag on `cloud:provision`).
-- `larakube tenement join` — register the current project as a Tenant: create its DB/role, assign Redis index, write `.env`, set `managed`.
-- `larakube tenement status` — list tenants on a node + capacity/RAM headroom.
-- `larakube tenement leave` — deprovision a tenant's DB/credentials (with strong confirm).
-- `cloud:provision` — gains awareness that a box may already host the Commons (don't re-init, don't nuke).
-- `cloud:deploy` — capacity pre-flight: warn if adding this tenant likely exceeds node RAM.
+- `larakube plex init` — provision the Commons (Postgres + Redis in
+  `larakube-shared`) on the cluster (or a `--shared` flag on `cloud:provision`).
+- `larakube plex join` — register the current project as a Tenant: create its
+  DB/role, assign a Redis index, write `.env`, set `managed`.
+- `larakube plex status` — list tenants on the cluster + capacity/RAM headroom.
+- `larakube plex leave` — deprovision a tenant's DB/credentials (strong confirm).
+- `cloud:provision` — gains awareness that a box may already host the Commons
+  (don't re-init, don't nuke). _(Audit below confirms today's provision is already
+  re-run-safe.)_
+- `cloud:deploy` — capacity pre-flight: warn if adding this tenant likely exceeds
+  node RAM.
 
 ## 📊 Capacity guidance (must be in docs + enforced by warnings)
 
