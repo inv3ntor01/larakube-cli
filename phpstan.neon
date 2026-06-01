@@ -1,21 +1,18 @@
 includes:
     - vendor/larastan/larastan/extension.neon
-    - vendor/phpstan/phpstan-strict-rules/rules.neon
-    # Grandfathers the ~5750 pre-existing findings in this (AI-written) legacy
-    # codebase at the strict bar, so the gate passes today but FAILS on any *new*
-    # one. NEW and CHANGED code is held to the full strictness below; burn the
-    # baseline down over time.
+    # Grandfathers the ~880 pre-existing legacy findings. You do NOT regenerate
+    # this for new code — new code is checked normally and FAILS the gate if it
+    # has a new undefined-symbol bug. Only regenerate if you deliberately fix
+    # legacy findings or raise the level.
     - phpstan-baseline.neon
 
 parameters:
-    # "Very strict": max analysis level + phpstan-strict-rules (no loose ==,
-    # required explicit types, no unsafe constructs, etc.). New code must pass
-    # this bar — exactly the guardrail for AI-generated changes.
-    level: max
+    # Level 0 = the highest-impact, fastest, most deterministic checks:
+    # undefined classes / methods / functions (exactly the unimported-enum bug
+    # that crashed `init`, plus any others). Fast (seconds), light on memory,
+    # and identical local vs CI. Raise the level later once we're confident —
+    # the higher strict-rules levels are what caused the local/CI flakiness.
+    level: 0
     paths:
         - app
-
-    # With a large legacy baseline, editing legacy files shifts error counts;
-    # don't fail the build just because a baselined error no longer matches
-    # (i.e. you happened to fix one). New, un-baselined errors still fail.
     reportUnmatchedIgnoredErrors: false

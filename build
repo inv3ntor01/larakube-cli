@@ -51,9 +51,10 @@ build_standalone() {
     run_php ./vendor/bin/phpacker build $PLATFORM $ARCH --src=builds/larakube.phar --dest=builds/standalone -q
 }
 
-# Static analysis is available via `composer analyse` but is intentionally NOT a
-# build gate: at max+strict it has a large baseline that's environment-sensitive
-# (local vs CI), which would block packaging. Pint + Pest are the build/CI gates.
+# 🔍 Static analysis gate — fail before packaging if new code has an undefined
+# class/method/function (the bug class that crashed init). Fast at level 0.
+echo -e "🔍 ${BOLD}Static analysis${RESET} (PHPStan/Larastan)..."
+run_php ./vendor/bin/phpstan analyse --no-progress
 
 case $BUILD_TYPE in
     "--local")
