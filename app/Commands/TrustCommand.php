@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\DetectsWsl;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class TrustCommand extends Command
 {
-    use LaraKubeOutput;
+    use DetectsWsl, LaraKubeOutput;
 
     protected $signature = 'trust {--refresh : Force download of the latest CA from Server Side Up}';
 
@@ -60,9 +61,8 @@ class TrustCommand extends Command
         file_put_contents($tempCa, $caContent);
 
         $os = PHP_OS_FAMILY;
-        $isWsl = @file_exists('/proc/version') && str_contains(file_get_contents('/proc/version'), 'Microsoft');
 
-        if ($isWsl) {
+        if ($this->isWsl()) {
             $this->info('  🪟 WSL2 detected. Installing to Windows Root Store...');
             $winPath = trim(shell_exec("wslpath -w $tempCa"));
             passthru("certutil.exe -addstore -f \"Root\" \"$winPath\"");

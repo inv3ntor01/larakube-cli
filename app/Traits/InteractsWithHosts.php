@@ -6,7 +6,7 @@ use function Laravel\Prompts\confirm;
 
 trait InteractsWithHosts
 {
-    use InteractsWithProjectConfig, LaraKubeOutput;
+    use DetectsWsl, InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
      * Check and optionally update the hosts file(s) based on project context.
@@ -214,19 +214,6 @@ trait InteractsWithHosts
         $stripped = $stripped ?? $current;
 
         return rtrim($stripped)."\n\n{$blockIdentifier}\n{$entryLine}\n";
-    }
-
-    /**
-     * Are we running inside WSL (where the Windows browser can't see /etc/hosts)?
-     */
-    protected function isWsl(): bool
-    {
-        if (getenv('WSL_DISTRO_NAME')) {
-            return true;
-        }
-
-        return is_file('/proc/version')
-            && str_contains(strtolower((string) @file_get_contents('/proc/version')), 'microsoft');
     }
 
     /**

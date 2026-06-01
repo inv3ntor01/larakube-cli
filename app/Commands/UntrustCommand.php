@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use App\Traits\DetectsWsl;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class UntrustCommand extends Command
 {
-    use LaraKubeOutput;
+    use DetectsWsl, LaraKubeOutput;
 
     protected $signature = 'untrust';
 
@@ -26,9 +27,8 @@ class UntrustCommand extends Command
         }
 
         $os = PHP_OS_FAMILY;
-        $isWsl = @file_exists('/proc/version') && str_contains(file_get_contents('/proc/version'), 'Microsoft');
 
-        if ($isWsl) {
+        if ($this->isWsl()) {
             $this->info('  🪟 WSL2 detected. Removing from Windows Root Store...');
             passthru('certutil.exe -delstore "Root" "Server Side Up CA"');
         } elseif ($os === 'Darwin') {

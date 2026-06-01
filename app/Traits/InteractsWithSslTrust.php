@@ -4,6 +4,8 @@ namespace App\Traits;
 
 trait InteractsWithSslTrust
 {
+    use DetectsWsl;
+
     /**
      * Check if the LaraKube Local CA is already trusted by the system.
      */
@@ -15,9 +17,8 @@ trait InteractsWithSslTrust
         }
 
         $os = PHP_OS_FAMILY;
-        $isWsl = @file_exists('/proc/version') && str_contains(file_get_contents('/proc/version'), 'Microsoft');
 
-        if ($isWsl) {
+        if ($this->isWsl()) {
             $output = shell_exec('certutil.exe -verifystore Root "Server Side Up CA" 2>&1');
 
             return str_contains($output, 'Certificate is valid') || str_contains($output, 'CertUtil: -verifystore command completed successfully');
