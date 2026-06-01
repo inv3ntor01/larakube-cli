@@ -2,6 +2,7 @@
 
 namespace App\Commands;
 
+use App\Contracts\HasArtisanCommands;
 use App\Contracts\HasLifecycleHooks;
 use App\Traits\CheckPrerequisites;
 use App\Traits\GathersInfrastructureConfig;

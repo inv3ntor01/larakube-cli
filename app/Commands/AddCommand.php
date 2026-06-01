@@ -2,6 +2,7 @@
 
 namespace App\Commands;
 
+use App\Contracts\HasArtisanCommands;
 use App\Contracts\HasHiddenComponents;
 use App\Contracts\HasLifecycleHooks;
 use App\Data\ConfigData;
@@ -31,6 +32,7 @@ use Random\RandomException;
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
+use function Laravel\Prompts\text;
 
 class AddCommand extends Command
 {
