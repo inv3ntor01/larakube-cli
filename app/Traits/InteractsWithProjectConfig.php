@@ -34,9 +34,21 @@ trait InteractsWithProjectConfig
      */
     protected function getProjectConfig(?string $projectPath = null): ?ConfigData
     {
+        $path = $projectPath ?: getcwd();
+
         try {
-            return ConfigData::loadFromFile($projectPath ?: getcwd());
-        } catch (Exception) {
+            return ConfigData::loadFromFile($path);
+        } catch (Exception $e) {
+            // A missing file just means "not a LaraKube project" — callers gate
+            // on isLaraKubeProject(), so a silent null is fine there. But if the
+            // file EXISTS and still failed to load, it's corrupt/invalid: surface
+            // WHY, instead of returning null that crashes downstream as
+            // "Call to a member function ...() on null".
+            if (file_exists($path.'/'.ConfigData::CONFIG_FILE)) {
+                $this->laraKubeError('Could not read '.ConfigData::CONFIG_FILE.': '.$e->getMessage());
+                $this->line('  👉 The file exists but is invalid. Fix it, or re-run <fg=yellow;options=bold>larakube init</>.');
+            }
+
             return null;
         }
     }

@@ -21,6 +21,14 @@ trait InteractsWithHosts
 
         if (empty($customHosts)) {
             $config = $this->getProjectConfig($projectPath);
+
+            // No readable config → nothing to map. Host syncing is a convenience
+            // pre-step; skip it rather than crash (getProjectConfig already
+            // surfaced the reason if the file exists but is invalid).
+            if (! $config) {
+                return;
+            }
+
             $requiredHosts = array_keys($config->getAllHosts('local'));
         } else {
             $requiredHosts = $customHosts;

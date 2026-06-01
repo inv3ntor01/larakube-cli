@@ -1,18 +1,28 @@
 includes:
     - vendor/larastan/larastan/extension.neon
-    # Grandfathers the ~880 pre-existing legacy findings. You do NOT regenerate
-    # this for new code — new code is checked normally and FAILS the gate if it
-    # has a new undefined-symbol bug. Only regenerate if you deliberately fix
-    # legacy findings or raise the level.
-    - phpstan-baseline.neon
 
 parameters:
-    # Level 0 = the highest-impact, fastest, most deterministic checks:
-    # undefined classes / methods / functions (exactly the unimported-enum bug
-    # that crashed `init`, plus any others). Fast (seconds), light on memory,
-    # and identical local vs CI. Raise the level later once we're confident —
-    # the higher strict-rules levels are what caused the local/CI flakiness.
+    # Level 0 = the high-impact, fast, deterministic checks. The bug that crashed
+    # init was an undefined CLASS (App\Traits\IngressController); undefined
+    # functions (text()) are the same family — both still fail the gate below.
     level: 0
     paths:
         - app
-    reportUnmatchedIgnoredErrors: false
+
+    # Suppress KNOWN false-positive / best-practice CATEGORIES by identifier
+    # (not a per-line baseline — so editing files never churns it):
+    ignoreErrors:
+        # Trait helper methods (e.g. $this->line()/info()) analyzed in the wrong
+        # class context — the traits are always composed onto a Command at
+        # runtime. Task #78 will replace this with targeted @mixin annotations to
+        # restore method-level detection.
+        - identifier: method.notFound
+        - identifier: method.void
+        # env() outside config — a Laravel best-practice nag, fine for this CLI.
+        - identifier: larastan.noEnvCallsOutsideOfConfig
+        # Command options added dynamically at runtime; PHPStan can't see them.
+        - identifier: larastan.console.undefinedOption
+
+    # NOTE: class.notFound and function.notFound are intentionally NOT ignored —
+    # those are the undefined-symbol bugs we must catch. New code is checked
+    # fresh; there is no baseline to maintain.

@@ -186,7 +186,14 @@ class UpCommand extends Command
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
 
-        if ($config && ! $this->assertProjectFolderMatchesName($config)) {
+        // File exists (we passed isLaraKubeProject) but didn't load → corrupt/
+        // invalid blueprint. getProjectConfig already explained why; bail instead
+        // of dereferencing null further down.
+        if (! $config) {
+            return 1;
+        }
+
+        if (! $this->assertProjectFolderMatchesName($config)) {
             return 1;
         }
 
