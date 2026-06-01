@@ -71,24 +71,51 @@ trait InteractsWithDocker
         passthru("docker build $target $buildArgs -t $imageTag -f $dockerfile $path");
 
         // --- 🛡 K3D IMAGE BRIDGE ---
-        // If k3d cluster exists AND is running, import the image so the pods can see it
-        $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
-        if (str_contains($clusters ?? '', 'larakube') && str_contains($clusters ?? '', 'running')) {
-            $this->laraKubeInfo("Importing '$imageTag' into k3d cluster...");
-            passthru("k3d image import $imageTag -c larakube");
+        // Images built on the host Docker engine are invisible to k3d nodes
+        // until imported. Detect the ACTIVE k3d cluster from the current
+        // kube-context (k3d-<name>) — not a hardcoded name — and sideload into
+        // it, so `larakube up` "just works" on any k3d cluster without a local
+        // registry. (Previously hardcoded to a cluster named "larakube" and
+        // gated on a "running" string k3d doesn't actually print.)
+        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
 
-            // Verify the import
-            $this->withSpin('Verifying cluster image availability...', function () use ($imageTag) {
-                $images = shell_exec('docker exec k3d-larakube-server-0 crictl images 2>/dev/null');
-                $parts = explode(':', $imageTag);
-                $name = $parts[0];
-                $tag = $parts[1] ?? 'latest';
-
-                return str_contains($images ?? '', $imageTag) ||
-                       str_contains($images ?? '', "docker.io/library/$imageTag") ||
-                       (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
-            });
+        if (! str_starts_with($context, 'k3d-')) {
+            return; // Not a k3d cluster — the image is reached via a registry.
         }
+
+        $cluster = substr($context, strlen('k3d-'));
+
+        // Confirm the cluster exists in k3d (also skips cleanly if k3d isn't installed).
+        if (trim((string) shell_exec('k3d cluster list '.escapeshellarg($cluster).' --no-headers 2>/dev/null')) === '') {
+            return;
+        }
+
+        $this->laraKubeInfo("Importing '$imageTag' into k3d cluster '$cluster'...");
+
+        $output = [];
+        $code = 0;
+        exec('k3d image import '.escapeshellarg($imageTag).' -c '.escapeshellarg($cluster).' 2>&1', $output, $code);
+
+        if ($code !== 0) {
+            $this->laraKubeError("Could not sideload '$imageTag' into k3d cluster '$cluster'.");
+            $this->line('  The local image is not visible to the cluster nodes, so pods will');
+            $this->line('  likely fail with ImagePullBackOff. Last output from k3d:');
+            foreach (array_slice($output, -4) as $line) {
+                $this->line('    '.$line);
+            }
+
+            return;
+        }
+
+        // Verify availability on the cluster's server node.
+        $this->withSpin('Verifying cluster image availability...', function () use ($imageTag, $cluster) {
+            $images = shell_exec('docker exec k3d-'.$cluster.'-server-0 crictl images 2>/dev/null');
+            [$name, $tag] = array_pad(explode(':', $imageTag), 2, 'latest');
+
+            return str_contains($images ?? '', $imageTag) ||
+                   str_contains($images ?? '', "docker.io/library/$imageTag") ||
+                   (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
+        });
     }
 
     /**
