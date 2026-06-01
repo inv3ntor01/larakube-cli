@@ -1,0 +1,19 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    # Grandfathers the ~882 pre-existing findings in this (AI-written) legacy
+    # codebase so the build gate passes today but FAILS on any *new* one — e.g. a
+    # newly-added unimported class. Burn the baseline down over time.
+    - phpstan-baseline.neon
+
+parameters:
+    level: 0
+    paths:
+        - app
+
+    # Level 0 catches the highest-impact class of bug for this CLI: undefined
+    # classes / methods / functions — e.g. an App\Enums enum referenced via
+    # `Enum::` without being imported, which only fatals on the interactive code
+    # path that reaches it (this shipped three times in v0.9.0). Raise the level
+    # over time (1 → 5+) for progressively stricter checks; consider generating a
+    # baseline (`phpstan analyse --generate-baseline`) when bumping, so existing
+    # findings don't block the build while new ones still fail.

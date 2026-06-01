@@ -27,6 +27,7 @@
         "symfony/yaml": "^8.0"
     },
     "require-dev": {
+        "larastan/larastan": "^3.0",
         "laravel/pao": "^1.0",
         "laravel/pint": "^1.25.1",
         "mockery/mockery": "^1.6.12",
@@ -54,6 +55,9 @@
         "allow-plugins": {
             "pestphp/pest-plugin": true
         }
+    },
+    "scripts": {
+        "analyse": "phpstan analyse"
     },
     "minimum-stability": "stable",
     "prefer-stable": true,

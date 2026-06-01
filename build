@@ -51,6 +51,11 @@ build_standalone() {
     run_php ./vendor/bin/phpacker build $PLATFORM $ARCH --src=builds/larakube.phar --dest=builds/standalone -q
 }
 
+# 🔍 Static analysis gate (PHPStan/Larastan) — fail before packaging a broken
+# binary. `set -e` aborts the build on any finding (e.g. an unimported class).
+echo -e "🔍 ${BOLD}Static analysis${RESET} (PHPStan/Larastan)..."
+run_php ./vendor/bin/phpstan analyse --no-progress
+
 case $BUILD_TYPE in
     "--local")
         build_phar
