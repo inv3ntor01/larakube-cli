@@ -50,6 +50,26 @@ trait InteractsWithDocker
         $this->buildTargetedImage($appName, "$path/Dockerfile.php", $path, $uid, $gid);
     }
 
+    /**
+     * Resolve the k3d cluster name from a kube-context, or null if the context
+     * isn't a k3d cluster. k3d contexts are named `k3d-<cluster>`. Kept pure (no
+     * shell) so the detection that decides which cluster to sideload the image
+     * into is unit-testable — this is the logic that was previously hardcoded to
+     * "larakube" and silently skipped other clusters.
+     */
+    protected function resolveK3dClusterName(string $context): ?string
+    {
+        $context = trim($context);
+
+        if (! str_starts_with($context, 'k3d-')) {
+            return null;
+        }
+
+        $cluster = substr($context, strlen('k3d-'));
+
+        return $cluster !== '' ? $cluster : null;
+    }
+
     protected function buildTargetedImage(string $tag, string $dockerfile, string $path, int $uid, int $gid): void
     {
         if (! file_exists($dockerfile)) {
@@ -78,12 +98,11 @@ trait InteractsWithDocker
         // registry. (Previously hardcoded to a cluster named "larakube" and
         // gated on a "running" string k3d doesn't actually print.)
         $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        $cluster = $this->resolveK3dClusterName($context);
 
-        if (! str_starts_with($context, 'k3d-')) {
+        if ($cluster === null) {
             return; // Not a k3d cluster — the image is reached via a registry.
         }
-
-        $cluster = substr($context, strlen('k3d-'));
 
         // Confirm the cluster exists in k3d (also skips cleanly if k3d isn't installed).
         if (trim((string) shell_exec('k3d cluster list '.escapeshellarg($cluster).' --no-headers 2>/dev/null')) === '') {
