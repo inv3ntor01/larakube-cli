@@ -10,13 +10,6 @@ class ComposerCommand extends Command
 {
     use CapturesPassthroughArgs, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -30,6 +23,13 @@ class ComposerCommand extends Command
      * @var string
      */
     protected $description = 'Run a composer command inside the cluster';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.

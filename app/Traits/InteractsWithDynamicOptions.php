@@ -18,6 +18,7 @@ use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
 use App\Enums\StorageDriver;
 use Illuminate\Support\Arr;
+use InvalidArgumentException;
 use Symfony\Component\Console\Input\InputOption;
 
 trait InteractsWithDynamicOptions
@@ -49,7 +50,7 @@ trait InteractsWithDynamicOptions
                     mode: InputOption::VALUE_NONE,
                     description: Arr::get($option, 'description'),
                 );
-            } catch (\InvalidArgumentException $e) {
+            } catch (InvalidArgumentException $e) {
                 // Option already exists, skip it
             }
         }

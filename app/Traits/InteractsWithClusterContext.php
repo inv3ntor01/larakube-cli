@@ -111,7 +111,7 @@ trait InteractsWithClusterContext
         return \Laravel\Prompts\select(
             label: 'Which Kubernetes context would you like to use?',
             options: $options,
-            default: $currentContext ?: null
+            default: $currentContext ?: null,
         );
     }
 

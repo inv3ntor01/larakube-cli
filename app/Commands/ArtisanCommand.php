@@ -10,13 +10,6 @@ class ArtisanCommand extends Command
 {
     use CapturesPassthroughArgs, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -37,6 +30,13 @@ class ArtisanCommand extends Command
      * @var string
      */
     protected $description = 'Run a php artisan command inside the cluster';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.

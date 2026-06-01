@@ -11,8 +11,6 @@ use App\Traits\ProvidesSelectOptions;
 enum OperatingSystem: string implements HasCommandOptions, HasLabel, HasSelectOptions
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
-    case DEBIAN = 'debian';
-    case ALPINE = 'alpine';
 
     public function getLabel(): ?string
     {
@@ -29,4 +27,6 @@ enum OperatingSystem: string implements HasCommandOptions, HasLabel, HasSelectOp
             default => null,
         };
     }
+    case DEBIAN = 'debian';
+    case ALPINE = 'alpine';
 }

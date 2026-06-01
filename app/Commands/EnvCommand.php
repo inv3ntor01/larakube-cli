@@ -9,11 +9,12 @@ use App\Enums\IngressController;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class EnvCommand extends Command
 {
@@ -50,7 +51,7 @@ class EnvCommand extends Command
         $envName = $this->argument('name') ?? text(
             label: 'What is the name of the new environment?',
             placeholder: 'staging',
-            required: true
+            required: true,
         );
 
         // 1. Per-environment .env file (seeded from the base .env).

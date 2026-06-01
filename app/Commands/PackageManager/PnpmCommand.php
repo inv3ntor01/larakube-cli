@@ -10,13 +10,6 @@ class PnpmCommand extends Command
 {
     use CapturesPassthroughArgs, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -28,6 +21,13 @@ class PnpmCommand extends Command
      * The console command description.
      */
     protected $description = 'Run a pnpm command inside the Node pod';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.

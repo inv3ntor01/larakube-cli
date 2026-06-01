@@ -25,10 +25,6 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case REDIS = 'redis';
-    case MEMCACHED = 'memcached';
-    case DATABASE = 'database';
-
     public function getPodName(?ConfigData $config = null): string
     {
         return $this->value;
@@ -230,7 +226,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -356,4 +352,8 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             default => [],
         };
     }
+
+    case REDIS = 'redis';
+    case MEMCACHED = 'memcached';
+    case DATABASE = 'database';
 }

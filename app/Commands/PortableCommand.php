@@ -5,9 +5,10 @@ namespace App\Commands;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Facades\File;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
 
 class PortableCommand extends Command
 {
@@ -28,26 +29,6 @@ class PortableCommand extends Command
      * @var string
      */
     protected $description = 'Generate a CLI-free larakube.sh wrapper (and optional guide) so teammates can run this project locally without installing LaraKube';
-
-    /**
-     * Files to drop into the project, mapped to their stub + permissions.
-     *
-     * @return array<string, array{stub: string, mode: int}>
-     */
-    protected function files(): array
-    {
-        $files = [
-            'larakube.sh' => ['stub' => base_path('stubs/portable/larakube.sh.stub'), 'mode' => 0755],
-        ];
-
-        // The guide is redundant when the project already documents the
-        // workflow (e.g. in its README), so it can be skipped.
-        if (! $this->option('script-only')) {
-            $files['LOCAL_DEV.md'] = ['stub' => base_path('stubs/portable/LOCAL_DEV.md.stub'), 'mode' => 0644];
-        }
-
-        return $files;
-    }
 
     /**
      * Execute the console command.
@@ -95,5 +76,25 @@ class PortableCommand extends Command
         }
 
         return 0;
+    }
+
+    /**
+     * Files to drop into the project, mapped to their stub + permissions.
+     *
+     * @return array<string, array{stub: string, mode: int}>
+     */
+    protected function files(): array
+    {
+        $files = [
+            'larakube.sh' => ['stub' => base_path('stubs/portable/larakube.sh.stub'), 'mode' => 0755],
+        ];
+
+        // The guide is redundant when the project already documents the
+        // workflow (e.g. in its README), so it can be skipped.
+        if (! $this->option('script-only')) {
+            $files['LOCAL_DEV.md'] = ['stub' => base_path('stubs/portable/LOCAL_DEV.md.stub'), 'mode' => 0644];
+        }
+
+        return $files;
     }
 }

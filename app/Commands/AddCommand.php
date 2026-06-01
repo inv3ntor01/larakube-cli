@@ -26,13 +26,14 @@ use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Str;
-use LaravelZero\Framework\Commands\Command;
-use Random\RandomException;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
+use Random\RandomException;
 
 class AddCommand extends Command
 {
@@ -50,15 +51,6 @@ class AddCommand extends Command
      * The console command description.
      */
     protected $description = 'Add or swap databases, Laravel features, blueprints, or storage';
-
-    /**
-     * Configure the command to ignore validation errors so we can forward arbitrary flags.
-     */
-    protected function configure(): void
-    {
-        $this->ignoreValidationErrors();
-        $this->addArchitecturalOptions();
-    }
 
     /**
      * Execute the console command.
@@ -163,7 +155,7 @@ class AddCommand extends Command
                     'extension' => 'PHP Extension (gd, bcmath, etc.)',
                     'blueprint' => 'Specialized Blueprint (Filament, etc.)',
                     'cloud' => 'Cloud Configuration (Ingress, Managed Services)',
-                ]
+                ],
             );
 
             if ($type === 'cloud') {
@@ -176,7 +168,7 @@ class AddCommand extends Command
                 $ext = text(
                     label: 'Enter the name of the PHP extension to add:',
                     placeholder: 'imagick',
-                    required: true
+                    required: true,
                 );
 
                 $this->call('ext:add', ['extension' => $ext]);
@@ -188,7 +180,7 @@ class AddCommand extends Command
                 $version = select(
                     label: 'Select your new PHP version:',
                     options: PhpVersion::getSelectOptions($config),
-                    default: $config->getPhpVersion()->value
+                    default: $config->getPhpVersion()->value,
                 );
 
                 $this->updatePhpVersion(PhpVersion::from($version), $config);
@@ -200,7 +192,7 @@ class AddCommand extends Command
                 $variation = select(
                     label: 'Select your new server variation:',
                     options: ServerVariation::getSelectOptions($config),
-                    default: $config->getServerVariation()?->value
+                    default: $config->getServerVariation()?->value,
                 );
 
                 $this->updateServerVariation(ServerVariation::from($variation), $config);
@@ -212,7 +204,7 @@ class AddCommand extends Command
                 $os = select(
                     label: 'Select your new base operating system:',
                     options: OperatingSystem::getSelectOptions($config),
-                    default: $config->getOs()->value
+                    default: $config->getOs()->value,
                 );
 
                 $this->updateOs(OperatingSystem::from($os), $config);
@@ -388,6 +380,15 @@ class AddCommand extends Command
 
         return 0;
 
+    }
+
+    /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
     }
 
     protected function addDatabase(DatabaseDriver $engine, ConfigData $config): void
@@ -636,7 +637,7 @@ class AddCommand extends Command
         $controller = select(
             label: 'Which Ingress Controller will you use in production?',
             options: IngressController::getSelectOptions($config),
-            default: $prodEnv->ingress?->value ?? IngressController::TRAEFIK->value
+            default: $prodEnv->ingress?->value ?? IngressController::TRAEFIK->value,
         );
         $prodEnv->ingress = IngressController::from($controller);
         $config->environments['production'] = $prodEnv;
@@ -649,7 +650,7 @@ class AddCommand extends Command
                 label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?',
                 options: $managedOptions,
                 default: $config->getManaged('production'),
-                hint: 'These services will be orchestrated locally but skipped in production manifests.'
+                hint: 'These services will be orchestrated locally but skipped in production manifests.',
             );
 
             $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;

@@ -13,6 +13,56 @@ trait GeneratesProjectInfrastructure
 {
     use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
 
+    public function hardenViteConfig(ConfigData $config): void
+    {
+        $projectPath = $config->getPath();
+        $viteFile = file_exists("$projectPath/vite.config.ts") ? "$projectPath/vite.config.ts" : "$projectPath/vite.config.js";
+
+        if (! file_exists($viteFile)) {
+            return;
+        }
+
+        $content = file_get_contents($viteFile);
+        $viteHost = $config->getServiceHost('vite', 'local');
+
+        // Check if the config is already "K8s Ready"
+        $isK8sReady = str_contains($content, "host: '{$viteHost}'") && str_contains($content, 'cors: true');
+
+        // 1. Aggressive Cleanups (ONLY for new scaffolding)
+        if ($config->isScaffolding) {
+            $this->laraKubeInfo('Hardening Vite configuration for Kubernetes...');
+
+            // Strip Wayfinder
+            $content = preg_replace("/import\s+({?\s*wayfinder\s*}?)\s+from\s+['\"].*?wayfinder.*?['\"];?\n?/s", '', $content);
+            $content = preg_replace("/\bwayfinder\s*\((?:[^()]|(?R))*\),?\n?/s", '', $content);
+
+            // Disable Inertia SSR
+            $content = preg_replace('/inertia\(\)/', 'inertia({ ssr: false })', $content);
+        }
+
+        // 2. Network Alignment
+        if (! str_contains($content, 'server: {') || $config->isScaffolding) {
+            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
+
+            if (! str_contains($content, 'server: {')) {
+                $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
+            } else {
+                $content = preg_replace("/origin:\s*['\"].*?\.dev\.test['\"]/", "origin: 'https://{$viteHost}'", $content);
+                $content = preg_replace("/host:\s*['\"].*?\.dev\.test['\"]/", "host: '{$viteHost}'", $content);
+            }
+
+            file_put_contents($viteFile, $content);
+        } elseif (! $isK8sReady) {
+            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
+            $this->laraKubeNewLine();
+            $this->laraKubeWarn(" ⚠ VITE ADVISORY: Your {$viteFile} looks custom.");
+            $this->laraKubeLine("   To ensure HMR works in Kubernetes, please ensure your 'server' block includes:");
+            $this->laraKubeNewLine();
+            $this->laraKubeLine($harden);
+            $this->laraKubeNewLine();
+        }
+    }
+
     /**
      * Sync values to the .env file.
      */
@@ -382,7 +432,7 @@ trait GeneratesProjectInfrastructure
             if (is_dir($dir)) {
                 $pruned = array_merge(
                     $pruned,
-                    $this->pruneManifestDir($config, $dir, $this->referencedManifestFiles($dir))
+                    $this->pruneManifestDir($config, $dir, $this->referencedManifestFiles($dir)),
                 );
             }
         }
@@ -676,56 +726,6 @@ trait GeneratesProjectInfrastructure
         if ($dryRun) {
             $this->line('');
             $this->line('  <fg=yellow;options=bold>⚠ No changes have been applied yet.</>');
-        }
-    }
-
-    public function hardenViteConfig(ConfigData $config): void
-    {
-        $projectPath = $config->getPath();
-        $viteFile = file_exists("$projectPath/vite.config.ts") ? "$projectPath/vite.config.ts" : "$projectPath/vite.config.js";
-
-        if (! file_exists($viteFile)) {
-            return;
-        }
-
-        $content = file_get_contents($viteFile);
-        $viteHost = $config->getServiceHost('vite', 'local');
-
-        // Check if the config is already "K8s Ready"
-        $isK8sReady = str_contains($content, "host: '{$viteHost}'") && str_contains($content, 'cors: true');
-
-        // 1. Aggressive Cleanups (ONLY for new scaffolding)
-        if ($config->isScaffolding) {
-            $this->laraKubeInfo('Hardening Vite configuration for Kubernetes...');
-
-            // Strip Wayfinder
-            $content = preg_replace("/import\s+({?\s*wayfinder\s*}?)\s+from\s+['\"].*?wayfinder.*?['\"];?\n?/s", '', $content);
-            $content = preg_replace("/\bwayfinder\s*\((?:[^()]|(?R))*\),?\n?/s", '', $content);
-
-            // Disable Inertia SSR
-            $content = preg_replace('/inertia\(\)/', 'inertia({ ssr: false })', $content);
-        }
-
-        // 2. Network Alignment
-        if (! str_contains($content, 'server: {') || $config->isScaffolding) {
-            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
-
-            if (! str_contains($content, 'server: {')) {
-                $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
-            } else {
-                $content = preg_replace("/origin:\s*['\"].*?\.dev\.test['\"]/", "origin: 'https://{$viteHost}'", $content);
-                $content = preg_replace("/host:\s*['\"].*?\.dev\.test['\"]/", "host: '{$viteHost}'", $content);
-            }
-
-            file_put_contents($viteFile, $content);
-        } elseif (! $isK8sReady) {
-            $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
-            $this->laraKubeNewLine();
-            $this->laraKubeWarn(" ⚠ VITE ADVISORY: Your {$viteFile} looks custom.");
-            $this->laraKubeLine("   To ensure HMR works in Kubernetes, please ensure your 'server' block includes:");
-            $this->laraKubeNewLine();
-            $this->laraKubeLine($harden);
-            $this->laraKubeNewLine();
         }
     }
 }

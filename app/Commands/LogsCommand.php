@@ -66,7 +66,7 @@ class LogsCommand extends Command
                 'meilisearch' => 'meilisearch',
                 'typesense' => 'typesense',
                 'mailpit' => 'mailpit',
-                default => trim($service)
+                default => trim($service),
             };
         }
 

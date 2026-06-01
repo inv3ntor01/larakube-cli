@@ -32,6 +32,7 @@
         "laravel/pint": "^1.25.1",
         "mockery/mockery": "^1.6.12",
         "pestphp/pest": "^3.8.4|^4.1.2",
+        "phpstan/phpstan-strict-rules": "^2.0",
         "phpacker/phpacker": "^0.6.4",
         "spatie/pest-plugin-snapshots": "^2.3"
     },
@@ -57,7 +58,7 @@
         }
     },
     "scripts": {
-        "analyse": "phpstan analyse"
+        "analyse": "phpstan analyse --memory-limit=1G"
     },
     "minimum-stability": "stable",
     "prefer-stable": true,

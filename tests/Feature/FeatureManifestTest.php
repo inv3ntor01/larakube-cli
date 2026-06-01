@@ -16,7 +16,7 @@ test('Feature: Kitchen Sink (Queues + Scheduler + Reverb + MCP + Boost)', functi
         LaravelFeature::TASK_SCHEDULING,
         LaravelFeature::REVERB,
         LaravelFeature::MCP,
-        LaravelFeature::BOOST
+        LaravelFeature::BOOST,
     );
     expect(generateManifests($config))->toMatchSnapshot();
 });

@@ -11,13 +11,6 @@ class ExecCommand extends Command
 {
     use CapturesPassthroughArgs, InteractsWithEnvironments, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -32,6 +25,13 @@ class ExecCommand extends Command
      * The console command description.
      */
     protected $description = 'Execute a command inside a running pod';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.
@@ -91,7 +91,7 @@ class ExecCommand extends Command
         $container = match ($cleanService) {
             'web', 'horizon', 'reverb', 'scheduler', 'queues', 'queue' => 'php',
             'seaweedfs' => 'master',
-            default => $cleanService
+            default => $cleanService,
         };
 
         // Execute the command.

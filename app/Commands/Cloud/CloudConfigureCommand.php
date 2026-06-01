@@ -6,12 +6,13 @@ use App\Enums\DeploymentStrategy;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class CloudConfigureCommand extends Command
 {
@@ -49,7 +50,7 @@ class CloudConfigureCommand extends Command
                     'gha' => 'GitHub Actions (Secrets & Workflows)',
                     'users' => 'Manage Teammate Access (SSH Keys)',
                 ],
-                default: 'base'
+                default: 'base',
             );
         }
 
@@ -65,7 +66,7 @@ class CloudConfigureCommand extends Command
     protected function configureBase(): int
     {
         $environment = $this->askForCloudEnvironment(
-            label: 'Which environment are you configuring?'
+            label: 'Which environment are you configuring?',
         );
 
         $projectPath = getcwd();
@@ -77,23 +78,23 @@ class CloudConfigureCommand extends Command
         $ip = text(
             label: 'Server IP address',
             default: $cloud['ip'] ?? '',
-            required: true
+            required: true,
         );
 
         $user = text(
             label: 'SSH User',
             default: $cloud['user'] ?? 'larakube',
-            required: true
+            required: true,
         );
 
         $port = text(
             label: 'SSH Port',
-            default: $cloud['port'] ?? '22'
+            default: $cloud['port'] ?? '22',
         );
 
         $key = text(
             label: 'Path to SSH Private Key',
-            default: $cloud['key'] ?? $_SERVER['HOME'].'/.ssh/id_rsa'
+            default: $cloud['key'] ?? $_SERVER['HOME'].'/.ssh/id_rsa',
         );
 
         $config->setCloud($environment, [
@@ -116,7 +117,7 @@ class CloudConfigureCommand extends Command
                     ? "{$config->getName()}.com"
                     : "{$environment}.{$config->getName()}.com",
                 default: $currentHost ?: '',
-                required: true
+                required: true,
             );
 
             $config->setHost($environment, 'web', $host);
@@ -131,7 +132,7 @@ class CloudConfigureCommand extends Command
     protected function configureServer(): int
     {
         $environment = $this->askForCloudEnvironment(
-            label: 'Which environment are you configuring for server setup?'
+            label: 'Which environment are you configuring for server setup?',
         );
 
         $projectPath = getcwd();
@@ -149,7 +150,7 @@ class CloudConfigureCommand extends Command
             label: 'Git Repository URL (SSH preferred)',
             placeholder: 'git@github.com:user/repo.git',
             default: trim($defaultRepo),
-            required: true
+            required: true,
         );
 
         $this->laraKubeInfo("Connecting to {$cloud['user']}@{$cloud['ip']} for initial setup...");
@@ -188,7 +189,7 @@ BASH;
     protected function configureGha(): int
     {
         $environment = $this->askForCloudEnvironment(
-            label: 'Which environment are you configuring for GitHub Actions?'
+            label: 'Which environment are you configuring for GitHub Actions?',
         );
 
         $envFile = ".env.{$environment}";
@@ -220,7 +221,7 @@ BASH;
         $branch = text(
             label: "Which git branch should trigger the {$environment} deployment?",
             default: 'main',
-            required: true
+            required: true,
         );
 
         $appName = $config->getName();
@@ -291,7 +292,7 @@ BASH;
         if (! $username) {
             $username = text(
                 label: 'GitHub Username',
-                required: true
+                required: true,
             );
         } else {
             $this->info("  👤 Using detected GitHub user: {$username}");
@@ -300,7 +301,7 @@ BASH;
         if (! $token) {
             $token = password(
                 label: 'GitHub Personal Access Token (PAT) with read:packages scope',
-                required: true
+                required: true,
             );
         } else {
             $this->info('  🔑 Using existing GitHub authentication token.');
@@ -326,7 +327,7 @@ BASH;
     protected function configureUsers(): int
     {
         $environment = $this->askForCloudEnvironment(
-            label: 'Which environment are you syncing users to?'
+            label: 'Which environment are you syncing users to?',
         );
 
         $projectPath = getcwd();

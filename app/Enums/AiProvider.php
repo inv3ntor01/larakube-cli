@@ -7,16 +7,6 @@ use App\Contracts\HasLabel;
 
 enum AiProvider: string implements HasCommandOptions, HasLabel
 {
-    case OPENAI = 'openai';
-    case ANTHROPIC = 'anthropic';
-    case GEMINI = 'gemini';
-    case AZURE = 'azure';
-    case GROQ = 'groq';
-    case XAI = 'xai';
-    case DEEPSEEK = 'deepseek';
-    case MISTRAL = 'mistral';
-    case OLLAMA = 'ollama';
-
     public function getLabel(): string
     {
         return match ($this) {
@@ -56,4 +46,13 @@ enum AiProvider: string implements HasCommandOptions, HasLabel
 
         return $options;
     }
+    case OPENAI = 'openai';
+    case ANTHROPIC = 'anthropic';
+    case GEMINI = 'gemini';
+    case AZURE = 'azure';
+    case GROQ = 'groq';
+    case XAI = 'xai';
+    case DEEPSEEK = 'deepseek';
+    case MISTRAL = 'mistral';
+    case OLLAMA = 'ollama';
 }

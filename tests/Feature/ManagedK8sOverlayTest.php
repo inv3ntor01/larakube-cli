@@ -110,7 +110,7 @@ test('Phase 3: no ServiceAccount is emitted by default (matches today)', functio
     $manifests = generateManifestsAsArray(eksConfig([]));
 
     expect($manifests)->not->toHaveKey('overlays/production/serviceaccount.yaml');
-    expect(prodWebPatch(eksConfig([])) ['spec']['template']['spec'])
+    expect(prodWebPatch(eksConfig([]))['spec']['template']['spec'])
         ->not->toHaveKey('serviceAccountName');
 });
 
@@ -126,7 +126,7 @@ test('Phase 3: opting into a serviceAccount emits the SA + IRSA annotation and b
     expect($sa['kind'])->toBe('ServiceAccount')
         ->and($sa['metadata']['name'])->toBe('eksapp-sa')
         ->and($sa['metadata']['annotations']['eks.amazonaws.com/role-arn'])
-            ->toBe('arn:aws:iam::123:role/eksapp');
+        ->toBe('arn:aws:iam::123:role/eksapp');
 
     // Registered as an overlay resource.
     expect($manifests['overlays/production/kustomization.yaml']['resources'])

@@ -33,7 +33,7 @@ trait InteractsWithEnvironments
     {
         return array_values(array_filter(
             $this->getAvailableEnvironments(),
-            fn (string $env) => $env !== 'local'
+            fn (string $env) => $env !== 'local',
         ));
     }
 
@@ -45,7 +45,7 @@ trait InteractsWithEnvironments
         return select(
             label: $label,
             options: $this->getAvailableEnvironments(),
-            default: $default
+            default: $default,
         );
     }
 

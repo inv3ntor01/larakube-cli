@@ -25,12 +25,13 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Str;
-use LaravelZero\Framework\Commands\Command;
-use Random\RandomException;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
+use Random\RandomException;
 
 class NewCommand extends Command
 {
@@ -48,15 +49,6 @@ class NewCommand extends Command
      * The console command description.
      */
     protected $description = 'Create a new Laravel application with a custom Kubernetes architecture';
-
-    /**
-     * Configure the command to ignore validation errors so we can forward arbitrary flags.
-     */
-    protected function configure(): void
-    {
-        $this->ignoreValidationErrors();
-        $this->addArchitecturalOptions();
-    }
 
     /**
      * Execute the console command.
@@ -96,7 +88,7 @@ class NewCommand extends Command
             validate: fn (string $value) => match (true) {
                 strtolower($value) === 'console' => 'The name "console" is reserved for the LaraKube Console.',
                 default => null,
-            }
+            },
         );
 
         $config = $this->buildConfigFromFlags();
@@ -190,6 +182,23 @@ class NewCommand extends Command
         return 0;
     }
 
+    /**
+     * Define the command's schedule.
+     */
+    public function schedule(Schedule $schedule): void
+    {
+        // $schedule->command(static::class)->everyMinute();
+    }
+
+    /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
+    }
+
     protected function runLaravelNew($inputName, ConfigData $config): void
     {
         $appName = $config->getName();
@@ -258,13 +267,5 @@ class NewCommand extends Command
                "sh -c '$pkgCommand && composer global require laravel/installer && $(composer global config bin-dir --absolute)/laravel new $appName $extraFlags && chown -R $uid:$gid {$appName}'";
 
         passthru($cmd);
-    }
-
-    /**
-     * Define the command's schedule.
-     */
-    public function schedule(Schedule $schedule): void
-    {
-        // $schedule->command(static::class)->everyMinute();
     }
 }

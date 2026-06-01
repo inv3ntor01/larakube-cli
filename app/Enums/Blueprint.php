@@ -20,10 +20,6 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case LARAVEL = 'laravel';
-    case FILAMENT = 'filament';
-    case STATAMIC = 'statamic';
-
     public function isHidden(?ConfigData $config = null): bool
     {
         return $this === self::STATAMIC;
@@ -68,7 +64,7 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -151,4 +147,8 @@ enum Blueprint: string implements HasArtisanCommands, HasCommandOptions, HasComp
             default => [],
         };
     }
+
+    case LARAVEL = 'laravel';
+    case FILAMENT = 'filament';
+    case STATAMIC = 'statamic';
 }

@@ -12,13 +12,6 @@ class TestCommand extends Command
 {
     use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     protected $signature = 'test
                             {--db : Provision <app>_testing on the project DB engine instead of in-memory SQLite (auto-saved to .larakube.json on first use)}
                             {--with-db : Alias for --db (kept for backward compat)}
@@ -48,6 +41,13 @@ class TestCommand extends Command
         'QUEUE_CONNECTION',
         'MAIL_MAILER',
     ];
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     public function handle(): int
     {

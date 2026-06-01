@@ -3,10 +3,11 @@
 namespace App\Commands\Cluster;
 
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ClusterDestroyCommand extends Command
 {
@@ -36,7 +37,7 @@ class ClusterDestroyCommand extends Command
                 'k3d' => 'k3d cluster (larakube)',
                 'k3s' => 'Native k3s service (Linux)',
             ],
-            default: 'k3d'
+            default: 'k3d',
         );
 
         if (! confirm("Are you absolutely sure? This will delete ALL namespaces and data in the '{$engine}' cluster.", false)) {

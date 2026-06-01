@@ -8,9 +8,10 @@ use App\Enums\ServerVariation;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\select;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ShellCommand extends Command
 {
@@ -67,7 +68,7 @@ class ShellCommand extends Command
                         'frankenphp' => 'FrankenPHP',
                         'fpm-nginx' => 'Nginx + FPM',
                         'fpm-apache' => 'Apache + FPM',
-                        default => $label
+                        default => $label,
                     };
                     $activeOptions['web'] = "Web ($shortLabel)";
 
@@ -114,7 +115,7 @@ class ShellCommand extends Command
             $service = select(
                 label: 'Which service would you like to connect to?',
                 options: $activeOptions,
-                default: array_key_first($activeOptions)
+                default: array_key_first($activeOptions),
             );
         }
 
@@ -124,7 +125,7 @@ class ShellCommand extends Command
             'horizon' => 'app=laravel-horizon',
             'reverb' => 'app=laravel-reverb',
             'scheduler' => 'app=laravel-schedule',
-            default => "app={$service}"
+            default => "app={$service}",
         };
 
         // Find the pod name

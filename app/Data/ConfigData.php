@@ -131,7 +131,7 @@ class ConfigData extends Data
                 $this->addEnvironment($env);
                 if ($this->environments[$env]->cloud === null) {
                     $this->environments[$env]->cloud = CloudData::from(
-                        $legacyUsers ? array_merge($conf, ['teammates' => $legacyUsers]) : $conf
+                        $legacyUsers ? array_merge($conf, ['teammates' => $legacyUsers]) : $conf,
                     );
                 }
             }
@@ -340,7 +340,7 @@ class ConfigData extends Data
     {
         return array_values(array_filter(
             $this->getEnvironments(),
-            fn (string $env) => $env !== 'local'
+            fn (string $env) => $env !== 'local',
         ));
     }
 
@@ -994,7 +994,7 @@ class ConfigData extends Data
                         $dep instanceof CacheDriver => $dep->dbPort() ?: null,
                         $dep instanceof ScoutDriver => $dep === ScoutDriver::DATABASE ? null : $dep->port(),
                         $dep instanceof StorageDriver => $dep->port(),
-                        default => null
+                        default => null,
                     };
 
                     if ($port) {
@@ -1115,7 +1115,7 @@ class ConfigData extends Data
     {
         return array_merge(
             $this->getAllPublicEnvironmentVariables($environment),
-            $this->getAllSecretEnvironmentVariables($environment)
+            $this->getAllSecretEnvironmentVariables($environment),
         );
     }
 

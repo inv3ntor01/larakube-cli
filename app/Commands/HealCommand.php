@@ -8,11 +8,12 @@ use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Str;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class HealCommand extends Command
 {
@@ -88,7 +89,7 @@ class HealCommand extends Command
 
             $confirm = text(
                 label: "To confirm architectural regeneration, please type the project name '$appName':",
-                required: true
+                required: true,
             );
 
             if ($confirm !== $appName) {

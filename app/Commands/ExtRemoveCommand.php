@@ -4,9 +4,10 @@ namespace App\Commands;
 
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\info;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ExtRemoveCommand extends Command
 {

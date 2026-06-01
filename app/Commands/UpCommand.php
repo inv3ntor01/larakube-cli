@@ -16,10 +16,11 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
+
+use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {

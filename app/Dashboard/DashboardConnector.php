@@ -3,6 +3,7 @@
 namespace App\Dashboard;
 
 use Illuminate\Support\Facades\Http;
+use Throwable;
 
 class DashboardConnector
 {
@@ -15,7 +16,7 @@ class DashboardConnector
                 ->withoutVerifying()
                 ->get("{$this->baseUrl}/up")
                 ->successful();
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return false;
         }
     }
@@ -31,7 +32,7 @@ class DashboardConnector
                 ->withoutVerifying()
                 ->post("{$this->baseUrl}/api/{$request->getEndpoint()}", $request->getData())
                 ->successful();
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return false;
         }
     }

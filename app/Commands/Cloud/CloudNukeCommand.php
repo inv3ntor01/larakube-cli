@@ -6,10 +6,11 @@ use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class CloudNukeCommand extends Command
 {
@@ -38,7 +39,7 @@ class CloudNukeCommand extends Command
         }
 
         $environment = $this->askForCloudEnvironment(
-            label: 'Which environment would you like to NUKE from the cluster?'
+            label: 'Which environment would you like to NUKE from the cluster?',
         );
 
         if (! $this->validateContextForEnvironment($environment)) {
@@ -57,7 +58,7 @@ class CloudNukeCommand extends Command
         if (! $this->option('force')) {
             $confirmName = text(
                 label: "To confirm the NUKE, please type the app name '{$appName}':",
-                required: true
+                required: true,
             );
 
             if ($confirmName !== $appName) {

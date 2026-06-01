@@ -15,11 +15,6 @@ enum FrontendStack: string implements HasCommandOptions, HasKubernetesFiles, Has
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case REACT = 'react';
-    case VUE = 'vue';
-    case SVELTE = 'svelte';
-    case LIVEWIRE = 'livewire';
-
     public function getPodName(?ConfigData $config = null): string
     {
         return 'node';
@@ -147,4 +142,9 @@ enum FrontendStack: string implements HasCommandOptions, HasKubernetesFiles, Has
             'base' => ['node-deployment.yaml', 'node-ingress.yaml'],
         ];
     }
+
+    case REACT = 'react';
+    case VUE = 'vue';
+    case SVELTE = 'svelte';
+    case LIVEWIRE = 'livewire';
 }

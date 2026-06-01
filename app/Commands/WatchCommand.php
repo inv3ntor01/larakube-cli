@@ -67,21 +67,6 @@ class WatchCommand extends Command
     }
 
     /**
-     * @param  array<int, string>  $blueprintPaths
-     * @return array<int, string>
-     */
-    protected function resolvePaths(array $blueprintPaths): array
-    {
-        $cwd = getcwd();
-        $requested = $this->option('path') ?: $blueprintPaths;
-
-        return array_values(array_filter(
-            $requested,
-            fn (string $p) => file_exists($cwd.DIRECTORY_SEPARATOR.$p),
-        ));
-    }
-
-    /**
      * Compute an mtime fingerprint of every file under each path (recursive for dirs).
      *
      * @param  array<int, string>  $paths
@@ -105,7 +90,7 @@ class WatchCommand extends Command
             }
 
             $iter = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS)
+                new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS),
             );
 
             foreach ($iter as $file) {
@@ -118,5 +103,20 @@ class WatchCommand extends Command
         ksort($entries);
 
         return md5(serialize($entries));
+    }
+
+    /**
+     * @param  array<int, string>  $blueprintPaths
+     * @return array<int, string>
+     */
+    protected function resolvePaths(array $blueprintPaths): array
+    {
+        $cwd = getcwd();
+        $requested = $this->option('path') ?: $blueprintPaths;
+
+        return array_values(array_filter(
+            $requested,
+            fn (string $p) => file_exists($cwd.DIRECTORY_SEPARATOR.$p),
+        ));
     }
 }

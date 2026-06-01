@@ -32,7 +32,7 @@ jobs:
         run: ./vendor/bin/pint --test
 
       - name: Static Analysis (PHPStan / Larastan)
-        run: ./vendor/bin/phpstan analyse --no-progress
+        run: ./vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 
       - name: Run Tests
         run: ./vendor/bin/pest

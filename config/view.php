@@ -21,7 +21,7 @@ return [
             return $pharPath !== ''
                 ? sys_get_temp_dir().'/larakube-views-'.filemtime($pharPath)
                 : storage_path('framework/views');
-        })()
+        })(),
     ),
 
 ];

@@ -64,7 +64,7 @@ trait InteractsWithProjectConfig
 
         $this->renderHeader();
         $this->laraKubeError(
-            "Project folder '{$folderName}' doesn't match the project name '{$projectName}' in .larakube.json."
+            "Project folder '{$folderName}' doesn't match the project name '{$projectName}' in .larakube.json.",
         );
         $this->newLine();
 

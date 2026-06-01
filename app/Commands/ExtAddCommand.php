@@ -4,10 +4,11 @@ namespace App\Commands;
 
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\warning;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ExtAddCommand extends Command
 {

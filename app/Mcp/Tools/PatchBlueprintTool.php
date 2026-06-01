@@ -81,6 +81,21 @@ class PatchBlueprintTool extends Tool
 👉 Suggest running 'larakube heal' to apply changes.");
     }
 
+    /**
+     * Get the tool's input schema.
+     *
+     * @return array<string, JsonSchema>
+     */
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'action' => $schema->string()->enum(['add', 'remove', 'set'])->description('The type of modification'),
+            'key' => $schema->string()->enum(['databases', 'features', 'serverVariation', 'phpVersion'])->description('The blueprint key to modify'),
+            'value' => $schema->string()->description('The value to add/remove/set (e.g. "mysql", "redis", "frankenphp")'),
+            'path' => $schema->string()->description('The filesystem path of the project (optional)')->nullable(),
+        ];
+    }
+
     protected function handleArrayModification($config, $key, $value, bool $isAdd): void
     {
         // Simple mapping for common arrays
@@ -102,20 +117,5 @@ class PatchBlueprintTool extends Tool
 
         $method = $isAdd ? $entry['add'] : $entry['remove'];
         $config->$method($enumValue);
-    }
-
-    /**
-     * Get the tool's input schema.
-     *
-     * @return array<string, JsonSchema>
-     */
-    public function schema(JsonSchema $schema): array
-    {
-        return [
-            'action' => $schema->string()->enum(['add', 'remove', 'set'])->description('The type of modification'),
-            'key' => $schema->string()->enum(['databases', 'features', 'serverVariation', 'phpVersion'])->description('The blueprint key to modify'),
-            'value' => $schema->string()->description('The value to add/remove/set (e.g. "mysql", "redis", "frankenphp")'),
-            'path' => $schema->string()->description('The filesystem path of the project (optional)')->nullable(),
-        ];
     }
 }

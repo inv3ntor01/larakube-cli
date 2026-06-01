@@ -4,10 +4,11 @@ namespace App\Commands\Cloud;
 
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class CloudProvisionCommand extends Command
 {
@@ -36,22 +37,22 @@ class CloudProvisionCommand extends Command
         $ip = text(
             label: 'What is the IP address of your fresh VPS?',
             required: true,
-            placeholder: 'e.g. 123.45.67.89'
+            placeholder: 'e.g. 123.45.67.89',
         );
 
         $user = text(
             label: 'SSH User (must have sudo access)',
-            default: 'root'
+            default: 'root',
         );
 
         $port = text(
             label: 'SSH Port',
-            default: '22'
+            default: '22',
         );
 
         $keyPath = text(
             label: 'Path to your SSH Private Key',
-            default: home_path('.ssh/id_rsa')
+            default: home_path('.ssh/id_rsa'),
         );
 
         // Resolve ~ in keyPath
@@ -70,7 +71,7 @@ class CloudProvisionCommand extends Command
                 label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
                 placeholder: 'admin@larakube.dev.test',
                 required: true,
-                validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.'
+                validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
             );
             $this->setEmail($email);
         }

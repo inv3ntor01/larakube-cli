@@ -20,9 +20,6 @@ use App\Traits\ProvidesSelectOptions;
 enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasDependencies, HasEnvironmentVariables, HasHosts, HasLabel, HasLifecycleHooks, HasPodName, HasReloadCommand, HasSelectOptions
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
-    case FPM_NGINX = 'fpm-nginx';
-    case FRANKENPHP = 'frankenphp';
-    case FPM_APACHE = 'fpm-apache';
 
     public function getPodName(?ConfigData $config = null): string
     {
@@ -56,7 +53,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -144,4 +141,7 @@ enum ServerVariation: string implements AsDependency, HasArtisanCommands, HasCom
             default => null,
         };
     }
+    case FPM_NGINX = 'fpm-nginx';
+    case FRANKENPHP = 'frankenphp';
+    case FPM_APACHE = 'fpm-apache';
 }

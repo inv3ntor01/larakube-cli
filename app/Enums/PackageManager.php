@@ -12,11 +12,6 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case NPM = 'npm';
-    case PNPM = 'pnpm';
-    case BUN = 'bun';
-    case YARN = 'yarn';
-
     public function getLabel(): ?string
     {
         return match ($this) {
@@ -85,4 +80,9 @@ enum PackageManager: string implements HasCommandOptions, HasLabel, HasSelectOpt
     {
         return "--$this->value";
     }
+
+    case NPM = 'npm';
+    case PNPM = 'pnpm';
+    case BUN = 'bun';
+    case YARN = 'yarn';
 }

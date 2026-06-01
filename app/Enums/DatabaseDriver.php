@@ -26,12 +26,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case MYSQL = 'mysql';
-    case MARIADB = 'mariadb';
-    case POSTGRESQL = 'postgres';
-    case MONGODB = 'mongodb';
-    case SQLITE = 'sqlite';
-
     public function getPodName(?ConfigData $config = null): string
     {
         return $this->value;
@@ -305,7 +299,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -534,4 +528,10 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return [];
     }
+
+    case MYSQL = 'mysql';
+    case MARIADB = 'mariadb';
+    case POSTGRESQL = 'postgres';
+    case MONGODB = 'mongodb';
+    case SQLITE = 'sqlite';
 }

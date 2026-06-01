@@ -16,11 +16,12 @@ use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
+
+use LaravelZero\Framework\Commands\Command;
 
 class RemoveCommand extends Command
 {
@@ -38,15 +39,6 @@ class RemoveCommand extends Command
      * The console command description.
      */
     protected $description = 'Remove architectural components (DB, Features, Storage, etc.)';
-
-    /**
-     * Configure the command to ignore validation errors so we can forward arbitrary flags.
-     */
-    protected function configure(): void
-    {
-        $this->ignoreValidationErrors();
-        $this->addArchitecturalOptions();
-    }
 
     /**
      * Execute the console command.
@@ -125,7 +117,7 @@ class RemoveCommand extends Command
                     'feature' => 'Laravel Feature',
                     'storage' => 'Object Storage',
                     'extension' => 'PHP Extension',
-                ]
+                ],
             );
 
             if ($type === 'extension') {
@@ -236,6 +228,15 @@ class RemoveCommand extends Command
         $this->laraKubeInfo('Removal complete. Please run "larakube up" to sync the cluster.');
 
         return 0;
+    }
+
+    /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
     }
 
     protected function removeDatabase(DatabaseDriver $engine, ConfigData $config): void

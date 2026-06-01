@@ -25,10 +25,6 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case MEILISEARCH = 'meilisearch';
-    case TYPESENSE = 'typesense';
-    case DATABASE = 'database';
-
     public function getPodName(?ConfigData $config = null): string
     {
         return $this->value;
@@ -116,7 +112,7 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -327,4 +323,8 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
     {
         return [];
     }
+
+    case MEILISEARCH = 'meilisearch';
+    case TYPESENSE = 'typesense';
+    case DATABASE = 'database';
 }

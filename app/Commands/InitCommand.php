@@ -14,11 +14,12 @@ use App\Traits\InteractsWithDynamicOptions;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Str;
-use LaravelZero\Framework\Commands\Command;
-use Random\RandomException;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
+
+use LaravelZero\Framework\Commands\Command;
+use Random\RandomException;
 
 class InitCommand extends Command
 {
@@ -31,15 +32,6 @@ class InitCommand extends Command
      */
     protected $signature = 'init {--fast : Skip the wizard and use ideal defaults}
                                  {--dry-run : Show what will be done without making any changes}';
-
-    /**
-     * Configure the command to ignore validation errors so we can forward arbitrary flags.
-     */
-    protected function configure(): void
-    {
-        $this->ignoreValidationErrors();
-        $this->addArchitecturalOptions();
-    }
 
     /**
      * The console command description.
@@ -157,5 +149,14 @@ class InitCommand extends Command
         info('Next steps: larakube up');
 
         return 0;
+    }
+
+    /**
+     * Configure the command to ignore validation errors so we can forward arbitrary flags.
+     */
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addArchitecturalOptions();
     }
 }

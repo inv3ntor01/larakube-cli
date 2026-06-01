@@ -10,13 +10,6 @@ class PhpCommand extends Command
 {
     use CapturesPassthroughArgs, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -30,6 +23,13 @@ class PhpCommand extends Command
      * @var string
      */
     protected $description = 'Run a php command inside the cluster';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.

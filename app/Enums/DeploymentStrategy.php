@@ -12,9 +12,6 @@ enum DeploymentStrategy: string implements HasCommandOptions, HasLabel, HasSelec
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case SINGLE_NODE = 'single-node';
-    case MULTI_NODE_HA = 'multi-node-ha';
-
     public function getLabel(): ?string
     {
         return match ($this) {
@@ -22,4 +19,7 @@ enum DeploymentStrategy: string implements HasCommandOptions, HasLabel, HasSelec
             self::MULTI_NODE_HA => 'Multi-Node HA (Optimized for scale, using managed LoadBalancer)',
         };
     }
+
+    case SINGLE_NODE = 'single-node';
+    case MULTI_NODE_HA = 'multi-node-ha';
 }

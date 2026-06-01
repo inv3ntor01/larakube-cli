@@ -13,14 +13,6 @@ enum PhpVersion: string implements HasCommandOptions, HasHiddenComponents, HasSe
 {
     use ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case PHP_8_5 = '8.5';
-    case PHP_8_4 = '8.4';
-    case PHP_8_3 = '8.3';
-    case PHP_8_2 = '8.2';
-    case PHP_8_1 = '8.1';
-    case PHP_8_0 = '8.0';
-    case PHP_7_4 = '7.4';
-
     public function isHidden(?ConfigData $config = null): bool
     {
         $v = (float) $this->value;
@@ -50,4 +42,12 @@ enum PhpVersion: string implements HasCommandOptions, HasHiddenComponents, HasSe
             self::PHP_7_4 => 'PHP 7.4',
         };
     }
+
+    case PHP_8_5 = '8.5';
+    case PHP_8_4 = '8.4';
+    case PHP_8_3 = '8.3';
+    case PHP_8_2 = '8.2';
+    case PHP_8_1 = '8.1';
+    case PHP_8_0 = '8.0';
+    case PHP_7_4 = '7.4';
 }

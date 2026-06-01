@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Traits\LaraKubeOutput;
+use Exception;
 use Illuminate\Support\Facades\Http;
 use LaravelZero\Framework\Commands\Command;
 
@@ -72,10 +73,10 @@ class UpdateCommand extends Command
         try {
             $binaryContent = file_get_contents($downloadUrl);
             if ($binaryContent === false) {
-                throw new \Exception('Download failed.');
+                throw new Exception('Download failed.');
             }
             file_put_contents($tempPath, $binaryContent);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->laraKubeError("Failed to download binary from $downloadUrl");
 
             return 1;

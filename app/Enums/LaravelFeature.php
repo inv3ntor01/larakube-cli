@@ -29,21 +29,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case TASK_SCHEDULING = 'scheduler';
-    case HORIZON = 'horizon';
-    case QUEUES = 'queues';
-    case REVERB = 'reverb';
-    case SCOUT = 'scout';
-    case OCTANE = 'octane';
-    case SSR = 'ssr';
-    case MONITORING = 'monitoring';
-    case METALLB = 'metallb';
-    case MAILPIT = 'mailpit';
-
-    case AI = 'ai';
-    case MCP = 'mcp';
-    case BOOST = 'boost';
-
     public static function fromPodName(string $podName): ?self
     {
         return match ($podName) {
@@ -145,7 +130,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -350,21 +335,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    protected function getAiInstructions(ConfigData $config): array
-    {
-        $hasPostgres = $config->getDatabase() === DatabaseDriver::POSTGRESQL ||
-                       in_array(DatabaseDriver::POSTGRESQL, $config->getDatabases(), true);
-
-        if ($hasPostgres) {
-            return [];
-        }
-
-        return [
-            '<fg=yellow;options=bold>💡 RECOMMENDATION:</> The Laravel AI SDK works best with PostgreSQL and <fg=cyan;options=bold>pgvector</>.',
-            '   Consider adding it to your project: <fg=blue>larakube add postgres</>',
-        ];
-    }
-
     public function updateK8s(ConfigData $config): void
     {
         if (in_array($this, [self::MAILPIT, self::MONITORING]) && ! $config->withCompanions) {
@@ -552,6 +522,21 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         return $manifests;
     }
 
+    protected function getAiInstructions(ConfigData $config): array
+    {
+        $hasPostgres = $config->getDatabase() === DatabaseDriver::POSTGRESQL ||
+                       in_array(DatabaseDriver::POSTGRESQL, $config->getDatabases(), true);
+
+        if ($hasPostgres) {
+            return [];
+        }
+
+        return [
+            '<fg=yellow;options=bold>💡 RECOMMENDATION:</> The Laravel AI SDK works best with PostgreSQL and <fg=cyan;options=bold>pgvector</>.',
+            '   Consider adding it to your project: <fg=blue>larakube add postgres</>',
+        ];
+    }
+
     private function getReverbJsCommands(?ConfigData $context): array
     {
         $projectPath = $context?->getName() ? getcwd().'/'.$context->getName() : null;
@@ -584,4 +569,19 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 
         return [$pm->addDevCommand($jsPackages).' --ignore-scripts'];
     }
+
+    case TASK_SCHEDULING = 'scheduler';
+    case HORIZON = 'horizon';
+    case QUEUES = 'queues';
+    case REVERB = 'reverb';
+    case SCOUT = 'scout';
+    case OCTANE = 'octane';
+    case SSR = 'ssr';
+    case MONITORING = 'monitoring';
+    case METALLB = 'metallb';
+    case MAILPIT = 'mailpit';
+
+    case AI = 'ai';
+    case MCP = 'mcp';
+    case BOOST = 'boost';
 }

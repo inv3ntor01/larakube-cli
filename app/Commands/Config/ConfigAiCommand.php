@@ -17,12 +17,6 @@ class ConfigAiCommand extends Command
 
     protected $description = 'Configure AI settings and API keys';
 
-    protected function configure(): void
-    {
-        $this->ignoreValidationErrors();
-        $this->addAiProviderOptions(InputOption::VALUE_REQUIRED);
-    }
-
     public function handle()
     {
         $this->renderHeader();
@@ -60,5 +54,11 @@ class ConfigAiCommand extends Command
         }
 
         return 0;
+    }
+
+    protected function configure(): void
+    {
+        $this->ignoreValidationErrors();
+        $this->addAiProviderOptions(InputOption::VALUE_REQUIRED);
     }
 }

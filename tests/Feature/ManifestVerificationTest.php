@@ -220,7 +220,7 @@ test('Structural Verification: Kitchen Sink includes ALL expected manifests', fu
         LaravelFeature::TASK_SCHEDULING,
         LaravelFeature::REVERB,
         LaravelFeature::MCP,
-        LaravelFeature::BOOST
+        LaravelFeature::BOOST,
     );
 
     $manifests = generateManifestsAsArray($config);

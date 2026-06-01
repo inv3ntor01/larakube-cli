@@ -5,6 +5,38 @@ namespace App\Traits;
 trait CapturesPassthroughArgs
 {
     /**
+     * Detect whether an in-pod command line is invoking a PHP test runner.
+     * Used by proxy commands (art, php, exec) to redirect through
+     * `larakube test`, which strips DB env vars and defaults to in-memory
+     * SQLite — preventing RefreshDatabase from wiping the dev DB.
+     *
+     * Recognizes:
+     *   - `vendor/bin/pest`, `vendor/bin/phpunit` (with optional `./` prefix)
+     *   - `artisan test` subcommand
+     *
+     * Deliberately does NOT match:
+     *   - `composer require pest` (package install, not test run)
+     *   - `phpunit-watcher` (different binary)
+     *   - `artisan test:install` / other `test:*` subcommands
+     */
+    public static function looksLikeTestRunner(string $command): bool
+    {
+        // Strip the shell-escape quotes that capturePassthroughArgs added so
+        // the regex sees the bare command tokens.
+        $stripped = str_replace(["'", '"'], '', $command);
+
+        if (preg_match('#(?:^|\s)\.{0,2}/?vendor/bin/(?:pest|phpunit)(?:\s|$)#', $stripped)) {
+            return true;
+        }
+
+        if (preg_match('/\bartisan\s+test(?:\s|$)/', $stripped)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Parse $_SERVER['argv'] for a passthrough command's trailing args.
      *
      * Filters out the listed larakube-specific options (capturing their values
@@ -76,38 +108,6 @@ trait CapturesPassthroughArgs
             'command' => implode(' ', array_map('escapeshellarg', $commands)),
             'options' => $options,
         ];
-    }
-
-    /**
-     * Detect whether an in-pod command line is invoking a PHP test runner.
-     * Used by proxy commands (art, php, exec) to redirect through
-     * `larakube test`, which strips DB env vars and defaults to in-memory
-     * SQLite — preventing RefreshDatabase from wiping the dev DB.
-     *
-     * Recognizes:
-     *   - `vendor/bin/pest`, `vendor/bin/phpunit` (with optional `./` prefix)
-     *   - `artisan test` subcommand
-     *
-     * Deliberately does NOT match:
-     *   - `composer require pest` (package install, not test run)
-     *   - `phpunit-watcher` (different binary)
-     *   - `artisan test:install` / other `test:*` subcommands
-     */
-    public static function looksLikeTestRunner(string $command): bool
-    {
-        // Strip the shell-escape quotes that capturePassthroughArgs added so
-        // the regex sees the bare command tokens.
-        $stripped = str_replace(["'", '"'], '', $command);
-
-        if (preg_match('#(?:^|\s)\.{0,2}/?vendor/bin/(?:pest|phpunit)(?:\s|$)#', $stripped)) {
-            return true;
-        }
-
-        if (preg_match('/\bartisan\s+test(?:\s|$)/', $stripped)) {
-            return true;
-        }
-
-        return false;
     }
 
     /**

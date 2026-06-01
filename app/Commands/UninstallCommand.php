@@ -3,9 +3,10 @@
 namespace App\Commands;
 
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
 
 class UninstallCommand extends Command
 {

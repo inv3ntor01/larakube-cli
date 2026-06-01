@@ -90,7 +90,7 @@ trait GathersInfrastructureConfig
             $blueprints = multiselect(
                 label: 'Choose specialized blueprints (Optional):',
                 options: $availableBlueprints,
-                default: array_map(fn ($b) => $b->value, $config->getBlueprints())
+                default: array_map(fn ($b) => $b->value, $config->getBlueprints()),
             );
 
             $config->setBlueprints($blueprints);
@@ -100,7 +100,7 @@ trait GathersInfrastructureConfig
         $variation = select(
             label: 'What server variation would you like to use?',
             options: ServerVariation::getSelectOptions($config),
-            default: $config->getServerVariation()?->value ?? ServerVariation::FPM_NGINX->value
+            default: $config->getServerVariation()?->value ?? ServerVariation::FPM_NGINX->value,
         );
 
         $config->setServerVariation(ServerVariation::from($variation));
@@ -124,7 +124,7 @@ trait GathersInfrastructureConfig
                     }
 
                     return null;
-                }
+                },
             );
 
             $config->addFeature(...Arr::map($features, fn (string $feature) => LaravelFeature::from($feature)));
@@ -141,7 +141,7 @@ trait GathersInfrastructureConfig
                 $frontend = select(
                     label: 'Which frontend stack are you using?',
                     options: array_merge([null => 'None (API or Custom)'], FrontendStack::getSelectOptions($config)),
-                    default: $detected?->value
+                    default: $detected?->value,
                 );
 
                 if ($frontend) {
@@ -155,7 +155,7 @@ trait GathersInfrastructureConfig
             $version = select(
                 label: 'What PHP version would you like to use?',
                 options: PhpVersion::getSelectOptions($config),
-                default: PhpVersion::PHP_8_5->value
+                default: PhpVersion::PHP_8_5->value,
             );
 
             $config->setPhpVersion(PhpVersion::from($version));
@@ -165,7 +165,7 @@ trait GathersInfrastructureConfig
             $os = select(
                 label: 'What operating system would you like to use?',
                 options: OperatingSystem::getSelectOptions($config),
-                default: OperatingSystem::ALPINE->value
+                default: OperatingSystem::ALPINE->value,
             );
 
             $config->setOs(OperatingSystem::from($os));
@@ -180,7 +180,7 @@ trait GathersInfrastructureConfig
                     label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
                     placeholder: 'admin@larakube.dev.test',
                     required: true,
-                    validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.'
+                    validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
                 );
                 $this->setEmail($email);
             }
@@ -200,7 +200,7 @@ trait GathersInfrastructureConfig
             $driver = select(
                 label: 'Which primary search driver would you like to use for Scout?',
                 options: ScoutDriver::getSelectOptions($config),
-                default: $config->getScoutDriver()?->value ?? ScoutDriver::MEILISEARCH->value
+                default: $config->getScoutDriver()?->value ?? ScoutDriver::MEILISEARCH->value,
             );
 
             $config->setScoutDriver(ScoutDriver::from($driver));
@@ -210,7 +210,7 @@ trait GathersInfrastructureConfig
         $packageManager = select(
             label: 'Choose your JavaScript package manager:',
             options: PackageManager::getSelectOptions($config),
-            default: $config->getPackageManager()?->value ?? PackageManager::NPM->value
+            default: $config->getPackageManager()?->value ?? PackageManager::NPM->value,
         );
 
         $config->setPackageManager(PackageManager::from($packageManager));
@@ -219,7 +219,7 @@ trait GathersInfrastructureConfig
         $storage = select(
             label: 'Which primary object storage would you like to use?',
             options: array_merge([null => 'None'], StorageDriver::getSelectOptions($config)),
-            default: $config->getObjectStorage()?->value
+            default: $config->getObjectStorage()?->value,
         );
 
         if ($driver = StorageDriver::tryFrom($storage)) {
@@ -237,7 +237,7 @@ trait GathersInfrastructureConfig
         $database = select(
             label: 'What primary database engine would you like to use?',
             options: DatabaseDriver::getSelectOptions($config),
-            default: $config->getDatabase()?->value ?? $defaultDb
+            default: $config->getDatabase()?->value ?? $defaultDb,
         );
 
         $config->setDatabase(DatabaseDriver::from($database));
@@ -250,7 +250,7 @@ trait GathersInfrastructureConfig
             $cache = select(
                 label: 'Which primary cache driver would you like to use?',
                 options: array_merge([null => 'None'], CacheDriver::getSelectOptions($config)),
-                default: $config->getCacheDriver()?->value ?? CacheDriver::REDIS->value
+                default: $config->getCacheDriver()?->value ?? CacheDriver::REDIS->value,
             );
 
             if ($driver = CacheDriver::tryFrom($cache)) {
@@ -263,7 +263,7 @@ trait GathersInfrastructureConfig
             $strategy = select(
                 label: 'What is your primary deployment strategy?',
                 options: DeploymentStrategy::getSelectOptions($config),
-                default: DeploymentStrategy::SINGLE_NODE->value
+                default: DeploymentStrategy::SINGLE_NODE->value,
             );
 
             $config->setStrategy(DeploymentStrategy::from($strategy));
@@ -275,7 +275,7 @@ trait GathersInfrastructureConfig
             $controller = select(
                 label: 'Which Ingress Controller will you use in production?',
                 options: IngressController::getSelectOptions($config),
-                default: IngressController::TRAEFIK->value
+                default: IngressController::TRAEFIK->value,
             );
 
             $prodEnv->ingress = IngressController::from($controller);
@@ -290,7 +290,7 @@ trait GathersInfrastructureConfig
                 $managed = multiselect(
                     label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?',
                     options: $managedOptions,
-                    hint: 'These services will be orchestrated locally but skipped in production manifests.'
+                    hint: 'These services will be orchestrated locally but skipped in production manifests.',
                 );
 
                 $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
@@ -306,7 +306,7 @@ trait GathersInfrastructureConfig
         $config->withCompanions = confirm(
             label: 'Would you like to include companion apps (e.g., PhpMyAdmin, RedisInsight)?',
             default: true,
-            hint: 'Companion apps provide helpful UIs for debugging but increase local resource usage.'
+            hint: 'Companion apps provide helpful UIs for debugging but increase local resource usage.',
         );
 
         $config->resolveDependencies();

@@ -3,10 +3,11 @@
 namespace App\Commands\Cluster;
 
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
@@ -44,7 +45,7 @@ class ClusterSetupCommand extends Command
                 'k3d' => 'k3d (k3s in Docker - Recommended)',
                 'k3s' => 'k3s (Native Linux Service)',
             ],
-            default: 'k3d'
+            default: 'k3d',
         );
 
         if ($engine === 'k3d') {

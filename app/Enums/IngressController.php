@@ -10,10 +10,6 @@ enum IngressController: string implements HasLabel, HasSelectOptions
 {
     use ProvidesSelectOptions;
 
-    case TRAEFIK = 'traefik';
-    case AWS_ALB = 'aws-alb';
-    case NGINX = 'nginx';
-
     public function getLabel(): string
     {
         return match ($this) {
@@ -40,4 +36,8 @@ enum IngressController: string implements HasLabel, HasSelectOptions
             default => null,
         };
     }
+
+    case TRAEFIK = 'traefik';
+    case AWS_ALB = 'aws-alb';
+    case NGINX = 'nginx';
 }

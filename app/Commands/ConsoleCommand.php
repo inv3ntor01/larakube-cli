@@ -6,9 +6,10 @@ use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ConsoleCommand extends Command
 {

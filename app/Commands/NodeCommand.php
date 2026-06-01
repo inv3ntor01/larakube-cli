@@ -10,13 +10,6 @@ class NodeCommand extends Command
 {
     use CapturesPassthroughArgs, LaraKubeOutput;
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->ignoreValidationErrors();
-    }
-
     /**
      * The name and signature of the console command.
      *
@@ -30,6 +23,13 @@ class NodeCommand extends Command
      * @var string
      */
     protected $description = 'Run npm or node commands inside the Kubernetes Node pod';
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        $this->ignoreValidationErrors();
+    }
 
     /**
      * Execute the console command.

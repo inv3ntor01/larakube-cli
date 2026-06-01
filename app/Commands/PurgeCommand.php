@@ -6,10 +6,11 @@ use App\Traits\HasConsoleInteraction;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class PurgeCommand extends Command
 {
@@ -86,7 +87,7 @@ class PurgeCommand extends Command
         if (! $this->option('force')) {
             $confirmName = text(
                 label: "To confirm project PURGE, please type the name '{$appName}':",
-                required: true
+                required: true,
             );
 
             if ($confirmName !== $appName) {

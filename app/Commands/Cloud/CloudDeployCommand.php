@@ -6,9 +6,10 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
 
 class CloudDeployCommand extends Command
 {
@@ -23,7 +24,7 @@ class CloudDeployCommand extends Command
         $this->renderHeader();
 
         $environment = $this->argument('environment') ?: $this->askForCloudEnvironment(
-            label: 'Which environment are you deploying to?'
+            label: 'Which environment are you deploying to?',
         );
 
         if ($environment === 'local') {
@@ -67,7 +68,7 @@ class CloudDeployCommand extends Command
             $newHost = \Laravel\Prompts\text(
                 label: "What is the REAL web domain/subdomain for '{$environment}'?",
                 placeholder: $environment === 'production' ? 'myapp.com' : "{$environment}.myapp.com",
-                required: true
+                required: true,
             );
 
             $config->setHost($environment, 'web', $newHost);

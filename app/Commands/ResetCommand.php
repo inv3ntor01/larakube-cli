@@ -4,9 +4,10 @@ namespace App\Commands;
 
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class ResetCommand extends Command
 {
@@ -50,7 +51,7 @@ class ResetCommand extends Command
         if (! $this->option('force')) {
             $confirm = text(
                 label: "To confirm deletion of all LaraKube files, type the project name '$appName':",
-                required: true
+                required: true,
             );
 
             if ($confirm !== $appName) {

@@ -10,7 +10,7 @@ class SendActivityLogRequest extends DashboardRequest
         protected string $projectUuid,
         protected string $event,
         protected string $description,
-        protected array $properties = []
+        protected array $properties = [],
     ) {}
 
     public function getEndpoint(): string

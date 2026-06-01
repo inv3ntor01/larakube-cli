@@ -25,10 +25,6 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
-    case MINIO = 'minio';
-    case SEAWEEDFS = 'seaweedfs';
-    case GARAGE = 'garage';
-
     public function getPodName(?ConfigData $config = null): string
     {
         return $this->value;
@@ -216,7 +212,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
     {
         return array_merge(
             $this->getPublicEnvironmentVariables($config, $environment),
-            $this->getSecretEnvironmentVariables($config, $environment)
+            $this->getSecretEnvironmentVariables($config, $environment),
         );
     }
 
@@ -360,4 +356,8 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
     {
         return [];
     }
+
+    case MINIO = 'minio';
+    case SEAWEEDFS = 'seaweedfs';
+    case GARAGE = 'garage';
 }

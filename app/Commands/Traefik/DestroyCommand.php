@@ -4,9 +4,10 @@ namespace App\Commands\Traefik;
 
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
 
 class DestroyCommand extends Command
 {

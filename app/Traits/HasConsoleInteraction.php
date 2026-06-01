@@ -5,6 +5,7 @@ namespace App\Traits;
 use App\Dashboard\DashboardConnector;
 use App\Dashboard\Requests\SendActivityLogRequest;
 use Illuminate\Support\Facades\Http;
+use Throwable;
 
 trait HasConsoleInteraction
 {
@@ -16,7 +17,7 @@ trait HasConsoleInteraction
             $projectUuid,
             $event,
             $description,
-            $properties
+            $properties,
         ));
     }
 
@@ -29,7 +30,7 @@ trait HasConsoleInteraction
                 ->withoutVerifying()
                 ->post('https://console.dev.test/api/projects/register', $projectData)
                 ->successful();
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return false;
         }
     }
@@ -44,7 +45,7 @@ trait HasConsoleInteraction
                 $config->getId(),
                 $properties['action'] ?? 'activity',
                 $description,
-                $properties
+                $properties,
             );
         }
     }

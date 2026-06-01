@@ -5,9 +5,10 @@ namespace App\Commands;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\text;
+
+use LaravelZero\Framework\Commands\Command;
 
 class DownCommand extends Command
 {
@@ -79,7 +80,7 @@ class DownCommand extends Command
             $this->laraKubeError($warning);
             $confirm = text(
                 label: "To confirm, please type the project name '$appName':",
-                required: true
+                required: true,
             );
 
             if ($confirm !== $appName) {

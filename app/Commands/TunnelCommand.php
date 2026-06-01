@@ -6,9 +6,10 @@ use App\Enums\DatabaseDriver;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use LaravelZero\Framework\Commands\Command;
 
 use function Laravel\Prompts\multiselect;
+
+use LaravelZero\Framework\Commands\Command;
 
 class TunnelCommand extends Command
 {
@@ -52,7 +53,7 @@ class TunnelCommand extends Command
             $selectedKeys = multiselect(
                 'Which services would you like to tunnel to?',
                 $options,
-                required: true
+                required: true,
             );
         }
 
