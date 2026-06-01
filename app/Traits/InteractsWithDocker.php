@@ -9,6 +9,30 @@ trait InteractsWithDocker
     use InteractsWithProjectConfig;
 
     /**
+     * Decide where a freshly built image must be sideloaded, from the active
+     * kube-context. Pure (no I/O) so the routing is unit-testable.
+     *
+     * Returns ['engine' => 'k3d', 'cluster' => '<name>'] for a `k3d-<name>`
+     * context, ['engine' => 'k3s'] for the LOCAL native k3s context that
+     * cluster:setup creates, or null for remote/registry-backed clusters
+     * (including remote k3s, which is named "larakube-<ip>").
+     */
+    public function resolveSideloadTarget(string $context): ?array
+    {
+        $cluster = $this->resolveK3dClusterName($context);
+
+        if ($cluster !== null) {
+            return ['engine' => 'k3d', 'cluster' => $cluster];
+        }
+
+        if (trim($context) === 'k3s-larakube') {
+            return ['engine' => 'k3s'];
+        }
+
+        return null;
+    }
+
+    /**
      * Get the base Docker run command for a specific type (php or node).
      */
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
@@ -90,20 +114,31 @@ trait InteractsWithDocker
 
         passthru("docker build $target $buildArgs -t $imageTag -f $dockerfile $path");
 
-        // --- 🛡 K3D IMAGE BRIDGE ---
-        // Images built on the host Docker engine are invisible to k3d nodes
-        // until imported. Detect the ACTIVE k3d cluster from the current
-        // kube-context (k3d-<name>) — not a hardcoded name — and sideload into
-        // it, so `larakube up` "just works" on any k3d cluster without a local
-        // registry. (Previously hardcoded to a cluster named "larakube" and
-        // gated on a "running" string k3d doesn't actually print.)
+        // --- 🛡 LOCAL IMAGE BRIDGE ---
+        // Images built on the host Docker engine are invisible to a local
+        // cluster's container runtime until imported. Route the freshly built
+        // image to whichever local engine is active so `larakube up` "just
+        // works" without a registry. Remote/registry-backed clusters need
+        // nothing here.
         $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
-        $cluster = $this->resolveK3dClusterName($context);
+        $sideload = $this->resolveSideloadTarget($context);
 
-        if ($cluster === null) {
-            return; // Not a k3d cluster — the image is reached via a registry.
+        if ($sideload === null) {
+            return; // Remote/registry-backed cluster — the image is pulled, not sideloaded.
         }
 
+        if ($sideload['engine'] === 'k3d') {
+            $this->sideloadIntoK3d($imageTag, $sideload['cluster']);
+        } else { // k3s
+            $this->sideloadIntoK3s($imageTag);
+        }
+    }
+
+    /**
+     * Sideload a host-built image into a k3d cluster's nodes.
+     */
+    protected function sideloadIntoK3d(string $imageTag, string $cluster): void
+    {
         // Confirm the cluster exists in k3d (also skips cleanly if k3d isn't installed).
         if (trim((string) shell_exec('k3d cluster list '.escapeshellarg($cluster).' --no-headers 2>/dev/null')) === '') {
             return;
@@ -135,6 +170,30 @@ trait InteractsWithDocker
                    str_contains($images ?? '', "docker.io/library/$imageTag") ||
                    (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
         });
+    }
+
+    /**
+     * Sideload a host-built image into native k3s. k3s uses containerd (not
+     * Docker), so stream the image straight into its store with `k3s ctr images
+     * import`. Requires sudo because the k3s containerd socket is root-owned.
+     */
+    protected function sideloadIntoK3s(string $imageTag): void
+    {
+        $this->laraKubeInfo("Importing '$imageTag' into k3s (containerd)...");
+        $this->line('  <fg=gray>k3s uses containerd; importing requires sudo.</>');
+
+        // Pre-warm sudo so the credential prompt is interactive (the import runs
+        // through a pipe where a prompt would otherwise be swallowed).
+        passthru('sudo -v');
+
+        $code = 0;
+        passthru('docker save '.escapeshellarg($imageTag).' | sudo k3s ctr images import -', $code);
+
+        if ($code !== 0) {
+            $this->laraKubeError("Could not sideload '$imageTag' into k3s.");
+            $this->line('  The local image is not visible to k3s, so pods will likely fail');
+            $this->line('  with ImagePullBackOff.');
+        }
     }
 
     /**
