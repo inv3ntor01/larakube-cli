@@ -1,0 +1,192 @@
+<?php
+
+namespace App\Commands\Plex;
+
+use App\Traits\InteractsWithPlex;
+use App\Traits\LaraKubeOutput;
+
+use function Laravel\Prompts\confirm;
+
+use LaravelZero\Framework\Commands\Command;
+
+class PlexInitCommand extends Command
+{
+    use InteractsWithPlex, LaraKubeOutput;
+
+    protected $signature = 'plex:init
+        {--with-meili : Include Meilisearch in the Commons (RAM-heavy; off by default)}
+        {--from= : Rebuild the Commons from an exported spec file (see plex:export)}
+        {--yes : Skip the confirmation prompt (for automation)}';
+
+    protected $description = 'Provision the shared "Commons" (Postgres + Redis) on the current cluster';
+
+    public function handle(): int
+    {
+        $this->renderHeader();
+        $this->laraKubeInfo('LaraKube Plex — Commons Installer');
+
+        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+
+        if ($context === '') {
+            $this->laraKubeError('No active Kubernetes context. Point kubectl at your cluster first.');
+
+            return 1;
+        }
+
+        $this->laraKubeLine("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
+        $this->laraKubeNewLine();
+
+        if (! $this->option('yes') && ! confirm("Provision/refresh the Commons on context '{$context}'?", true)) {
+            $this->laraKubeInfo('Aborted.');
+
+            return 0;
+        }
+
+        // 1. Resolve the spec: imported file > existing cluster spec > defaults.
+        $spec = $this->resolveSpec();
+
+        if ($spec === null) {
+            return 1;
+        }
+
+        $ns = $this->plexNamespace();
+        $enabled = $this->enabledCommonsServices($spec);
+
+        // 2. Namespace (idempotent).
+        $this->withSpin("Ensuring namespace {$ns}...", fn () => shell_exec(
+            "kubectl create namespace {$ns} --dry-run=client -o yaml | kubectl apply -f -",
+        ));
+
+        // 3. Admin credentials — generated once, reused on re-run (never rotated).
+        $this->ensureCommonsSecret();
+
+        // 4. Render + apply the Commons manifest (spec ConfigMap + services).
+        $manifest = view('k8s.plex.commons', [
+            'spec' => $spec,
+            'specJsonIndented' => $this->indentedSpecJson($spec),
+        ])->render();
+
+        $this->withSpin('Applying Commons manifests...', function () use ($manifest, $ns) {
+            $tmp = sys_get_temp_dir().'/larakube-plex-commons.yaml';
+            file_put_contents($tmp, $manifest);
+            passthru("kubectl apply -n {$ns} -f {$tmp}");
+            @unlink($tmp);
+
+            return true;
+        });
+
+        // 5. Tenant registry — create once, never overwrite (plex:join populates it).
+        shell_exec("kubectl get configmap plex-registry -n {$ns} >/dev/null 2>&1 || kubectl create configmap plex-registry -n {$ns}");
+
+        // 6. Wait for each enabled service to roll out.
+        foreach ($enabled as $service) {
+            $this->withSpin("Waiting for {$service} to be ready...", fn () => passthru(
+                "kubectl rollout status deploy/{$service} -n {$ns} --timeout=120s",
+            ));
+        }
+
+        $this->printCommonsReady($spec);
+
+        return 0;
+    }
+
+    /**
+     * Resolve the spec to apply: an imported file, else the existing cluster
+     * spec (reconcile), else fresh defaults.
+     */
+    protected function resolveSpec(): ?array
+    {
+        $from = $this->option('from');
+
+        if ($from) {
+            if (! file_exists($from)) {
+                $this->laraKubeError("Spec file not found: {$from}");
+
+                return null;
+            }
+
+            $decoded = json_decode((string) file_get_contents($from), true);
+
+            if (! is_array($decoded)) {
+                $this->laraKubeError("Could not parse spec file as JSON: {$from}");
+
+                return null;
+            }
+
+            $this->laraKubeLine("  <fg=gray>Rebuilding from spec:</> {$from}");
+
+            return $this->normalizeCommonsSpec($decoded);
+        }
+
+        $existing = $this->getCommonsSpec();
+
+        if ($existing !== null) {
+            // Reconcile the live spec; --with-meili can light up Meili on a re-run.
+            if ($this->option('with-meili')) {
+                $existing['services']['meili']['enabled'] = true;
+            }
+
+            return $this->normalizeCommonsSpec($existing);
+        }
+
+        return $this->defaultCommonsSpec((bool) $this->option('with-meili'));
+    }
+
+    /**
+     * Ensure the Commons admin Secret (Postgres password + Meili master key)
+     * exists. Generated once; left untouched on re-run so the password is stable.
+     */
+    protected function ensureCommonsSecret(): void
+    {
+        $ns = $this->plexNamespace();
+
+        $exists = trim((string) shell_exec(
+            "kubectl get secret plex-admin -n {$ns} -o name 2>/dev/null",
+        )) !== '';
+
+        if ($exists) {
+            return;
+        }
+
+        $postgresPassword = bin2hex(random_bytes(16));
+        $meiliMasterKey = bin2hex(random_bytes(16));
+
+        shell_exec(
+            "kubectl create secret generic plex-admin -n {$ns} ".
+            '--from-literal=POSTGRES_PASSWORD='.escapeshellarg($postgresPassword).' '.
+            '--from-literal=MEILI_MASTER_KEY='.escapeshellarg($meiliMasterKey).
+            ' --dry-run=client -o yaml | kubectl apply -f -',
+        );
+    }
+
+    /**
+     * Pretty-print the spec as JSON, indented for a YAML block scalar.
+     */
+    protected function indentedSpecJson(array $spec): string
+    {
+        $json = (string) json_encode($spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        return preg_replace('/^/m', '    ', $json);
+    }
+
+    /**
+     * Print the in-cluster hosts tenants will point at, plus next steps.
+     */
+    protected function printCommonsReady(array $spec): void
+    {
+        $ns = $this->plexNamespace();
+
+        $this->laraKubeNewLine();
+        $this->laraKubeInfo('✅ Commons is ready.');
+        $this->laraKubeLine('  Tenants reach these in-cluster hosts:');
+
+        foreach (['postgres' => 5432, 'redis' => 6379, 'meili' => 7700] as $service => $port) {
+            if ($spec['services'][$service]['enabled'] ?? false) {
+                $this->laraKubeLine("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:{$port}</>");
+            }
+        }
+
+        $this->laraKubeNewLine();
+        $this->laraKubeLine('  Save the spec for disaster recovery: <fg=yellow>larakube plex:export</>');
+    }
+}
