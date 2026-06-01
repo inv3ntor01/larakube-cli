@@ -143,11 +143,108 @@ class ClusterSetupCommand extends Command
         }
 
         $this->laraKubeInfo('Installing native k3s...');
-        passthru('curl -sfL https://get.k3s.io | sh -');
+        passthru('curl -sfL https://get.k3s.io | sh -', $installCode);
 
+        if ($installCode !== 0) {
+            $this->laraKubeError('k3s installation failed. Please review the output above.');
+
+            return 1;
+        }
+
+        // k3s registers its Node asynchronously after the service starts. Running
+        // `kubectl wait` before the Node object exists fails immediately with
+        // "no matching resources found", so poll until it appears, then wait for
+        // it to become Ready.
         $this->laraKubeInfo('Waiting for node to be ready...');
-        passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=60s');
+
+        $nodeAppeared = false;
+        for ($i = 0; $i < 30; $i++) {
+            if (trim((string) shell_exec('sudo k3s kubectl get nodes --no-headers 2>/dev/null')) !== '') {
+                $nodeAppeared = true;
+                break;
+            }
+            sleep(2);
+        }
+
+        if ($nodeAppeared) {
+            passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=120s');
+        } else {
+            $this->laraKubeWarn('Timed out waiting for the k3s node to register. It may still come up shortly.');
+        }
+
+        // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
+        // never touches ~/.kube/config — so kubectl and `larakube context` can't
+        // see it until we merge it in.
+        $this->mergeK3sKubeconfig();
+
+        $this->laraKubeInfo('✅ Native k3s cluster is ready!');
+        $this->info('You can now use larakube up to deploy your projects.');
 
         return 0;
+    }
+
+    /**
+     * Merge the k3s kubeconfig into the user's ~/.kube/config so kubectl and
+     * `larakube context` can see and select it. k3s names every entry "default";
+     * we rename the context/cluster/user to "k3s-larakube" so it won't collide
+     * with other configs and is easy to recognize.
+     */
+    protected function mergeK3sKubeconfig(): void
+    {
+        $source = '/etc/rancher/k3s/k3s.yaml';
+
+        $raw = shell_exec('sudo cat '.escapeshellarg($source).' 2>/dev/null');
+
+        if (empty($raw)) {
+            $this->laraKubeWarn("Could not read the k3s kubeconfig at {$source}.");
+            $this->line('  👉 Merge it into ~/.kube/config manually to use it with kubectl.');
+
+            return;
+        }
+
+        // Rename the "default" context/cluster/user. Each replacement is anchored
+        // to its YAML key and line end, so base64 cert data is never touched.
+        $contextName = 'k3s-larakube';
+        $raw = preg_replace('/^(\s*(?:- )?name: )default$/m', '${1}'.$contextName, $raw);
+        $raw = preg_replace('/^(\s*cluster: )default$/m', '${1}'.$contextName, $raw);
+        $raw = preg_replace('/^(\s*user: )default$/m', '${1}'.$contextName, $raw);
+        $raw = preg_replace('/^(current-context: )default$/m', '${1}'.$contextName, $raw);
+
+        $home = getenv('HOME') ?: '';
+        if ($home === '') {
+            $this->laraKubeWarn('Could not determine your home directory; skipping kubeconfig merge.');
+
+            return;
+        }
+
+        $kubeDir = $home.'/.kube';
+        $kubeConfig = $kubeDir.'/config';
+
+        if (! is_dir($kubeDir)) {
+            @mkdir($kubeDir, 0755, true);
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'larakube_k3s');
+        file_put_contents($tmp, $raw);
+
+        // List the existing config first so its other contexts survive the merge;
+        // --flatten inlines the cert data into a single self-contained file.
+        $kubeconfigEnv = file_exists($kubeConfig) ? $kubeConfig.':'.$tmp : $tmp;
+        $merged = shell_exec('KUBECONFIG='.escapeshellarg($kubeconfigEnv).' kubectl config view --flatten 2>/dev/null');
+
+        @unlink($tmp);
+
+        if (empty($merged)) {
+            $this->laraKubeWarn('Failed to merge the k3s kubeconfig automatically.');
+
+            return;
+        }
+
+        file_put_contents($kubeConfig, $merged);
+        @chmod($kubeConfig, 0600);
+
+        exec('kubectl config use-context '.escapeshellarg($contextName).' 2>/dev/null');
+
+        $this->laraKubeInfo("Merged k3s into ~/.kube/config as context <fg=cyan>{$contextName}</>.");
     }
 }

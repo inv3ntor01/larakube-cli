@@ -7,6 +7,28 @@ use function Laravel\Prompts\confirm;
 trait InteractsWithClusterContext
 {
     /**
+     * Decide whether a single `k3d cluster list --no-headers` line represents a
+     * running cluster. Pure (no I/O) so the SERVERS-column parsing can be tested.
+     *
+     * The columns are NAME, SERVERS, AGENTS, LOADBALANCER, where SERVERS is
+     * "running/total" — e.g. "1/1" when up, "0/1" when stopped. An empty line
+     * means the cluster doesn't exist (or k3d isn't installed).
+     */
+    public function k3dClusterListLineIsRunning(string $line): bool
+    {
+        $line = trim($line);
+
+        if ($line === '') {
+            return false;
+        }
+
+        $columns = preg_split('/\s+/', $line);
+        $serversRunning = (int) explode('/', $columns[1] ?? '0/0')[0];
+
+        return $serversRunning > 0;
+    }
+
+    /**
      * Determine if there is an active and reachable Kubernetes cluster.
      */
     protected function hasActiveCluster(): bool
@@ -44,6 +66,20 @@ trait InteractsWithClusterContext
     }
 
     /**
+     * Determine whether the local k3d cluster is currently running.
+     *
+     * `k3d cluster list <name> --no-headers` prints the SERVERS column as
+     * "running/total" (e.g. "1/1" up, "0/1" stopped) — there is no literal
+     * "running"/"stopped" word to match on, so we parse that column instead.
+     */
+    protected function isK3dClusterRunning(string $name = 'larakube'): bool
+    {
+        $line = (string) shell_exec('k3d cluster list '.escapeshellarg($name).' --no-headers 2>/dev/null');
+
+        return $this->k3dClusterListLineIsRunning($line);
+    }
+
+    /**
      * Check if ANY Kubernetes context exists on the system.
      */
     protected function hasAnyContext(): bool
@@ -66,7 +102,10 @@ trait InteractsWithClusterContext
 
         $context = trim($context);
 
-        $localKeywords = ['k3d', 'minikube', 'docker-desktop', 'orbstack', 'kind', 'colima'];
+        // 'k3s-larakube' is the context name cluster:setup gives a *local* native
+        // k3s install. Remote k3s (cloud:provision) is named "larakube-<ip>", so
+        // it stays correctly classified as non-local.
+        $localKeywords = ['k3d', 'minikube', 'docker-desktop', 'orbstack', 'kind', 'colima', 'k3s-larakube'];
 
         foreach ($localKeywords as $keyword) {
             if (str_contains(strtolower($context), $keyword)) {
@@ -97,12 +136,11 @@ trait InteractsWithClusterContext
 
         // --- 🔍 ENHANCED STATUS DETECTION ---
         $options = [];
-        $k3dStatus = shell_exec('k3d cluster list larakube --no-headers 2>/dev/null') ?: '';
-        $isStopped = str_contains($k3dStatus, 'stopped') || ! str_contains($k3dStatus, 'running');
+        $k3dRunning = $this->isK3dClusterRunning();
 
         foreach ($contexts as $context) {
             $label = $context;
-            if ($context === 'k3d-larakube' && $isStopped) {
+            if ($context === $this->getLaraKubeContext() && ! $k3dRunning) {
                 $label .= ' <fg=yellow>(stopped)</>';
             }
             $options[$context] = $label;
