@@ -149,7 +149,142 @@ deploy-time one. The rules that keep this from sprawling:
   non-trivial path: `pg_dump` → create the Commons DB → restore → flip app #1 to
   `managed` + host → redeploy. **New apps join free; only *moving live data* costs
   a migration** (documented runbook, later phase). Often the right call is simply
-  **mixed mode** (rule 5) — leave app #1 as-is.
+  **mixed mode** (rule 5) — leave app #1 as-is. See §1e for the mechanics.
+
+---
+
+## 1e. Retrofitting an app that already has data — where the logic lives
+
+**First, what does NOT happen:** neither `plex:init` nor `plex:join` "moves" a
+Postgres pod or its PVC across namespaces — Kubernetes has no such operation, and
+the Commons runs its **own, separate** Postgres. Joining is a **cutover between
+two instances**, not a move:
+
+- **`plex:init` never touches your app or its data.** It only stands up the shared
+  Commons in `larakube-shared`. Run it on a box that already hosts an app and the
+  app keeps running, untouched — you just have an (initially unused) Commons. It
+  does **not** read your `.larakube.json` or your app's namespace.
+- **`plex:join` allocates a *new, empty* database/role for your app inside the
+  Commons Postgres**, repoints the app (`managed` + host), and on redeploy the
+  app's own Postgres pod stops being deployed. **Its old PVC/data is orphaned, not
+  copied.** That's the data-loss trap: the app would come up pointing at an empty
+  DB unless the data is copied first.
+
+**So migration logic lives in `plex:join`, never in `plex:init`.** And join must be
+data-aware:
+
+- **Fresh app** (no prod data yet, or local-only): allocate + repoint. No migration.
+- **App with existing prod data**: join DETECTS that the app still self-hosts the
+  service (not yet `managed`) and **refuses to silently cut over** — it routes
+  through a guided migration (`plex:join --migrate`, or detect-and-prompt) that
+  copies the data first. Keep "allocate + repoint" and "migrate data" as
+  **separate, composable steps** so the fresh path never runs migration; a
+  standalone `plex:migrate` is a reasonable factoring (decide in Phase 2/3).
+
+**Lowest-risk retrofit is mixed mode** (§1d rule 5): leave the existing app on its
+own Postgres, put only *new* apps on the Commons. Only migrate when you mean to.
+
+### Guided migration sequence (Postgres) — brief downtime, data kept until verified
+
+1. **Pre-flight:** app healthy, Commons up, capacity headroom OK.
+2. **Allocate** the tenant's DB/role in the Commons (empty).
+3. **Quiesce writes:** scale the app's web + workers to 0 (or maintenance mode) so
+   the dump is consistent. This is the downtime window.
+4. **Copy:** `kubectl exec` the OLD Postgres pod → `pg_dump` → pipe → `kubectl exec`
+   the Commons Postgres → restore into the new DB.
+5. **Rewire:** `.env` host → Commons FQDN + new creds; `.larakube.json`
+   `managed += [postgres]`; re-run `gha:configure`.
+6. **Redeploy:** the old Postgres pod is removed (now managed); the app returns
+   pointing at the Commons.
+7. **Verify:** row counts / app health.
+8. **Only after verifying:** optionally delete the old PVC (strong confirm). **Keep
+   it by default as a rollback safety net.**
+
+**Redis / Meili:** their data is **rebuildable** → no migration. Redis: flip and
+let it warm (drain queues first if it holds jobs/sessions). Meili: re-import /
+re-index after cutover.
+
+### Engine coverage — one safe path for every DB we support
+
+`plex:migrate` covers every engine LaraKube offers, **same-engine only** (no
+Postgres↔MySQL conversion):
+
+| Engine | Dump | Restore |
+|---|---|---|
+| PostgreSQL | `pg_dump` | `pg_restore` / `psql` |
+| MySQL | `mysqldump` | `mysql` |
+| MariaDB | `mariadb-dump` (mysqldump-compatible) | `mariadb` / `mysql` |
+
+(SQLite is **not** a Commons service — a per-app file, nothing to share.) Hang the
+dump/restore commands off the existing `DatabaseDriver` enum (e.g. a
+`DumpsAndRestores` contract with `dumpCommand()` / `restoreCommand()`) so
+`plex:migrate` stays one engine-agnostic flow and a new engine just implements the
+contract. The Commons must run the **same engine** the app declares — an engine
+mismatch is a hard stop (that tenant graduates to its own managed DB instead).
+
+### Safety — database data is sacred (cache/search is not)
+
+Cache (Redis) and search (Meili) data is rebuildable; **database data, once lost,
+is gone unless there's a backup.** So `plex:migrate` is non-destructive by
+construction:
+
+- **The dump file is a real backup.** Write it to a durable location (operator's
+  machine / host path) *before* loading into the Commons — so even if both old and
+  new instances are lost, the artifact survives. Never pipe-only with no saved copy.
+- **Never destroy the source.** The old DB pod's PVC is kept after cutover —
+  `--drop-source` only, with a strong confirm. It is the rollback path.
+- **Verify before declaring success** — compare table list + row counts (or
+  checksums) source-vs-target; a clean restore exit code is not proof.
+- **Consistent dump** — quiesce writes during the dump (zero-downtime logical
+  replication is explicitly out of scope for this tier).
+
+## 1f. Should the Commons be the default? — No; opt in *early* instead
+
+Tempting: put every app's DB in `larakube-shared` from day one so a future second
+app never needs migration. **Recommendation: don't make it a default.**
+
+- It re-couples app topology to a shared layout the **90% solo-app case never
+  needs** — extra namespace, cross-namespace indirection, a shared-fate component
+  for zero benefit.
+- It contradicts the topology-agnostic principle (§1d): apps are authored
+  Plex-agnostic; Plex is a deploy-time opt-in.
+- Local dev stays per-project regardless, so a default would only apply to cloud —
+  a local/cloud divergence in where the DB lives.
+
+But the underlying goal — *avoid migration* — has an elegant answer: **migration
+only hurts once an app has accumulated production data; on first deploy the DB is
+empty.** So:
+
+> If you know a box will host multiple apps, **`plex:join` BEFORE the first deploy.**
+> The app starts life as a tenant against a fresh (empty) Commons DB — **no data to
+> migrate, ever.**
+
+So instead of a forced default: surface a **deploy-time nudge** on a fresh box
+("Planning more than one app here? Join a Commons now to avoid migrations later")
+and make early join frictionless. Multi-app builders opt in up front; solo apps
+stay simple — no global default.
+
+## 1g. Service versions & upgrades — the Commons owns the version
+
+The skew worry ("a new app wants Postgres 17 but the Commons runs 16") is mostly a
+non-problem, because tenants are **wire-protocol clients**:
+
+- **The Commons owns the server version** (recorded in `plex-commons`). A tenant's
+  declared DB image version governs **its own local/standalone pod**, not the
+  Commons server — and a Laravel app talking to Postgres over the wire rarely cares
+  whether the server is 16 or 17.
+- So a newer app must **not** spin up a second Postgres instance — that multiplies
+  RAM and defeats the whole point. `plex:join` **warns** on a major mismatch and
+  uses the Commons version. A tenant that *genuinely* needs a different major
+  **graduates to its own managed DB** (one host change) rather than forking the
+  Commons. (A second versioned instance is a rare, explicit escape hatch, never the
+  default.)
+- **Minor / patch bumps** (17.9 → 17.11) are a safe rolling update — re-run
+  `plex:init` with the new image; same-major data is compatible.
+- **Major bumps** (16 → 17) need a coordinated, **all-tenants, backup-first**
+  `plex:upgrade postgres --to 17` (dump every tenant DB → upgrade the instance →
+  restore) on a maintenance window. This is the real, honest cost of a shared DB —
+  explicit, never automatic; a later phase.
 
 ---
 
@@ -221,6 +356,9 @@ Run from inside a tenant repo (needs kubectl access to the Commons cluster).
    updated .env.{env} is re-uploaded as the {ENV}_ENV_FILE_BASE64 secret.
 ```
 
+- **Existing-data guard:** if the app currently self-hosts a service (not yet
+  `managed`) that holds data, join must NOT silently cut over to the empty Commons
+  DB — it routes through the guided migration in **§1e** (or bails to mixed mode).
 - **Why one-time + manual (MVP):** credential creation + secret upload is a
   deliberate, auditable step. A fully CI-driven `plex:ensure` (idempotent join in
   the workflow) is a Phase 3+ option, not MVP.
@@ -402,6 +540,9 @@ endpoint and redeploy; no manifest surgery (plan §Evolution).
 | `app/Commands/Plex/PlexStatusCommand.php` | `plex:status` |
 | `app/Commands/Plex/PlexLeaveCommand.php` | `plex:leave` |
 | `app/Commands/Plex/PlexExportCommand.php` | `plex:export` (DR/GitOps spec dump) |
+| `app/Commands/Plex/PlexMigrateCommand.php` | `plex:migrate` — guided, non-destructive dump→restore→cutover (§1e). Likely also reachable as `plex:join --migrate` |
+| `app/Commands/Plex/PlexUpgradeCommand.php` | `plex:upgrade <service> --to <ver>` — coordinated, all-tenants, backup-first major upgrade (§1g). Later phase |
+| `app/Contracts/DumpsAndRestores.php` + `app/Enums/DatabaseDriver.php` | per-engine `dumpCommand()` / `restoreCommand()` so `plex:migrate` is engine-agnostic (Postgres/MySQL/MariaDB — §1e) |
 | `app/Traits/InteractsWithPlex.php` | Commons apply, psql-exec helpers, registry read/write, Redis index alloc — keep the parseable bits **pure** for unit tests (cf. `resolveK3dClusterName`) |
 | `resources/views/k8s/plex/*.blade.php` | Commons namespace, Postgres (+PVC+secret), Redis, registry ConfigMap |
 | `app/Data/EnvironmentData.php` | *(optional)* `sharedServices` / `managedHosts` for auto-FQDN |
@@ -413,10 +554,14 @@ endpoint and redeploy; no manifest surgery (plan §Evolution).
 
 ## 10. Phasing (maps to the plan's §Phased delivery)
 
-- **Phase 1 — Commons release.** `plex:init` + manifests; services stand up; no
-  tenant wiring. Verify on the droplet.
-- **Phase 2 — Tenant join.** `plex:join` (DB/role/creds, `.env` writeback, managed
-  wiring), one app live against the Commons **via CI/CD**, not just local.
+- **Phase 1 — Commons release. ✅ BUILT (untagged, droplet test pending).**
+  `plex:init` + `plex:export` + manifests; services stand up; no tenant wiring.
+- **Phase 2 — Tenant join. ✅ BUILT (happy-path + guard; droplet test pending).**
+  `plex:join`: resolve services → reachability + existing-data guard → auto-bootstrap
+  Commons → allocate DB/role/Redis-index → `.env` writeback + `managed` wiring.
+  **Deferred from this phase:** the data-copy `plex:migrate` (join only *guards*),
+  MySQL/MariaDB allocation (Postgres only so far), and non-production multi-env
+  `.env` (writes `.env.production` / `.env.{env}` but only production is exercised).
 - **Phase 3 — Second tenant + fairness.** Limits everywhere, `plex:status`,
   registry, capacity warning in `cloud:deploy`. `app-one`+`app-two` coexist.
 - **Phase 4 — Graduation + multi-node + Meili + hardening.** Host-swap to DO
@@ -427,8 +572,11 @@ endpoint and redeploy; no manifest surgery (plan §Evolution).
 
 ## 11. Open decisions to resolve before/while building
 
-1. **Backups.** One Postgres, many tenant DBs → per-database `pg_dump` (a
-   `plex:backup` later?) vs whole-PVC snapshot. (plan §Risks)
+1. **Backups.** *(Partly resolved §1e):* the migration dump artifact is a real
+   backup; granularity is **per-database** dump (Postgres/MySQL/MariaDB), not a
+   whole-PVC snapshot, so a single tenant can be backed up/restored independently.
+   Open: whether to add a scheduled `plex:backup` (per-tenant `pg_dump` on a cron)
+   and where artifacts live (host path vs object storage).
 2. **Idempotent CREATE DATABASE.** Postgres has no `IF NOT EXISTS` for DB; use the
    `SELECT … \gexec` guard shown in §5, or catch the duplicate error.
 3. **Where the Commons manifests live for GitOps.** Out-of-band `plex:init` (MVP)
@@ -438,6 +586,9 @@ endpoint and redeploy; no manifest surgery (plan §Evolution).
 5. **Multi-node Commons.** Single in-cluster instance is shared-fate (fine for
    hobbyist). Multi-node HA = graduate the host to a managed DB — same `managed`
    mechanism, different host only. No new code, just docs + a verification.
+6. **Parallel service versions (§1g).** Do we ever allow a second
+   parallel-version Commons instance, or always push a divergent tenant to its own
+   managed DB? Lean: managed DB (keeps the RAM win); revisit if a real need appears.
 
 ---
 

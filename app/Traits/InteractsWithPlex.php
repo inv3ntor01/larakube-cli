@@ -74,6 +74,158 @@ trait InteractsWithPlex
     }
 
     /**
+     * Turn an app name into a safe SQL identifier reused for the tenant's
+     * database AND login role (e.g. "app-one" → "app_one"). Pure.
+     */
+    public function plexTenantIdentifier(string $appName): string
+    {
+        $id = strtolower(trim($appName));
+        $id = (string) preg_replace('/[^a-z0-9]+/', '_', $id);
+        $id = trim($id, '_');
+
+        // SQL identifiers must start with a letter; prefix if not.
+        if ($id === '' || ! preg_match('/^[a-z]/', $id)) {
+            $id = 'app_'.$id;
+        }
+
+        return substr($id, 0, 63); // Postgres identifier length cap.
+    }
+
+    /**
+     * Pick the lowest free Redis logical-DB index (0..max-1), or null if the
+     * Commons Redis is full. Pure.
+     *
+     * @param  array<int, int>  $used
+     */
+    public function allocateRedisDbIndex(array $used, int $max = 16): ?int
+    {
+        for ($i = 0; $i < $max; $i++) {
+            if (! in_array($i, $used, true)) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Merge KEY=VALUE pairs into existing .env content — replacing a key in place
+     * (even if commented) or appending it. Pure, so it's unit-testable and works
+     * for any `.env.{env}` (syncEnvFile only handles .env / .env.production).
+     *
+     * @param  array<string, int|string>  $values
+     */
+    public function applyEnvValues(string $content, array $values): string
+    {
+        $lines = $content === '' ? [] : explode("\n", $content);
+        $out = [];
+        $done = [];
+
+        foreach ($lines as $line) {
+            $matched = false;
+            foreach ($values as $key => $value) {
+                if (preg_match('/^#?\s*'.preg_quote($key, '/').'=.*/', $line)) {
+                    $out[] = "{$key}={$value}";
+                    $done[] = $key;
+                    $matched = true;
+                    break;
+                }
+            }
+            if (! $matched) {
+                $out[] = $line;
+            }
+        }
+
+        foreach ($values as $key => $value) {
+            if (! in_array($key, $done, true)) {
+                $out[] = "{$key}={$value}";
+            }
+        }
+
+        return implode("\n", $out);
+    }
+
+    /**
+     * The .env values a tenant needs to reach the Commons. Pure.
+     *
+     * @param  array<int, string>  $services
+     * @return array<string, int|string>
+     */
+    public function commonsEnvValues(string $tenant, string $password, ?int $redisIndex, array $services): array
+    {
+        $ns = $this->plexNamespace();
+        $values = [];
+
+        if (in_array('postgres', $services, true)) {
+            $values['DB_HOST'] = "postgres.{$ns}.svc.cluster.local";
+            $values['DB_PORT'] = 5432;
+            $values['DB_DATABASE'] = $tenant;
+            $values['DB_USERNAME'] = $tenant;
+            $values['DB_PASSWORD'] = $password;
+        }
+
+        if (in_array('redis', $services, true)) {
+            $values['REDIS_HOST'] = "redis.{$ns}.svc.cluster.local";
+            $values['REDIS_PORT'] = 6379;
+            if ($redisIndex !== null) {
+                $values['REDIS_DB'] = $redisIndex;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Idempotent SQL that creates a tenant's database, login role, and grant in
+     * the Commons Postgres. Piped to `psql` over stdin (so `\gexec` works). Pure.
+     * $db/$role are pre-sanitized identifiers; the password is single-quote escaped.
+     */
+    public function buildPostgresTenantSql(string $db, string $role, string $password): string
+    {
+        $pw = str_replace("'", "''", $password);
+
+        return implode("\n", [
+            "SELECT 'CREATE DATABASE \"{$db}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{$db}')\\gexec",
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{$role}') THEN CREATE ROLE \"{$role}\" LOGIN PASSWORD '{$pw}'; END IF; END \$\$;",
+            "ALTER ROLE \"{$role}\" PASSWORD '{$pw}';",
+            "GRANT ALL PRIVILEGES ON DATABASE \"{$db}\" TO \"{$role}\";",
+        ]);
+    }
+
+    /**
+     * Pure registry transforms. The plex-registry shape is
+     * {"tenants": {"<id>": {"db": "<id>", "redis_index": <int|null>}}}.
+     */
+    public function registryAdd(array $registry, string $tenant, array $allocation): array
+    {
+        $registry['tenants'][$tenant] = $allocation;
+
+        return $registry;
+    }
+
+    public function registryRemove(array $registry, string $tenant): array
+    {
+        unset($registry['tenants'][$tenant]);
+
+        return $registry;
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public function registryUsedRedisIndexes(array $registry): array
+    {
+        $indexes = [];
+        foreach ($registry['tenants'] ?? [] as $alloc) {
+            if (isset($alloc['redis_index']) && is_int($alloc['redis_index'])) {
+                $indexes[] = $alloc['redis_index'];
+            }
+        }
+
+        return $indexes;
+    }
+
+    /**
      * The namespace that hosts the shared Commons services.
      */
     protected function plexNamespace(): string
@@ -99,5 +251,39 @@ trait InteractsWithPlex
         $spec = json_decode($json, true);
 
         return is_array($spec) ? $spec : null;
+    }
+
+    /**
+     * Read the live tenant registry from the cluster (empty shape if absent).
+     */
+    protected function getRegistry(): array
+    {
+        $ns = $this->plexNamespace();
+        $json = trim((string) shell_exec(
+            "kubectl get configmap plex-registry -n {$ns} -o jsonpath='{.data.registry\\.json}' 2>/dev/null",
+        ));
+
+        $registry = $json === '' ? [] : json_decode($json, true);
+
+        return is_array($registry) ? $registry : [];
+    }
+
+    /**
+     * Persist the tenant registry back to the cluster (idempotent apply of the
+     * single registry.json key).
+     */
+    protected function saveRegistry(array $registry): void
+    {
+        $ns = $this->plexNamespace();
+        $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_registry');
+        file_put_contents($tmp, (string) json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        shell_exec(
+            "kubectl create configmap plex-registry -n {$ns} ".
+            '--from-file=registry.json='.escapeshellarg($tmp).
+            ' --dry-run=client -o yaml | kubectl apply -f -',
+        );
+
+        @unlink($tmp);
     }
 }

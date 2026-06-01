@@ -2,6 +2,7 @@
 
 namespace App\Commands\Plex;
 
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\LaraKubeOutput;
 
@@ -11,7 +12,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class PlexInitCommand extends Command
 {
-    use InteractsWithPlex, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithPlex, LaraKubeOutput;
 
     protected $signature = 'plex:init
         {--with-meili : Include Meilisearch in the Commons (RAM-heavy; off by default)}
@@ -27,8 +28,8 @@ class PlexInitCommand extends Command
 
         $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
 
-        if ($context === '') {
-            $this->laraKubeError('No active Kubernetes context. Point kubectl at your cluster first.');
+        if (! $this->hasActiveCluster()) {
+            $this->laraKubeError('No reachable Kubernetes cluster on the current context. Provision/select one first.');
 
             return 1;
         }
