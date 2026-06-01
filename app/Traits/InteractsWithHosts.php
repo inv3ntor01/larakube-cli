@@ -9,9 +9,11 @@ trait InteractsWithHosts
     use InteractsWithProjectConfig, LaraKubeOutput;
 
     /**
-     * Check and optionally update the /etc/hosts file based on project context.
+     * Check and optionally update the hosts file(s) based on project context.
+     * On WSL this also syncs the Windows hosts file, since the Windows browser
+     * doesn't read WSL's /etc/hosts.
      *
-     * @param  array  $customHosts  Optional array of specific hosts to map. If empty, uses the current project's hosts.
+     * @param  array  $customHosts  Optional specific hosts to map. If empty, uses the current project's hosts.
      * @param  string|null  $customAppName  Optional app name to group the block. Defaults to the current directory name.
      */
     protected function ensureHostsAreSet(array $customHosts = [], ?string $customAppName = null): void
@@ -36,6 +38,12 @@ trait InteractsWithHosts
 
         if (empty($requiredHosts)) {
             return;
+        }
+
+        // 🪟 WSL: the Windows browser can't see WSL's /etc/hosts, so also sync
+        // the Windows hosts file. Done first/independently of the Linux sync.
+        if ($this->isWsl()) {
+            $this->ensureWindowsHostsAreSet($requiredHosts, $appName);
         }
 
         // 🛡 SMART IP DETECTION
@@ -88,18 +96,8 @@ trait InteractsWithHosts
             $this->line('  <fg=gray>LaraKube requires sudo privileges to update /etc/hosts</>');
             passthru('sudo -v');
 
-            $this->withSpin('Syncing /etc/hosts...', function () use ($currentHosts, $blockIdentifier, $fullBlock) {
-                $newHosts = $currentHosts;
-
-                // 2. If an old block exists, remove it first
-                if (str_contains($currentHosts, $blockIdentifier)) {
-                    // Pattern to match the block and the following line
-                    $pattern = "/\n?".preg_quote($blockIdentifier, '/')."\n.*?\n/s";
-                    $newHosts = preg_replace($pattern, '', $currentHosts);
-                }
-
-                // 3. Append the clean new block
-                $newHosts = rtrim($newHosts)."\n".$fullBlock;
+            $this->withSpin('Syncing /etc/hosts...', function () use ($currentHosts, $blockIdentifier, $newEntry) {
+                $newHosts = $this->applyHostsBlock($currentHosts, $blockIdentifier, $newEntry);
 
                 $tmpPath = sys_get_temp_dir().'/larakube_hosts';
                 file_put_contents($tmpPath, $newHosts);
@@ -112,5 +110,134 @@ trait InteractsWithHosts
 
             $this->laraKubeInfo('Hosts synchronized successfully!');
         }
+    }
+
+    /**
+     * Sync project domains into the Windows hosts file from WSL.
+     *
+     * The Windows hosts file requires Administrator rights, so we don't write to
+     * /mnt/c/... directly (it would fail with permission denied). Instead we drop
+     * a tiny .ps1 and run it elevated via PowerShell's Start-Process -Verb RunAs
+     * (the standard UAC prompt). Windows reaches the WSL2 cluster ingress on
+     * 127.0.0.1, so that's the mapped address.
+     *
+     * @param  array<int, string>  $requiredHosts
+     */
+    protected function ensureWindowsHostsAreSet(array $requiredHosts, string $appName): void
+    {
+        $winHosts = '/mnt/c/Windows/System32/drivers/etc/hosts';
+
+        if (! file_exists($winHosts)) {
+            return; // Non-standard WSL mount; nothing we can safely do.
+        }
+
+        $blockIdentifier = "# LaraKube: $appName";
+        $entry = '127.0.0.1 '.implode(' ', $requiredHosts);
+
+        $current = (string) file_get_contents($winHosts);
+        $updated = $this->applyHostsBlock($current, $blockIdentifier, $entry);
+
+        // Already in sync (ignoring trailing-whitespace differences).
+        if (rtrim($updated) === rtrim($current)) {
+            return;
+        }
+
+        $this->laraKubeInfo('Windows hosts file needs updating (so your Windows browser resolves these).');
+        $this->line("  <fg=gray>●</> <fg=blue>$entry</>");
+        $this->line('');
+
+        if (! confirm('Sync your Windows hosts file now? (a Windows UAC/admin prompt will appear)', true)) {
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
+        // Write the full new content to a temp file, then copy it into place via
+        // an elevated PowerShell running a generated .ps1 (literal paths only —
+        // no fragile inline quoting).
+        $contentTmp = sys_get_temp_dir().'/larakube_win_hosts';
+        $scriptTmp = sys_get_temp_dir().'/larakube_win_hosts_sync.ps1';
+        file_put_contents($contentTmp, $updated);
+
+        $winContent = trim((string) shell_exec('wslpath -w '.escapeshellarg($contentTmp).' 2>/dev/null'));
+        if ($winContent === '') {
+            @unlink($contentTmp);
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
+        file_put_contents(
+            $scriptTmp,
+            "Copy-Item -LiteralPath '{$winContent}' -Destination 'C:\\Windows\\System32\\drivers\\etc\\hosts' -Force\n",
+        );
+        $winScript = trim((string) shell_exec('wslpath -w '.escapeshellarg($scriptTmp).' 2>/dev/null'));
+
+        if ($winScript === '') {
+            @unlink($contentTmp);
+            @unlink($scriptTmp);
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
+        $startProcess = 'Start-Process -FilePath powershell -Verb RunAs -Wait '
+            ."-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{$winScript}'";
+
+        $output = [];
+        $code = 0;
+        exec('powershell.exe -NoProfile -Command '.escapeshellarg($startProcess).' 2>/dev/null', $output, $code);
+
+        @unlink($contentTmp);
+        @unlink($scriptTmp);
+
+        if ($code !== 0) {
+            $this->laraKubeWarn('Could not sync the Windows hosts file automatically.');
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
+        $this->laraKubeInfo('Windows hosts file synchronized!');
+    }
+
+    /**
+     * Insert/replace this project's hosts block idempotently. Strips any existing
+     * block with the same identifier, then appends a fresh one — so applying it
+     * repeatedly with the same entry yields the same file.
+     */
+    protected function applyHostsBlock(string $current, string $blockIdentifier, string $entryLine): string
+    {
+        // Remove a previous block: the identifier line + its single entry line.
+        $pattern = '/\n?'.preg_quote($blockIdentifier, '/')."\n[^\n]*\n?/";
+        $stripped = preg_replace($pattern, "\n", $current);
+        $stripped = $stripped ?? $current;
+
+        return rtrim($stripped)."\n\n{$blockIdentifier}\n{$entryLine}\n";
+    }
+
+    /**
+     * Are we running inside WSL (where the Windows browser can't see /etc/hosts)?
+     */
+    protected function isWsl(): bool
+    {
+        if (getenv('WSL_DISTRO_NAME')) {
+            return true;
+        }
+
+        return is_file('/proc/version')
+            && str_contains(strtolower((string) @file_get_contents('/proc/version')), 'microsoft');
+    }
+
+    /**
+     * Print copy-pasteable instructions for adding the Windows hosts entry by
+     * hand — the fallback when the user declines or the elevated sync fails.
+     */
+    protected function printWindowsHostsManualHelp(string $entry): void
+    {
+        $this->line('  👉 Add this line to your Windows hosts file manually:');
+        $this->line("     <fg=blue>$entry</>");
+        $this->line('     <fg=gray>File: C:\\Windows\\System32\\drivers\\etc\\hosts (open Notepad as Administrator)</>');
+        $this->line('');
     }
 }
