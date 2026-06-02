@@ -29,6 +29,11 @@ vendor
 @endif
 
 # Laravel Specifics
+# Vite HMR marker. If this ships in an image, Laravel's Vite directive serves
+# every asset URL from the local Vite dev server (dev.test) instead of the built
+# manifest — breaking assets in production. It's dev-only and must never ship.
+public/hot
+
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
