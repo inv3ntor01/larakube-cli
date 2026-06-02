@@ -28,7 +28,7 @@ test('the default spec enables Postgres + Redis and leaves Meili off', function 
         ->and($spec['services']['postgres']['image'])->toBe('postgres:17.9')
         ->and($spec['services']['postgres']['storage'])->toBe('10Gi')
         ->and($spec['services']['redis']['port'])->toBe(6379)
-        ->and($spec['services']['meili']['enabled'])->toBeFalse();
+        ->and($spec['services']['meilisearch']['enabled'])->toBeFalse();
 });
 
 test('Commons service images/ports derive from the driver enums (no drift)', function () {
@@ -38,15 +38,15 @@ test('Commons service images/ports derive from the driver enums (no drift)', fun
         ->and($spec['postgres']['port'])->toBe(DatabaseDriver::POSTGRESQL->dbPort())
         ->and($spec['redis']['image'])->toBe(CacheDriver::REDIS->getDockerImage())
         ->and($spec['redis']['port'])->toBe(CacheDriver::REDIS->dbPort())
-        ->and($spec['meili']['image'])->toBe(ScoutDriver::MEILISEARCH->getDockerImage())  // stays in lockstep, no stale literal
-        ->and($spec['meili']['port'])->toBe(ScoutDriver::MEILISEARCH->port());
+        ->and($spec['meilisearch']['image'])->toBe(ScoutDriver::MEILISEARCH->getDockerImage())  // stays in lockstep, no stale literal
+        ->and($spec['meilisearch']['port'])->toBe(ScoutDriver::MEILISEARCH->port());
 });
 
 test('--with-meili turns on Meilisearch', function () {
     $p = plexSpec();
 
     expect($p->enabledCommonsServices($p->defaultCommonsSpec(true)))
-        ->toBe(['postgres', 'redis', 'meili']);
+        ->toBe(['postgres', 'redis', 'meilisearch']);
 });
 
 test('normalize fills defaults for a partial spec and respects an explicit disable', function () {

@@ -15,6 +15,7 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\PlexProvisionable;
 use App\Contracts\RemovableWhenManaged;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -22,7 +23,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged, RequiresPhpExtensions
+enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, PlexProvisionable, RemovableWhenManaged, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -527,6 +528,20 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     public function getArtisanCommands(?ConfigData $context = null): array
     {
         return [];
+    }
+
+    public function isPlexReady(): bool
+    {
+        // Postgres is the only Commons-provisionable database today (plex:join's
+        // buildPostgresTenantSql). The rest are mapped but not yet wired.
+        return $this === self::POSTGRESQL;
+    }
+
+    public function commonsServiceName(): ?string
+    {
+        // The Commons service name IS the driver value — no remapping. SQLite is
+        // a local file, never a shared service.
+        return $this === self::SQLITE ? null : $this->value;
     }
 
     case MYSQL = 'mysql';

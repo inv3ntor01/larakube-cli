@@ -14,6 +14,7 @@ use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasPromptableHosts;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\PlexProvisionable;
 use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Traits\DerivesHostsFromServices;
@@ -21,7 +22,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasSelectOptions, RemovableWhenManaged
+enum StorageDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasSelectOptions, PlexProvisionable, RemovableWhenManaged
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -355,6 +356,20 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
     public function getDependencies(ConfigData $config): array
     {
         return [];
+    }
+
+    public function isPlexReady(): bool
+    {
+        // SeaweedFS is the wired Commons S3 backend today. MinIO/Garage are valid
+        // backends (own Commons service each) but not yet provisionable.
+        return $this === self::SEAWEEDFS;
+    }
+
+    public function commonsServiceName(): ?string
+    {
+        // Each S3 backend is its own Commons service (keyed by value), so several
+        // can coexist when different tenants declare different backends.
+        return $this->value;
     }
 
     case MINIO = 'minio';

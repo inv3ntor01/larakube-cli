@@ -2,9 +2,11 @@
 
 namespace App\Traits;
 
+use App\Contracts\PlexProvisionable;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
+use App\Enums\StorageDriver;
 
 /**
  * Shared helpers for the Plex feature — the multi-tenant "Commons" (shared
@@ -34,7 +36,7 @@ trait InteractsWithPlex
             'services' => [
                 'postgres' => ['enabled' => true],
                 'redis' => ['enabled' => true],
-                'meili' => ['enabled' => $withMeili],
+                'meilisearch' => ['enabled' => $withMeili],
             ],
         ]);
     }
@@ -52,7 +54,7 @@ trait InteractsWithPlex
         $defaults = [
             'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi'],
             'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
-            'meili' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
+            'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
         ];
 
         $given = $spec['services'] ?? [];
@@ -85,6 +87,41 @@ trait InteractsWithPlex
             $spec['services'] ?? [],
             fn ($service) => (bool) ($service['enabled'] ?? false),
         ));
+    }
+
+    /**
+     * The full Commons service catalog, derived from the driver enums (the
+     * PlexProvisionable contract): every service a project could share, keyed by
+     * its driver value, each with a display label and whether it's plex-ready
+     * TODAY. Pure — the single source of truth for "what can the Commons offer",
+     * so plex:init/join never hardcode it.
+     *
+     * @return array<string, array{label: string, ready: bool, driver: PlexProvisionable}>
+     */
+    public function commonsServiceCatalog(): array
+    {
+        $drivers = array_merge(
+            DatabaseDriver::cases(),
+            CacheDriver::cases(),
+            ScoutDriver::cases(),
+            StorageDriver::cases(),
+        );
+
+        $catalog = [];
+        foreach ($drivers as $driver) {
+            $service = $driver->commonsServiceName();
+            if ($service === null) {
+                continue; // not a shareable service (SQLite, database cache/scout)
+            }
+
+            $catalog[$service] = [
+                'label' => $driver->getLabel() ?? $service,
+                'ready' => $driver->isPlexReady(),
+                'driver' => $driver,
+            ];
+        }
+
+        return $catalog;
     }
 
     /**

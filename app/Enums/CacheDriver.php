@@ -14,6 +14,7 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\PlexProvisionable;
 use App\Contracts\RemovableWhenManaged;
 use App\Contracts\RequiresPhpExtensions;
 use App\Data\ConfigData;
@@ -21,7 +22,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged, RequiresPhpExtensions
+enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommandOptions, HasComposerDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, PlexProvisionable, RemovableWhenManaged, RequiresPhpExtensions
 {
     use GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -351,6 +352,20 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             self::DATABASE => ['cache:table'],
             default => [],
         };
+    }
+
+    public function isPlexReady(): bool
+    {
+        // Redis is the Commons-provisionable cache today. Memcached is mapped
+        // but not yet wired; the database driver is never a shared service.
+        return $this === self::REDIS;
+    }
+
+    public function commonsServiceName(): ?string
+    {
+        // The Commons service name IS the driver value — no remapping. The
+        // database-backed cache runs in the app's own DB, so it's not shareable.
+        return $this === self::DATABASE ? null : $this->value;
     }
 
     case REDIS = 'redis';

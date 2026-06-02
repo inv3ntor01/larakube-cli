@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * The PlexProvisionable contract lets the plex commands ask the driver enums
+ * "are you a Commons service, and are you wired up yet?" instead of hardcoding
+ * 'postgres'/'redis'. The service name is just the driver's own value (no
+ * remapping), so distinct backends stay distinct and can coexist.
+ */
+
+use App\Enums\CacheDriver;
+use App\Enums\DatabaseDriver;
+use App\Enums\ScoutDriver;
+use App\Enums\StorageDriver;
+use App\Traits\InteractsWithPlex;
+
+function plexCatalog(): object
+{
+    return new class
+    {
+        use InteractsWithPlex;
+    };
+}
+
+test('a Commons service name is just the driver value (no remapping)', function () {
+    expect(DatabaseDriver::POSTGRESQL->commonsServiceName())->toBe('postgres')
+        ->and(CacheDriver::REDIS->commonsServiceName())->toBe('redis')
+        ->and(ScoutDriver::MEILISEARCH->commonsServiceName())->toBe('meilisearch')   // the enum value, not a shortened 'meili'
+        ->and(StorageDriver::SEAWEEDFS->commonsServiceName())->toBe('seaweedfs')
+        ->and(StorageDriver::MINIO->commonsServiceName())->toBe('minio');            // distinct from seaweedfs → can coexist
+});
+
+test('non-shareable drivers have no Commons service', function () {
+    expect(DatabaseDriver::SQLITE->commonsServiceName())->toBeNull()   // local file
+        ->and(CacheDriver::DATABASE->commonsServiceName())->toBeNull() // runs in the app's own DB
+        ->and(ScoutDriver::DATABASE->commonsServiceName())->toBeNull();
+});
+
+test('plex-readiness reflects what is actually wired today', function () {
+    expect(DatabaseDriver::POSTGRESQL->isPlexReady())->toBeTrue()
+        ->and(DatabaseDriver::MYSQL->isPlexReady())->toBeFalse()        // mapped, not yet wired
+        ->and(CacheDriver::REDIS->isPlexReady())->toBeTrue()
+        ->and(ScoutDriver::MEILISEARCH->isPlexReady())->toBeTrue()
+        ->and(ScoutDriver::TYPESENSE->isPlexReady())->toBeFalse()
+        ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeTrue()
+        ->and(StorageDriver::MINIO->isPlexReady())->toBeFalse();
+});
+
+test('the catalog lists every shareable service, including coexisting S3 backends', function () {
+    $catalog = plexCatalog()->commonsServiceCatalog();
+
+    // ready services
+    expect($catalog['postgres']['ready'])->toBeTrue()
+        ->and($catalog['redis']['ready'])->toBeTrue()
+        ->and($catalog['meilisearch']['ready'])->toBeTrue()
+        ->and($catalog['seaweedfs']['ready'])->toBeTrue();
+
+    // each S3 backend is its OWN entry (they can coexist), not collapsed into one
+    expect($catalog)->toHaveKeys(['seaweedfs', 'minio', 'garage'])
+        ->and($catalog['minio']['ready'])->toBeFalse()      // shown, not selectable yet
+        ->and($catalog['garage']['ready'])->toBeFalse();
+
+    // mapped-but-not-ready services are still listed
+    expect($catalog['mysql']['ready'])->toBeFalse()
+        ->and($catalog['typesense']['ready'])->toBeFalse();
+
+    // non-shareable drivers are excluded entirely
+    expect($catalog)->not->toHaveKey('sqlite')
+        ->and($catalog)->not->toHaveKey('database');
+});

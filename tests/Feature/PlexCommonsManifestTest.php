@@ -39,7 +39,7 @@ test('the default Commons manifest has Postgres + Redis, embeds the spec, and om
         ->toContain('claimName: postgres-data')
         ->toContain('name: redis')
         ->toContain('image: redis:7.4')
-        ->not->toContain('name: meili');
+        ->not->toContain('name: meilisearch');
 });
 
 test('--with-meili adds the Meilisearch service to the manifest', function () {
@@ -47,5 +47,5 @@ test('--with-meili adds the Meilisearch service to the manifest', function () {
 
     expect($yaml)
         ->toContain('image: '.ScoutDriver::MEILISEARCH->getDockerImage())  // in lockstep with the enum, not a stale literal
-        ->toContain('claimName: meili-data');
+        ->toContain('claimName: meilisearch-data');
 });

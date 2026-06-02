@@ -14,6 +14,7 @@ use App\Contracts\HasLabel;
 use App\Contracts\HasLifecycleHooks;
 use App\Contracts\HasPodName;
 use App\Contracts\HasSelectOptions;
+use App\Contracts\PlexProvisionable;
 use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Traits\DerivesHostsFromServices;
@@ -21,7 +22,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
 
-enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, RemovableWhenManaged
+enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposerDependencies, HasDependencies, HasDockerImage, HasEnvironmentVariables, HasHosts, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasSelectOptions, PlexProvisionable, RemovableWhenManaged
 {
     use DerivesHostsFromServices, GeneratesProjectInfrastructure, ProvidesCommandOptions, ProvidesSelectOptions;
 
@@ -322,6 +323,20 @@ enum ScoutDriver: string implements AsDependency, HasCommandOptions, HasComposer
     public function getPhpExtensions(): array
     {
         return [];
+    }
+
+    public function isPlexReady(): bool
+    {
+        // Meilisearch is the Commons-provisionable search engine today. Typesense
+        // is mapped but not yet wired; the database driver is never shared.
+        return $this === self::MEILISEARCH;
+    }
+
+    public function commonsServiceName(): ?string
+    {
+        // The Commons service name IS the driver value — no remapping. The
+        // database-backed scout runs in the app's own DB, so it's not shareable.
+        return $this === self::DATABASE ? null : $this->value;
     }
 
     case MEILISEARCH = 'meilisearch';

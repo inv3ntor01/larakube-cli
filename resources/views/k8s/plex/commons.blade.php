@@ -160,12 +160,12 @@ spec:
       targetPort: {{ $spec['services']['redis']['port'] }}
   type: ClusterIP
 @endif
-@if(($spec['services']['meili']['enabled'] ?? false))
+@if(($spec['services']['meilisearch']['enabled'] ?? false))
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: meili-data
+  name: meilisearch-data
   labels:
     larakube.io/managed-by: larakube
     larakube.io/component: plex
@@ -174,12 +174,12 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ $spec['services']['meili']['storage'] }}
+      storage: {{ $spec['services']['meilisearch']['storage'] }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: meili
+  name: meilisearch
   labels:
     larakube.io/managed-by: larakube
     larakube.io/component: plex
@@ -189,17 +189,17 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: meili
+      app: meilisearch
   template:
     metadata:
       labels:
-        app: meili
+        app: meilisearch
     spec:
       containers:
-        - name: meili
-          image: {{ $spec['services']['meili']['image'] }}
+        - name: meilisearch
+          image: {{ $spec['services']['meilisearch']['image'] }}
           ports:
-            - containerPort: {{ $spec['services']['meili']['port'] }}
+            - containerPort: {{ $spec['services']['meilisearch']['port'] }}
           env:
             - name: MEILI_ENV
               value: production
@@ -223,21 +223,21 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: meili-data
+            claimName: meilisearch-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: meili
+  name: meilisearch
   labels:
     larakube.io/managed-by: larakube
     larakube.io/component: plex
 spec:
   selector:
-    app: meili
+    app: meilisearch
   ports:
     - protocol: TCP
-      port: {{ $spec['services']['meili']['port'] }}
-      targetPort: {{ $spec['services']['meili']['port'] }}
+      port: {{ $spec['services']['meilisearch']['port'] }}
+      targetPort: {{ $spec['services']['meilisearch']['port'] }}
   type: ClusterIP
 @endif
