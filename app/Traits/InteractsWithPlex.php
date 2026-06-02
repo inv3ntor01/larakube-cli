@@ -2,6 +2,10 @@
 
 namespace App\Traits;
 
+use App\Enums\CacheDriver;
+use App\Enums\DatabaseDriver;
+use App\Enums\ScoutDriver;
+
 /**
  * Shared helpers for the Plex feature — the multi-tenant "Commons" (shared
  * Postgres/Redis/Meili) that several LaraKube projects join.
@@ -42,10 +46,13 @@ trait InteractsWithPlex
      */
     public function normalizeCommonsSpec(array $spec): array
     {
+        // Images/ports are derived from the SAME driver enums the rest of LaraKube
+        // uses, so the Commons never drifts from the project defaults (e.g. Meili's
+        // version stays in lockstep with ScoutDriver instead of a stale literal).
         $defaults = [
-            'postgres' => ['image' => 'postgres:17.9', 'port' => 5432, 'storage' => '10Gi'],
-            'redis' => ['image' => 'redis:7.4', 'port' => 6379],
-            'meili' => ['image' => 'getmeili/meilisearch:v1.10', 'port' => 7700, 'storage' => '5Gi'],
+            'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi'],
+            'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
+            'meili' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
         ];
 
         $given = $spec['services'] ?? [];

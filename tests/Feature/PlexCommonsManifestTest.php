@@ -6,6 +6,7 @@
  * appear in the manifest.
  */
 
+use App\Enums\ScoutDriver;
 use App\Traits\InteractsWithPlex;
 
 function plexManifest(array $spec): string
@@ -45,6 +46,6 @@ test('--with-meili adds the Meilisearch service to the manifest', function () {
     $yaml = plexManifest(plexHelper()->defaultCommonsSpec(true));
 
     expect($yaml)
-        ->toContain('image: getmeili/meilisearch:v1.10')
+        ->toContain('image: '.ScoutDriver::MEILISEARCH->getDockerImage())  // in lockstep with the enum, not a stale literal
         ->toContain('claimName: meili-data');
 });

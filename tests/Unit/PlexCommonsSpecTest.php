@@ -7,6 +7,9 @@
  * not here.
  */
 
+use App\Enums\CacheDriver;
+use App\Enums\DatabaseDriver;
+use App\Enums\ScoutDriver;
 use App\Traits\InteractsWithPlex;
 
 function plexSpec(): object
@@ -26,6 +29,17 @@ test('the default spec enables Postgres + Redis and leaves Meili off', function 
         ->and($spec['services']['postgres']['storage'])->toBe('10Gi')
         ->and($spec['services']['redis']['port'])->toBe(6379)
         ->and($spec['services']['meili']['enabled'])->toBeFalse();
+});
+
+test('Commons service images/ports derive from the driver enums (no drift)', function () {
+    $spec = plexSpec()->defaultCommonsSpec(true)['services'];
+
+    expect($spec['postgres']['image'])->toBe(DatabaseDriver::POSTGRESQL->getDockerImage())
+        ->and($spec['postgres']['port'])->toBe(DatabaseDriver::POSTGRESQL->dbPort())
+        ->and($spec['redis']['image'])->toBe(CacheDriver::REDIS->getDockerImage())
+        ->and($spec['redis']['port'])->toBe(CacheDriver::REDIS->dbPort())
+        ->and($spec['meili']['image'])->toBe(ScoutDriver::MEILISEARCH->getDockerImage())  // stays in lockstep, no stale literal
+        ->and($spec['meili']['port'])->toBe(ScoutDriver::MEILISEARCH->port());
 });
 
 test('--with-meili turns on Meilisearch', function () {
