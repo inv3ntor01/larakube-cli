@@ -131,24 +131,26 @@ trait GeneratesProjectInfrastructure
     }
 
     /**
-     * Sync values to the .env file.
+     * Sync values into an environment's env file: `.env` for local, otherwise
+     * `.env.<environment>` (seeded from the base .env if it doesn't exist yet).
+     * Works for ANY environment — production, staging, preview, … — not just
+     * production, so multi-environment projects are first-class.
      */
-    protected function syncEnvFile(string $projectPath, array $values, bool $commented = false, bool $isProduction = false): void
+    protected function syncEnvFile(string $projectPath, array $values, bool $commented = false, string $environment = 'local'): void
     {
-        $envFile = $isProduction ? '.env.production' : '.env';
+        $envFile = $environment === 'local' ? '.env' : '.env.'.$environment;
         $envPath = $projectPath.'/'.$envFile;
 
         // --- 🛡️ SECURITY: Locked File Protection ---
         // If the user has manually locked this file in .larakube.json, we stay hands-off.
-        if (method_exists($this, 'getProjectConfig')) {
-            $config = $this->getProjectConfig($projectPath);
-            if ($config->isLocked($envFile)) {
-                return;
-            }
+        $config = method_exists($this, 'getProjectConfig') ? $this->getProjectConfig($projectPath) : null;
+        if ($config?->isLocked($envFile)) {
+            return;
         }
 
         if (! file_exists($envPath)) {
-            if ($isProduction && file_exists($projectPath.'/.env')) {
+            // Seed a cloud env file from the base .env so it starts with a baseline.
+            if ($environment !== 'local' && file_exists($projectPath.'/.env')) {
                 copy($projectPath.'/.env', $envPath);
             } else {
                 return;
@@ -187,9 +189,16 @@ trait GeneratesProjectInfrastructure
         $content = implode("\n", $newLines);
         file_put_contents($envPath, $content);
 
-        // If we are updating the base .env and .env.production is missing, create it
-        if (! $isProduction && ! file_exists($projectPath.'/.env.production')) {
-            file_put_contents($projectPath.'/.env.production', $content);
+        // When updating the base .env, seed every configured cloud environment's
+        // own env file from it (if missing) so later per-env syncs have a
+        // baseline. Generalised from the old production-only auto-create.
+        if ($environment === 'local' && $config) {
+            foreach ($config->getCloudEnvironments() as $cloudEnv) {
+                $cloudEnvPath = $projectPath.'/.env.'.$cloudEnv;
+                if (! file_exists($cloudEnvPath)) {
+                    file_put_contents($cloudEnvPath, $content);
+                }
+            }
         }
     }
 
@@ -733,22 +742,34 @@ trait GeneratesProjectInfrastructure
             $envChanges = $config->getAllEnvironmentVariables();
 
             if ($dryRun) {
-                $this->line('  <fg=gray>[.ENV]</> Would sync the following variables to local .env and .env.production:');
+                $this->line('  <fg=gray>[.ENV]</> Would sync the following variables to local .env:');
                 foreach ($envChanges as $k => $v) {
                     $this->line("         $k=$v");
                 }
 
-                $prodEnvChanges = $config->getAllEnvironmentVariables('production');
-                $this->line('  <fg=gray>[.ENV.PRODUCTION]</> Would sync the following variables ONLY to .env.production:');
-                foreach ($prodEnvChanges as $k => $v) {
-                    if ($v !== ($envChanges[$k] ?? null)) {
-                        $this->line("         $k=$v");
+                foreach ($config->getCloudEnvironments() as $cloudEnv) {
+                    $cloudEnvChanges = $config->getAllEnvironmentVariables($cloudEnv);
+                    $this->line('  <fg=gray>[.ENV.'.strtoupper($cloudEnv)."]</> Would sync environment-specific variables to .env.{$cloudEnv}:");
+                    foreach ($cloudEnvChanges as $k => $v) {
+                        if ($v !== ($envChanges[$k] ?? null)) {
+                            $this->line("         $k=$v");
+                        }
                     }
                 }
             } else {
                 $this->syncEnvFile($config->getPath(), $envChanges);
-                // Specifically sync production-only overrides to .env.production
-                $this->syncEnvFile($config->getPath(), $config->getAllEnvironmentVariables('production'), isProduction: true);
+
+                // Sync every configured cloud environment's own .env.<environment>
+                // with that environment's computed values (per-env APP_URL /
+                // ASSET_URL / hosts). Generalised from the old production-only sync
+                // so staging/preview/etc. are first-class, not just production.
+                foreach ($config->getCloudEnvironments() as $cloudEnv) {
+                    $this->syncEnvFile(
+                        $config->getPath(),
+                        $config->getAllEnvironmentVariables($cloudEnv),
+                        environment: $cloudEnv,
+                    );
+                }
             }
         }
 

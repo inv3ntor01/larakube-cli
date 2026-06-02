@@ -76,21 +76,13 @@ class CloudDeployCommand extends Command
             $config->setHost($environment, 'web', $newHost);
             $this->saveProjectConfig($projectPath, $config);
 
-            // Reflect the domain in the env file's APP_URL too. Narrow on purpose
+            // Reflect the domain in the env file's APP_URL. syncEnvFile targets
+            // this env's own .env.<environment> (creating it from .env if needed),
+            // so it's uniform across production, staging, etc. Narrow on purpose
             // (only APP_URL) rather than a full syncEnv, so we never clobber other
             // env values — e.g. a Plex-managed DB_HOST. (The manifest regen below
             // uses syncEnv:false for the same reason.)
-            $appUrl = 'https://'.$newHost;
-            if ($environment === 'production') {
-                $this->syncEnvFile($projectPath, ['APP_URL' => $appUrl], false, true);
-            } elseif (file_exists($projectPath.'/.env.'.$environment)) {
-                $envPath = $projectPath.'/.env.'.$environment;
-                $content = (string) file_get_contents($envPath);
-                $content = preg_match('/^#?\s*APP_URL=.*/m', $content)
-                    ? preg_replace('/^#?\s*APP_URL=.*/m', 'APP_URL='.$appUrl, $content)
-                    : rtrim($content)."\nAPP_URL=".$appUrl."\n";
-                file_put_contents($envPath, $content);
-            }
+            $this->syncEnvFile($projectPath, ['APP_URL' => 'https://'.$newHost], false, $environment);
         }
 
         // Keep ASSET_URL aligned with this environment's web domain. @vite
