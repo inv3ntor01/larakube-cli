@@ -26,6 +26,11 @@ function k3dResolver(): object
         {
             return $this->resolveSideloadTarget($context);
         }
+
+        public function contains(string $list, string $tag): bool
+        {
+            return $this->clusterImageListContains($list, $tag);
+        }
     };
 }
 
@@ -76,4 +81,26 @@ test('routes remote/registry-backed contexts to nothing (no sideload)', function
         ->and($r->sideload('arn:aws:eks:...'))->toBeNull()    // managed cloud
         ->and($r->sideload('orbstack'))->toBeNull()           // not a build-sideload engine
         ->and($r->sideload(''))->toBeNull();
+});
+
+/**
+ * Deciding whether the active cluster already has the image (so `up` can import
+ * a missing-from-cluster image without a full rebuild). The matcher must cope
+ * with how crictl/ctr decorate refs: a docker.io/library/ prefix, or the repo
+ * and tag landing in separate columns.
+ */
+test('matches an image present in a crictl/ctr listing across its decorations', function () {
+    $r = k3dResolver();
+
+    expect($r->contains("app-two:latest\nredis:7\n", 'app-two:latest'))->toBeTrue()        // exact ref
+        ->and($r->contains('docker.io/library/app-two:latest', 'app-two:latest'))->toBeTrue() // prefixed
+        ->and($r->contains("IMAGE                TAG\napp-two              latest\n", 'app-two:latest'))->toBeTrue(); // columns
+});
+
+test('reports an image absent from the cluster listing', function () {
+    $r = k3dResolver();
+
+    expect($r->contains("redis:7\npostgres:16\n", 'app-two:latest'))->toBeFalse() // not listed
+        ->and($r->contains('', 'app-two:latest'))->toBeFalse()                     // empty listing
+        ->and($r->contains('app-two:latest', ''))->toBeFalse();                    // empty tag
 });

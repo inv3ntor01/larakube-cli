@@ -33,6 +33,26 @@ trait InteractsWithDocker
     }
 
     /**
+     * Whether a container-runtime image listing contains the given tag. Pure (no
+     * I/O) so the matching is unit-testable. Handles the common decorations: a
+     * `docker.io/library/` prefix, or the name and tag appearing separately.
+     */
+    public function clusterImageListContains(string $list, string $imageTag): bool
+    {
+        if (trim($list) === '' || trim($imageTag) === '') {
+            return false;
+        }
+
+        if (str_contains($list, $imageTag) || str_contains($list, "docker.io/library/$imageTag")) {
+            return true;
+        }
+
+        [$name, $tag] = array_pad(explode(':', $imageTag), 2, 'latest');
+
+        return str_contains($list, $name) && str_contains($list, $tag);
+    }
+
+    /**
      * Get the base Docker run command for a specific type (php or node).
      */
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
@@ -120,6 +140,16 @@ trait InteractsWithDocker
         // image to whichever local engine is active so `larakube up` "just
         // works" without a registry. Remote/registry-backed clusters need
         // nothing here.
+        $this->sideloadToActiveCluster($imageTag);
+    }
+
+    /**
+     * Import a host-built image into whichever local cluster is active so pods
+     * can run it without a registry. No-op for remote/registry-backed clusters
+     * (and OrbStack, which reads host Docker images directly).
+     */
+    protected function sideloadToActiveCluster(string $imageTag): void
+    {
         $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
         $sideload = $this->resolveSideloadTarget($context);
 
@@ -132,6 +162,47 @@ trait InteractsWithDocker
         } else { // k3s
             $this->sideloadIntoK3s($imageTag);
         }
+    }
+
+    /**
+     * Whether the active local cluster's container runtime already has the image.
+     *
+     * Returns true/false when determinable, or null when it can't be checked
+     * without side effects (native k3s needs sudo and it isn't cached) — callers
+     * should treat null as "can't tell, don't force a re-import". Remote/registry
+     * clusters (and OrbStack, which reads host Docker images) return true: there
+     * is no separate cluster store to seed.
+     */
+    protected function imageInActiveCluster(string $imageTag): ?bool
+    {
+        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        $sideload = $this->resolveSideloadTarget($context);
+
+        if ($sideload === null) {
+            return true; // Nothing to sideload into.
+        }
+
+        if ($sideload['engine'] === 'k3d') {
+            // k3d nodes run in Docker; query the server node's containerd (no sudo).
+            $node = 'k3d-'.$sideload['cluster'].'-server-0';
+            if (trim((string) shell_exec('docker inspect -f "{{.State.Running}}" '.escapeshellarg($node).' 2>/dev/null')) !== 'true') {
+                return null; // Node isn't up — can't tell; don't force a re-import.
+            }
+            $images = shell_exec('docker exec '.escapeshellarg($node).' crictl images 2>/dev/null');
+
+            return $this->clusterImageListContains($images ?? '', $imageTag);
+        }
+
+        // Native k3s: containerd is root-owned, so checking needs sudo. Only look
+        // when sudo is already cached — never trigger a password prompt to check.
+        $code = 0;
+        exec('sudo -n true 2>/dev/null', $out, $code);
+        if ($code !== 0) {
+            return null;
+        }
+        $images = shell_exec('sudo -n k3s ctr -n k8s.io images ls -q 2>/dev/null');
+
+        return $this->clusterImageListContains($images ?? '', $imageTag);
     }
 
     /**
@@ -164,11 +235,8 @@ trait InteractsWithDocker
         // Verify availability on the cluster's server node.
         $this->withSpin('Verifying cluster image availability...', function () use ($imageTag, $cluster) {
             $images = shell_exec('docker exec k3d-'.$cluster.'-server-0 crictl images 2>/dev/null');
-            [$name, $tag] = array_pad(explode(':', $imageTag), 2, 'latest');
 
-            return str_contains($images ?? '', $imageTag) ||
-                   str_contains($images ?? '', "docker.io/library/$imageTag") ||
-                   (str_contains($images ?? '', $name) && str_contains($images ?? '', $tag));
+            return $this->clusterImageListContains($images ?? '', $imageTag);
         });
     }
 

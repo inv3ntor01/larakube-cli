@@ -276,10 +276,16 @@ class UpCommand extends Command
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
         if ($environment === 'local' && ! $this->option('no-build')) {
             $imageTag = "{$appName}:latest";
-            $shouldBuild = $this->option('build') || ! $this->imageExists($imageTag);
 
-            if ($shouldBuild) {
+            if ($this->option('build') || ! $this->imageExists($imageTag)) {
+                // Forced, or no image in Docker yet → build (which also sideloads).
                 $this->buildImage($config);
+            } elseif ($this->imageInActiveCluster($imageTag) === false) {
+                // Image is in Docker but the active cluster can't see it — typically
+                // the cluster was recreated or you switched contexts. Import it
+                // without a needless rebuild so pods don't hit ImagePullBackOff.
+                $this->laraKubeInfo("Image '$imageTag' exists but is missing from the active cluster — importing...");
+                $this->sideloadToActiveCluster($imageTag);
             } else {
                 $this->laraKubeInfo("Using existing image '$imageTag' (Use --build to force a rebuild)");
             }
