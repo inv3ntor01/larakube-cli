@@ -2,6 +2,7 @@
 
 namespace App\Commands\Plex;
 
+use App\Contracts\PlexProvisionable;
 use App\Data\ConfigData;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
@@ -146,20 +147,26 @@ class PlexJoinCommand extends Command
      */
     protected function resolveTenantServices(ConfigData $config): array
     {
-        $services = [];
+        // Enum-driven via PlexProvisionable: each driver declares its Commons
+        // service + whether it's wired yet. Warn about drivers that map to a
+        // Commons service but aren't ready (they stay self-hosted), then return
+        // the plex-ready set.
+        $drivers = array_filter([
+            $config->getDatabase(),
+            $config->getCacheDriver(),
+            $config->getScoutDriver(),
+            $config->getObjectStorage(),
+        ]);
 
-        $db = $config->getDatabase();
-        if ($db?->value === 'postgres') {
-            $services[] = 'postgres';
-        } elseif ($db && in_array($db->value, ['mysql', 'mariadb'], true)) {
-            $this->laraKubeWarn("Commons join for {$db->value} is not implemented yet (Postgres only in this phase) — skipping the database.");
+        foreach ($drivers as $driver) {
+            if ($driver instanceof PlexProvisionable
+                && ! $driver->isPlexReady()
+                && $driver->commonsServiceName() !== null) {
+                $this->laraKubeWarn("Commons sharing for '{$driver->commonsServiceName()}' isn't available yet — it stays self-hosted in this env.");
+            }
         }
 
-        if ($config->getCacheDriver()->value === 'redis') {
-            $services[] = 'redis';
-        }
-
-        return $services;
+        return $this->projectCommonsServices($config);
     }
 
     /**
@@ -205,7 +212,9 @@ class PlexJoinCommand extends Command
                 return false;
             }
 
-            $this->call('plex:init', ['--yes' => true]);
+            // Demand-driven bootstrap: provision EXACTLY the services this tenant
+            // needs, not a blanket Postgres+Redis default.
+            $this->call('plex:init', ['--yes' => true, '--services' => implode(',', $services)]);
             $spec = $this->getCommonsSpec();
 
             if ($spec === null) {

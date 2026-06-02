@@ -7,6 +7,7 @@
  * remapping), so distinct backends stay distinct and can coexist.
  */
 
+use App\Data\ConfigData;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
@@ -41,22 +42,23 @@ test('plex-readiness reflects what is actually wired today', function () {
         ->and(CacheDriver::REDIS->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::MEILISEARCH->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::TYPESENSE->isPlexReady())->toBeFalse()
-        ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeTrue()
+        ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeFalse()  // S3 manifest/provisioning is the next slice
         ->and(StorageDriver::MINIO->isPlexReady())->toBeFalse();
 });
 
 test('the catalog lists every shareable service, including coexisting S3 backends', function () {
     $catalog = plexCatalog()->commonsServiceCatalog();
 
-    // ready services
+    // ready (wired today) services
     expect($catalog['postgres']['ready'])->toBeTrue()
         ->and($catalog['redis']['ready'])->toBeTrue()
-        ->and($catalog['meilisearch']['ready'])->toBeTrue()
-        ->and($catalog['seaweedfs']['ready'])->toBeTrue();
+        ->and($catalog['meilisearch']['ready'])->toBeTrue();
 
-    // each S3 backend is its OWN entry (they can coexist), not collapsed into one
+    // each S3 backend is its OWN entry (so they can coexist once wired), not
+    // collapsed into one — all not-ready until the Commons S3 slice lands.
     expect($catalog)->toHaveKeys(['seaweedfs', 'minio', 'garage'])
-        ->and($catalog['minio']['ready'])->toBeFalse()      // shown, not selectable yet
+        ->and($catalog['seaweedfs']['ready'])->toBeFalse()
+        ->and($catalog['minio']['ready'])->toBeFalse()
         ->and($catalog['garage']['ready'])->toBeFalse();
 
     // mapped-but-not-ready services are still listed
@@ -66,4 +68,18 @@ test('the catalog lists every shareable service, including coexisting S3 backend
     // non-shareable drivers are excluded entirely
     expect($catalog)->not->toHaveKey('sqlite')
         ->and($catalog)->not->toHaveKey('database');
+});
+
+test('projectCommonsServices returns only the project\'s plex-ready services', function () {
+    $config = new ConfigData(
+        name: 'app-four',
+        database: DatabaseDriver::POSTGRESQL,    // ready → included
+        cacheDriver: CacheDriver::REDIS,         // ready → included
+        objectStorage: StorageDriver::SEAWEEDFS, // maps to a service but not wired yet → excluded
+    );
+
+    expect(plexCatalog()->projectCommonsServices($config))->toBe(['postgres', 'redis']);
+
+    // A project on the default (database) cache + no DB shares nothing.
+    expect(plexCatalog()->projectCommonsServices(new ConfigData(name: 'plain')))->toBe([]);
 });

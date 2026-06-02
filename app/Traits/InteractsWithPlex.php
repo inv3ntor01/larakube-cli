@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Contracts\PlexProvisionable;
+use App\Data\ConfigData;
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
@@ -122,6 +123,36 @@ trait InteractsWithPlex
         }
 
         return $catalog;
+    }
+
+    /**
+     * The Commons service names THIS project's drivers map to and that are
+     * plex-ready today — enum-driven via PlexProvisionable. Used to default
+     * plex:init's selection (project-aware) and to drive plex:join's demand-driven
+     * bootstrap (provision only what the joining project needs). Pure.
+     *
+     * @return array<int, string>
+     */
+    public function projectCommonsServices(ConfigData $config): array
+    {
+        $drivers = array_filter([
+            $config->getDatabase(),
+            $config->getCacheDriver(),
+            $config->getScoutDriver(),
+            $config->getObjectStorage(),
+        ]);
+
+        $services = [];
+        foreach ($drivers as $driver) {
+            if ($driver instanceof PlexProvisionable && $driver->isPlexReady()) {
+                $name = $driver->commonsServiceName();
+                if ($name !== null) {
+                    $services[] = $name;
+                }
+            }
+        }
+
+        return array_values(array_unique($services));
     }
 
     /**

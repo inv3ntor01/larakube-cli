@@ -4,6 +4,7 @@ namespace App\Commands\Plex;
 
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\multiselect;
@@ -12,10 +13,11 @@ use LaravelZero\Framework\Commands\Command;
 
 class PlexInitCommand extends Command
 {
-    use InteractsWithClusterContext, InteractsWithPlex, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput;
 
     protected $signature = 'plex:init
         {--with-meili : Include Meilisearch in the Commons (RAM-heavy; off by default)}
+        {--services= : Comma-separated services to provision, bypassing the prompt (used by plex:join)}
         {--from= : Rebuild the Commons from an exported spec file (see plex:export)}
         {--yes : Skip the confirmation prompt (for automation)}';
 
@@ -136,40 +138,90 @@ class PlexInitCommand extends Command
         if ($existing !== null) {
             // Reconcile the live spec; --with-meili can light up Meili on a re-run.
             if ($this->option('with-meili')) {
-                $existing['services']['meili']['enabled'] = true;
+                $existing['services']['meilisearch']['enabled'] = true;
             }
 
             return $this->normalizeCommonsSpec($existing);
         }
 
-        // Fresh Commons: nothing is inferred from any project — let the operator
-        // choose which services to provision (Postgres + Redis pre-checked; Meili
-        // opt-in). --yes / --with-meili stay non-interactive.
-        if ($this->option('yes')) {
-            return $this->defaultCommonsSpec((bool) $this->option('with-meili'));
+        // Fresh Commons. The catalog (PlexProvisionable) is the source of truth
+        // for what can be offered; only plex-ready services are selectable.
+        $catalog = $this->commonsServiceCatalog();
+        $ready = array_keys(array_filter($catalog, fn ($i) => $i['ready']));
+
+        // Project-aware default: inside a project, pre-select that project's
+        // plex-ready services; otherwise Postgres + Redis.
+        $default = $this->projectDefaultServices($ready);
+        if ($this->option('with-meili')) {
+            $default[] = 'meilisearch';
         }
 
-        $default = ['postgres', 'redis'];
-        if ($this->option('with-meili')) {
-            $default[] = 'meili';
+        // Explicit --services (plex:join's demand-driven bootstrap), or --yes.
+        if ($this->option('services') !== null) {
+            $requested = array_filter(array_map('trim', explode(',', (string) $this->option('services'))));
+
+            return $this->specFromServices(array_values(array_intersect($requested, $ready)), $ready);
+        }
+
+        if ($this->option('yes')) {
+            return $this->specFromServices(array_values(array_intersect($default, $ready)), $ready);
+        }
+
+        // Show the WHOLE catalog (databases, cache, search, storage), marking the
+        // not-yet-wired ones; only ready picks take effect.
+        $options = [];
+        foreach ($catalog as $service => $info) {
+            $options[$service] = $info['ready'] ? $info['label'] : $info['label'].' — not yet available';
         }
 
         $selected = multiselect(
             label: 'Which shared services should the Commons provide?',
-            options: [
-                'postgres' => 'PostgreSQL (shared database)',
-                'redis' => 'Redis (shared cache / queue)',
-                'meili' => 'Meilisearch (search — RAM-heavy)',
-            ],
-            default: $default,
+            options: $options,
+            default: array_values(array_intersect($default, array_keys($options))),
             hint: 'Tenants use only what they declare; re-run plex:init to add more later.',
         );
 
-        return $this->normalizeCommonsSpec(['services' => [
-            'postgres' => ['enabled' => in_array('postgres', $selected, true)],
-            'redis' => ['enabled' => in_array('redis', $selected, true)],
-            'meili' => ['enabled' => in_array('meili', $selected, true)],
-        ]]);
+        $effective = array_values(array_intersect($selected, $ready));
+        if ($skipped = array_diff($selected, $effective)) {
+            $this->laraKubeWarn('Not available in the Commons yet, skipping: '.implode(', ', $skipped));
+        }
+
+        return $this->specFromServices($effective, $ready);
+    }
+
+    /**
+     * Default service selection: the current project's plex-ready services when
+     * run inside a project (project-aware), else Postgres + Redis.
+     *
+     * @param  array<int, string>  $ready
+     * @return array<int, string>
+     */
+    protected function projectDefaultServices(array $ready): array
+    {
+        $config = $this->getProjectConfig(getcwd());
+
+        if ($config !== null && ($services = $this->projectCommonsServices($config))) {
+            return $services;
+        }
+
+        return array_values(array_intersect(['postgres', 'redis'], $ready));
+    }
+
+    /**
+     * Build a normalized spec with exactly $selected enabled (every other ready
+     * service explicitly disabled, so no default silently turns one back on).
+     *
+     * @param  array<int, string>  $selected
+     * @param  array<int, string>  $ready
+     */
+    protected function specFromServices(array $selected, array $ready): array
+    {
+        $services = [];
+        foreach ($ready as $svc) {
+            $services[$svc] = ['enabled' => in_array($svc, $selected, true)];
+        }
+
+        return $this->normalizeCommonsSpec(['services' => $services]);
     }
 
     /**
