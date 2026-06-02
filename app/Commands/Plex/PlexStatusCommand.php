@@ -58,15 +58,16 @@ class PlexStatusCommand extends Command
             return 0;
         }
 
-        // Services + in-cluster hosts.
+        // Services + in-cluster hosts — driven by the spec itself (service name
+        // and port come from the spec, never a hardcoded list).
         $ns = $this->plexNamespace();
         $this->laraKubeNewLine();
         $this->line("  <fg=green>Commons services</> ({$ns}):");
-        foreach (['postgres' => 5432, 'redis' => 6379, 'meili' => 7700] as $service => $port) {
-            $on = $spec['services'][$service]['enabled'] ?? false;
+        foreach ($spec['services'] ?? [] as $service => $cfg) {
+            $on = $cfg['enabled'] ?? false;
             $mark = $on ? '<fg=green>●</>' : '<fg=gray>○</>';
-            $detail = $on ? "{$service}.{$ns}.svc.cluster.local:{$port}" : 'disabled';
-            $this->line('    '.$mark.' '.str_pad($service, 9).' <fg=gray>'.$detail.'</>');
+            $detail = $on ? "{$service}.{$ns}.svc.cluster.local:".($cfg['port'] ?? '') : 'disabled';
+            $this->line('    '.$mark.' '.str_pad($service, 12).' <fg=gray>'.$detail.'</>');
         }
 
         // Tenants from the registry (highlight this app if it's one).
@@ -84,8 +85,9 @@ class PlexStatusCommand extends Command
         foreach ($tenants as $name => $alloc) {
             $db = $alloc['db'] ?? '—';
             $redis = ($alloc['redis_index'] ?? null) === null ? 'no redis' : 'redis db '.$alloc['redis_index'];
+            $s3 = ($alloc['s3_bucket'] ?? null) ? ', s3 '.$alloc['s3_bucket'] : '';
             $you = $name === $self ? ' <fg=yellow>(this app)</>' : '';
-            $this->line("    <fg=cyan>{$name}</>{$you}  <fg=gray>db={$db}, {$redis}</>");
+            $this->line("    <fg=cyan>{$name}</>{$you}  <fg=gray>db={$db}, {$redis}{$s3}</>");
         }
 
         return 0;

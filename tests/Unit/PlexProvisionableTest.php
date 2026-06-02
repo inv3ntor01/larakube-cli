@@ -42,22 +42,22 @@ test('plex-readiness reflects what is actually wired today', function () {
         ->and(CacheDriver::REDIS->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::MEILISEARCH->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::TYPESENSE->isPlexReady())->toBeFalse()
-        ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeFalse()  // S3 manifest/provisioning is the next slice
-        ->and(StorageDriver::MINIO->isPlexReady())->toBeFalse();
+        ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeTrue()   // wired: Commons S3 backend
+        ->and(StorageDriver::MINIO->isPlexReady())->toBeFalse();     // mapped, not the wired backend
 });
 
 test('the catalog lists every shareable service, including coexisting S3 backends', function () {
     $catalog = plexCatalog()->commonsServiceCatalog();
 
-    // ready (wired today) services
+    // ready (wired today) services — incl. the SeaweedFS S3 backend
     expect($catalog['postgres']['ready'])->toBeTrue()
         ->and($catalog['redis']['ready'])->toBeTrue()
-        ->and($catalog['meilisearch']['ready'])->toBeTrue();
+        ->and($catalog['meilisearch']['ready'])->toBeTrue()
+        ->and($catalog['seaweedfs']['ready'])->toBeTrue();
 
-    // each S3 backend is its OWN entry (so they can coexist once wired), not
-    // collapsed into one — all not-ready until the Commons S3 slice lands.
+    // each S3 backend is its OWN entry (so they coexist), not collapsed into one;
+    // MinIO/Garage map but aren't the wired backend yet.
     expect($catalog)->toHaveKeys(['seaweedfs', 'minio', 'garage'])
-        ->and($catalog['seaweedfs']['ready'])->toBeFalse()
         ->and($catalog['minio']['ready'])->toBeFalse()
         ->and($catalog['garage']['ready'])->toBeFalse();
 
@@ -75,10 +75,10 @@ test('projectCommonsServices returns only the project\'s plex-ready services', f
         name: 'app-four',
         database: DatabaseDriver::POSTGRESQL,    // ready → included
         cacheDriver: CacheDriver::REDIS,         // ready → included
-        objectStorage: StorageDriver::SEAWEEDFS, // maps to a service but not wired yet → excluded
+        objectStorage: StorageDriver::SEAWEEDFS, // ready (Commons S3 backend) → included
     );
 
-    expect(plexCatalog()->projectCommonsServices($config))->toBe(['postgres', 'redis']);
+    expect(plexCatalog()->projectCommonsServices($config))->toBe(['postgres', 'redis', 'seaweedfs']);
 
     // A project on the default (database) cache + no DB shares nothing.
     expect(plexCatalog()->projectCommonsServices(new ConfigData(name: 'plain')))->toBe([]);

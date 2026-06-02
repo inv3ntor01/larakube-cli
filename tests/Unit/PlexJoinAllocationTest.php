@@ -66,6 +66,23 @@ test('commonsEnvValues emits only the requested services', function () {
         ->and($redisOnly['REDIS_DB'])->toBe(2);
 });
 
+test('commonsEnvValues wires S3 from the StorageDriver shape with a per-tenant bucket', function () {
+    $p = plexJoin();
+
+    $s3 = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['access' => 'larakube', 'secret' => 'sk']);
+    expect($s3['FILESYSTEM_DISK'])->toBe('s3')
+        ->and($s3['AWS_BUCKET'])->toBe('app_four')                                                  // per-tenant bucket
+        ->and($s3['AWS_ENDPOINT'])->toBe('http://seaweedfs.larakube-shared.svc.cluster.local:8333') // in-cluster Commons
+        ->and($s3['AWS_ACCESS_KEY_ID'])->toBe('larakube')
+        ->and($s3['AWS_SECRET_ACCESS_KEY'])->toBe('sk')
+        ->and($s3['AWS_USE_PATH_STYLE_ENDPOINT'])->toBe('true')
+        ->and($s3)->not->toHaveKey('AWS_URL');                                                      // public asset URL deferred
+
+    // No S3 keys unless storage is requested AND creds are supplied.
+    expect($p->commonsEnvValues('app_four', 'pw', null, ['postgres']))->not->toHaveKey('AWS_BUCKET')
+        ->and($p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], null))->not->toHaveKey('AWS_BUCKET');
+});
+
 test('postgres tenant SQL is idempotent and escapes the password', function () {
     $p = plexJoin();
 

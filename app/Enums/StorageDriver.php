@@ -360,11 +360,10 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function isPlexReady(): bool
     {
-        // No S3 backend is provisionable in the Commons yet — the shared S3
-        // manifest + per-tenant bucket wiring is the next slice of #91. Each
-        // backend still has its own commonsServiceName() (so they'll coexist once
-        // wired); SeaweedFS flips to ready when that lands.
-        return false;
+        // SeaweedFS is the wired Commons S3 backend (deployment + per-tenant
+        // bucket provisioning). MinIO/Garage are valid backends with their own
+        // Commons service (so they'll coexist) but aren't wired yet.
+        return $this === self::SEAWEEDFS;
     }
 
     public function commonsServiceName(): ?string

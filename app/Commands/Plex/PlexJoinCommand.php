@@ -126,12 +126,33 @@ class PlexJoinCommand extends Command
             return 1;
         }
 
-        // 6. Record the allocation (db + redis index; never the password).
-        $registry = $this->registryAdd($registry, $tenant, ['db' => $tenant, 'redis_index' => $redisIndex]);
+        // Object storage: a per-tenant bucket on the shared Commons S3, using the
+        // shared Commons credentials (bucket-per-tenant isolation).
+        $s3 = null;
+        if (in_array('seaweedfs', $services, true)) {
+            $s3 = $this->readCommonsS3Credentials();
+
+            if ($s3 === null) {
+                $this->laraKubeError('Commons S3 credentials (plex-admin) not found. Re-run `larakube plex:init`.');
+
+                return 1;
+            }
+
+            if (! $this->allocateStorageBucket($tenant)) {
+                return 1;
+            }
+        }
+
+        // 6. Record the allocation (db + redis index + s3 bucket; never secrets).
+        $registry = $this->registryAdd($registry, $tenant, [
+            'db' => $tenant,
+            'redis_index' => $redisIndex,
+            's3_bucket' => in_array('seaweedfs', $services, true) ? $tenant : null,
+        ]);
         $this->saveRegistry($registry);
 
         // 7. Write tenant config (.env + managed).
-        $this->writeTenantConfig($projectPath, $config, $env, $tenant, $password, $redisIndex, $services);
+        $this->writeTenantConfig($projectPath, $config, $env, $tenant, $password, $redisIndex, $services, $s3);
 
         $this->printNext($env);
 
@@ -277,13 +298,67 @@ class PlexJoinCommand extends Command
     }
 
     /**
+     * Read the shared Commons S3 credentials from the plex-admin Secret. Returns
+     * ['access' => ..., 'secret' => ...] or null if the secret/keys are missing.
+     */
+    protected function readCommonsS3Credentials(): ?array
+    {
+        $ns = $this->plexNamespace();
+        $read = fn (string $key): string => trim((string) shell_exec(
+            $this->plexKubectl()." get secret plex-admin -n {$ns} -o jsonpath=".escapeshellarg('{.data.'.$key.'}').' 2>/dev/null',
+        ));
+
+        $access = $read('S3_ACCESS_KEY');
+        $secret = $read('S3_SECRET_KEY');
+
+        if ($access === '' || $secret === '') {
+            return null;
+        }
+
+        return ['access' => (string) base64_decode($access), 'secret' => (string) base64_decode($secret)];
+    }
+
+    /**
+     * Create this tenant's bucket on the Commons SeaweedFS via `weed shell`
+     * (idempotent — re-creating an existing bucket is a no-op).
+     */
+    protected function allocateStorageBucket(string $tenant): bool
+    {
+        $ns = $this->plexNamespace();
+        $weed = "echo 's3.bucket.create -name {$tenant}' | weed shell";
+
+        $output = [];
+        $code = 0;
+        $this->withSpin("Creating object-storage bucket '{$tenant}' in the Commons...", function () use ($ns, $weed, &$output, &$code) {
+            exec(
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/seaweedfs -- sh -c '.escapeshellarg($weed).' 2>&1',
+                $output,
+                $code,
+            );
+
+            return $code === 0;
+        });
+
+        if ($code !== 0) {
+            $this->laraKubeError("Could not create the Commons S3 bucket '{$tenant}'.");
+            foreach (array_slice($output, -4) as $line) {
+                $this->laraKubeLine('    '.$line);
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Write the Commons connection values into .env.{env} (lock-aware) and add
      * the services to environments.{env}.managed so the app stops deploying its
      * own pods.
      */
-    protected function writeTenantConfig(string $projectPath, ConfigData $config, string $env, string $tenant, string $password, ?int $redisIndex, array $services): void
+    protected function writeTenantConfig(string $projectPath, ConfigData $config, string $env, string $tenant, string $password, ?int $redisIndex, array $services, ?array $s3 = null): void
     {
-        $values = $this->commonsEnvValues($tenant, $password, $redisIndex, $services);
+        $values = $this->commonsEnvValues($tenant, $password, $redisIndex, $services, $s3);
         $envFile = $env === 'production' ? '.env.production' : ".env.{$env}";
 
         if ($config->isLocked($envFile)) {

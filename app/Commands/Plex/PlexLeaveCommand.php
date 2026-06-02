@@ -71,6 +71,7 @@ class PlexLeaveCommand extends Command
         $entry = $registry['tenants'][$tenant];
         $db = $entry['db'] ?? null;
         $redisIndex = $entry['redis_index'] ?? null;
+        $s3Bucket = $entry['s3_bucket'] ?? null;
         $ns = $this->plexNamespace();
 
         $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>".($context ?: 'current').'</>');
@@ -80,6 +81,9 @@ class PlexLeaveCommand extends Command
         }
         if ($redisIndex !== null) {
             $this->laraKubeLine("    • Redis logical DB {$redisIndex} (flushed)");
+        }
+        if ($s3Bucket) {
+            $this->laraKubeLine("    • Object-storage bucket \"{$s3Bucket}\" (all objects)");
         }
         $this->laraKubeLine('    • the tenant entry in the Commons registry');
         $this->laraKubeNewLine();
@@ -121,6 +125,13 @@ class PlexLeaveCommand extends Command
         if ($redisIndex !== null) {
             $this->withSpin("Flushing Redis db {$redisIndex}...", fn () => passthru(
                 $this->plexKubectl().' exec -n '.escapeshellarg($ns)." deploy/redis -- redis-cli -n {$redisIndex} FLUSHDB 2>/dev/null",
+            ));
+        }
+
+        // 3b. Delete the tenant's S3 bucket (best-effort).
+        if ($s3Bucket) {
+            $this->withSpin("Deleting object-storage bucket '{$s3Bucket}'...", fn () => passthru(
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/seaweedfs -- sh -c '.escapeshellarg("echo 's3.bucket.delete -name {$s3Bucket}' | weed shell").' 2>/dev/null',
             ));
         }
 

@@ -7,6 +7,7 @@
  */
 
 use App\Enums\ScoutDriver;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 
 function plexManifest(array $spec): string
@@ -48,4 +49,15 @@ test('--with-meili adds the Meilisearch service to the manifest', function () {
     expect($yaml)
         ->toContain('image: '.ScoutDriver::MEILISEARCH->getDockerImage())  // in lockstep with the enum, not a stale literal
         ->toContain('claimName: meilisearch-data');
+});
+
+test('enabling object storage adds the SeaweedFS S3 service to the manifest', function () {
+    $spec = plexHelper()->normalizeCommonsSpec(['services' => ['seaweedfs' => ['enabled' => true]]]);
+    $yaml = plexManifest($spec);
+
+    expect($yaml)
+        ->toContain('name: seaweedfs')
+        ->toContain('image: '.StorageDriver::SEAWEEDFS->getDockerImage())
+        ->toContain('claimName: seaweedfs-data')
+        ->toContain('"-s3"');  // the S3 gateway is enabled
 });

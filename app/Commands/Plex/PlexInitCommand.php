@@ -243,11 +243,15 @@ class PlexInitCommand extends Command
 
         $postgresPassword = bin2hex(random_bytes(16));
         $meiliMasterKey = bin2hex(random_bytes(16));
+        // Shared Commons S3 credentials (one key, bucket-per-tenant isolation).
+        $s3SecretKey = bin2hex(random_bytes(16));
 
         shell_exec(
             "{$kubectl} create secret generic plex-admin -n {$ns} ".
             '--from-literal=POSTGRES_PASSWORD='.escapeshellarg($postgresPassword).' '.
-            '--from-literal=MEILI_MASTER_KEY='.escapeshellarg($meiliMasterKey).
+            '--from-literal=MEILI_MASTER_KEY='.escapeshellarg($meiliMasterKey).' '.
+            '--from-literal=S3_ACCESS_KEY='.escapeshellarg('larakube').' '.
+            '--from-literal=S3_SECRET_KEY='.escapeshellarg($s3SecretKey).
             " --dry-run=client -o yaml | {$kubectl} apply -f -",
         );
     }

@@ -241,3 +241,77 @@ spec:
       targetPort: {{ $spec['services']['meilisearch']['port'] }}
   type: ClusterIP
 @endif
+@if(($spec['services']['seaweedfs']['enabled'] ?? false))
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-data
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $spec['services']['seaweedfs']['storage'] }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: {{ $spec['services']['seaweedfs']['image'] }}
+          # All-in-one server with the S3 gateway enabled. S3 is in-cluster only
+          # (ClusterIP); tenants are isolated by their own bucket.
+          args: ["server", "-dir=/data", "-s3"]
+          ports:
+            - containerPort: {{ $spec['services']['seaweedfs']['port'] }}
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: seaweedfs-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - protocol: TCP
+      port: {{ $spec['services']['seaweedfs']['port'] }}
+      targetPort: {{ $spec['services']['seaweedfs']['port'] }}
+  type: ClusterIP
+@endif

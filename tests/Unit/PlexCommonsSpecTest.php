@@ -10,6 +10,7 @@
 use App\Enums\CacheDriver;
 use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 
 function plexSpec(): object
@@ -39,7 +40,9 @@ test('Commons service images/ports derive from the driver enums (no drift)', fun
         ->and($spec['redis']['image'])->toBe(CacheDriver::REDIS->getDockerImage())
         ->and($spec['redis']['port'])->toBe(CacheDriver::REDIS->dbPort())
         ->and($spec['meilisearch']['image'])->toBe(ScoutDriver::MEILISEARCH->getDockerImage())  // stays in lockstep, no stale literal
-        ->and($spec['meilisearch']['port'])->toBe(ScoutDriver::MEILISEARCH->port());
+        ->and($spec['meilisearch']['port'])->toBe(ScoutDriver::MEILISEARCH->port())
+        ->and($spec['seaweedfs']['image'])->toBe(StorageDriver::SEAWEEDFS->getDockerImage())
+        ->and($spec['seaweedfs']['port'])->toBe(StorageDriver::SEAWEEDFS->port());
 });
 
 test('--with-meili turns on Meilisearch', function () {

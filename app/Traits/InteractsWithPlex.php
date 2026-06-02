@@ -56,6 +56,7 @@ trait InteractsWithPlex
             'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi'],
             'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
             'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
+            'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(), 'port' => StorageDriver::SEAWEEDFS->port(), 'storage' => '10Gi'],
         ];
 
         $given = $spec['services'] ?? [];
@@ -233,7 +234,7 @@ trait InteractsWithPlex
      * @param  array<int, string>  $services
      * @return array<string, int|string>
      */
-    public function commonsEnvValues(string $tenant, string $password, ?int $redisIndex, array $services): array
+    public function commonsEnvValues(string $tenant, string $password, ?int $redisIndex, array $services, ?array $s3 = null): array
     {
         $ns = $this->plexNamespace();
         $values = [];
@@ -252,6 +253,24 @@ trait InteractsWithPlex
             if ($redisIndex !== null) {
                 $values['REDIS_DB'] = $redisIndex;
             }
+        }
+
+        if (in_array('seaweedfs', $services, true) && $s3 !== null) {
+            // Shape from the StorageDriver enum (FILESYSTEM_DISK + AWS_* keys),
+            // then override the Commons-specific bits: the in-cluster endpoint,
+            // the per-tenant bucket, and the shared Commons credentials. AWS_URL
+            // (public asset links) needs a Commons S3 ingress — a follow-up — so
+            // it's dropped here; in-cluster access via AWS_ENDPOINT works now.
+            $base = StorageDriver::SEAWEEDFS->getPublicEnvironmentVariables();
+            unset($base['AWS_URL'], $base['AWS_TEMPORARY_URL']);
+            $base['AWS_ENDPOINT'] = 'http://seaweedfs.'.$ns.'.svc.cluster.local:'.StorageDriver::SEAWEEDFS->port();
+            $base['AWS_BUCKET'] = $tenant;
+            $base['AWS_ACCESS_KEY_ID'] = $s3['access'];
+
+            foreach ($base as $key => $value) {
+                $values[$key] = $value;
+            }
+            $values['AWS_SECRET_ACCESS_KEY'] = $s3['secret'];
         }
 
         return $values;
@@ -345,7 +364,12 @@ trait InteractsWithPlex
     /** Whether the resolved plex context's API server is reachable. */
     protected function plexContextReachable(): bool
     {
-        exec($this->plexKubectl().' get --raw=/readyz --request-timeout=5s 2>/dev/null', $out, $code);
+        // `cluster-info` is the reliable connectivity probe (matches the proven
+        // hasActiveCluster check). A short timeout keeps us from hanging on a
+        // down/unreachable cluster. (/readyz proved unreliable as a gate.)
+        $out = [];
+        $code = 0;
+        exec($this->plexKubectl().' cluster-info --request-timeout=8s 2>/dev/null', $out, $code);
 
         return $code === 0;
     }
