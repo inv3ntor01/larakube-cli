@@ -32,7 +32,7 @@ class PlexExportCommand extends Command
         if ($output) {
             file_put_contents($output, $json.PHP_EOL);
             $this->laraKubeInfo("Commons spec written to {$output}");
-            $this->laraKubeLine('  Rebuild on a fresh cluster with: <fg=yellow>larakube plex:init --from '.$output.'</>');
+            $this->line('  Rebuild on a fresh cluster with: <fg=yellow>larakube plex:init --from '.$output.'</>');
 
             return 0;
         }

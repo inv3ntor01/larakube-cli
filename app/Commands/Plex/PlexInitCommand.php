@@ -123,7 +123,7 @@ class PlexInitCommand extends Command
                 return null;
             }
 
-            $this->laraKubeLine("  <fg=gray>Rebuilding from spec:</> {$from}");
+            $this->line("  <fg=gray>Rebuilding from spec:</> {$from}");
 
             return $this->normalizeCommonsSpec($decoded);
         }

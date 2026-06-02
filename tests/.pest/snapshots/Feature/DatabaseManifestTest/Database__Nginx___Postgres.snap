@@ -505,6 +505,10 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+      initContainers:
+        - name: wait-for-deps
+          image: postgres-test:latest
+          command: ["sh", "-c", "until nc -z -v -w 1 postgres 5432; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

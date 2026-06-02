@@ -51,3 +51,15 @@ test('local is unaffected (no plex) — DB connection is still emitted', functio
 
     expect($config->getAllEnvironmentVariables('local'))->toHaveKey('DB_HOST');
 });
+
+test('a managed/plex service is excluded from wait-for-deps (no in-namespace nc that never resolves)', function () {
+    $config = plexEnvConfig(['managed' => ['postgres'], 'plex' => ['postgres']]);
+
+    // Production: postgres is managed (external/Commons) → not waited on.
+    $prodDeps = array_map(fn ($d) => $d->value, $config->getCoreDependencies('production'));
+    expect($prodDeps)->not->toContain('postgres');
+
+    // Local: it's a real in-namespace pod → still waited on.
+    $localDeps = array_map(fn ($d) => $d->value, $config->getCoreDependencies('local'));
+    expect($localDeps)->toContain('postgres');
+});

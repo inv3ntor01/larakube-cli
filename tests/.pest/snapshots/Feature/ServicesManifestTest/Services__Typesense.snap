@@ -529,6 +529,10 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+      initContainers:
+        - name: wait-for-deps
+          image: typesense-test:latest
+          command: ["sh", "-c", "true"]
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

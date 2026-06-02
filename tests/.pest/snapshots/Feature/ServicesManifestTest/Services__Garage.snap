@@ -509,6 +509,10 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+      initContainers:
+        - name: wait-for-deps
+          image: garage-test:latest
+          command: ["sh", "-c", "true"]
 
 
 --- FILE: overlays/production/garage-volumes.yaml ---

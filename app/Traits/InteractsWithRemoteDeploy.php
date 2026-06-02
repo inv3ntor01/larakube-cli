@@ -155,7 +155,7 @@ trait InteractsWithRemoteDeploy
         $path = $config->getPath();
         $namespace = $config->getNamespace($environment);
 
-        $this->laraKubeLine("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
+        $this->line("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
 
         if (! $this->remoteContextReachable($context)) {
             $this->laraKubeError("Context '{$context}' is missing or unreachable. Re-run `larakube cloud:provision`.");

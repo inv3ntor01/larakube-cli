@@ -21,5 +21,11 @@ spec:
       imagePullSecrets:
         - name: {{ $pullSecret }}
 @endif
+@if($name === 'web')
+      initContainers:
+        - name: wait-for-deps
+          image: {{ $config->getName() }}:latest
+          command: ["sh", "-c", {!! json_encode($config->buildWaitForCommand($config->getCoreDependencies($environment)) ?: 'true') !!}]
+@endif
 @endif
 @endforeach

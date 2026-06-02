@@ -976,12 +976,17 @@ class ConfigData extends Data
         ]);
     }
 
-    public function getCoreDependencies(): array
+    public function getCoreDependencies(string $environment = 'local'): array
     {
-        return array_filter([
-            $this->database,
-            $this->cacheDriver,
-        ]);
+        // Don't wait on services that are external in this env (managed/Plex) —
+        // they're not in the app's namespace, so an in-namespace `nc <pod>` would
+        // never resolve (the app connects to them directly on boot).
+        $managed = $this->getManaged($environment);
+
+        return array_values(array_filter(
+            [$this->database, $this->cacheDriver],
+            fn ($dep) => $dep !== null && ! in_array($dep->value, $managed, true),
+        ));
     }
 
     public function buildWaitForCommand(array $dependencies, bool $waitForWeb = false): ?string

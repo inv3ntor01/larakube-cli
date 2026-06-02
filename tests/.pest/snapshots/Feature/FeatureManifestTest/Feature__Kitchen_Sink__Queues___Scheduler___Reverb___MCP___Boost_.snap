@@ -748,6 +748,10 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+      initContainers:
+        - name: wait-for-deps
+          image: kitchen-sink:latest
+          command: ["sh", "-c", "true"]
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -448,6 +448,10 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+      initContainers:
+        - name: wait-for-deps
+          image: react-test:latest
+          command: ["sh", "-c", "true"]
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

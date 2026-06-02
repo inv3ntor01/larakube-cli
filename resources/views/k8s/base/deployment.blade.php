@@ -17,7 +17,7 @@ spec:
 @if($config->isSystem())
       serviceAccountName: larakube-dashboard
 @endif
-@if($waitCmd = $config->buildWaitForCommand($config->getCoreDependencies()))
+@if($waitCmd = $config->buildWaitForCommand($config->getCoreDependencies($environment)))
       initContainers:
         - name: wait-for-deps
           image: {{ $config->getName() }}:latest
