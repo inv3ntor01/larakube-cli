@@ -234,8 +234,13 @@ class PlexJoinCommand extends Command
             }
 
             // Demand-driven bootstrap: provision EXACTLY the services this tenant
-            // needs, not a blanket Postgres+Redis default.
-            $this->call('plex:init', ['--yes' => true, '--services' => implode(',', $services)]);
+            // needs (non-interactive via --services), on THIS env's own cluster
+            // (--context), not a blanket default on the current context.
+            $bootstrap = ['--services' => implode(',', $services)];
+            if ($this->plexContext) {
+                $bootstrap['--context'] = $this->plexContext;
+            }
+            $this->call('plex:init', $bootstrap);
             $spec = $this->getCommonsSpec();
 
             if ($spec === null) {

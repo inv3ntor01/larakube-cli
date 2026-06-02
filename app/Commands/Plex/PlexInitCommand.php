@@ -16,9 +16,9 @@ class PlexInitCommand extends Command
     use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput;
 
     protected $signature = 'plex:init
-        {--services= : Comma-separated services to provision, bypassing the prompt (e.g. postgres,redis,meilisearch)}
-        {--from= : Rebuild the Commons from an exported spec file (see plex:export)}
-        {--yes : Skip the confirmation prompt (for automation)}';
+        {--services= : Comma-separated services to provision non-interactively, e.g. postgres,redis,meilisearch (no prompt; nothing assumed)}
+        {--context= : Target a specific kube-context non-interactively (else you are prompted)}
+        {--from= : Rebuild the Commons from an exported spec file (see plex:export)}';
 
     protected $description = 'Provision the shared "Commons" (Postgres + Redis) on the current cluster';
 
@@ -27,10 +27,13 @@ class PlexInitCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Plex — Commons Installer');
 
-        // Pick the target cluster and TARGET it directly (no context switching) —
-        // every Commons operation below runs through plexKubectl() against it.
-        // With --yes (automation) we stay on the current context.
-        if (! $this->option('yes')) {
+        // Target the cluster directly (no context switching) — every Commons op
+        // below runs through plexKubectl() against it. An explicit --context wins;
+        // otherwise we pick interactively, unless --services makes this run
+        // non-interactive (then we stay on the current context).
+        if ($this->option('context')) {
+            $this->plexContext = (string) $this->option('context');
+        } elseif ($this->option('services') === null) {
             $target = $this->askForClusterContext();
 
             if (! $target) {
@@ -152,13 +155,10 @@ class PlexInitCommand extends Command
             $existing,
         );
 
-        // Explicit --services (plex:join's demand-driven bootstrap), or --yes.
+        // Explicit --services (plex:join's demand-driven bootstrap) is the
+        // non-interactive path — exactly what's listed, nothing assumed.
         if ($this->option('services') !== null) {
             return $finalize(array_filter(array_map('trim', explode(',', (string) $this->option('services')))));
-        }
-
-        if ($this->option('yes')) {
-            return $finalize($default);
         }
 
         // Show the WHOLE catalog (databases, cache, search, storage), marking the
