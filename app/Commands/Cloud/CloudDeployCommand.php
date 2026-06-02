@@ -2,21 +2,20 @@
 
 namespace App\Commands\Cloud;
 
-use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
-use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
 
 class CloudDeployCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'cloud:deploy {environment? : The environment to deploy to}';
 
@@ -126,34 +125,5 @@ class CloudDeployCommand extends Command
         }
 
         return $this->deployViaSshSideload($config, $environment);
-    }
-
-    /**
-     * Capture and persist the deploy target for an environment when it isn't in
-     * the blueprint yet (e.g. the server was provisioned before cloud config was
-     * persisted). Saves to environments.{env}.cloud and returns the reloaded config.
-     */
-    protected function captureCloudConnection(ConfigData $config, string $environment, string $projectPath): ConfigData
-    {
-        $this->laraKubeInfo("No deploy target saved for '{$environment}' yet — let's record it once.");
-
-        $ip = text(label: 'Server IP or host', required: true);
-        $user = text(label: 'SSH user', default: 'larakube', required: true);
-        $port = (int) text(label: 'SSH port', default: '22', required: true);
-        $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
-
-        $data = $config->toArray();
-        $data['environments'][$environment]['cloud'] = [
-            'ip' => trim($ip),
-            'user' => trim($user),
-            'port' => $port,
-            'key' => $key,
-        ];
-        ConfigData::from($data)->saveToFile($projectPath);
-
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future deploys won't ask again.");
-
-        return $this->getProjectConfig($projectPath);
     }
 }

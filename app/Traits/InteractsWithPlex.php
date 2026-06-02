@@ -14,6 +14,13 @@ namespace App\Traits;
 trait InteractsWithPlex
 {
     /**
+     * Kube-context the plex commands operate against — the environment's OWN
+     * context, set by the command (so we never switch the global context). Null
+     * means the current context (e.g. plex:init's operator-picked selection).
+     */
+    protected ?string $plexContext = null;
+
+    /**
      * The default Commons spec. Postgres + Redis are always on (the $12/2GB
      * sweet spot); Meilisearch is opt-in (it's the RAM hog). Pure.
      */
@@ -236,6 +243,14 @@ trait InteractsWithPlex
         return $indexes;
     }
 
+    /** A `kubectl` prefix scoped to the resolved plex context (current when null). */
+    protected function plexKubectl(): string
+    {
+        return $this->plexContext !== null && $this->plexContext !== ''
+            ? 'kubectl --context '.escapeshellarg($this->plexContext)
+            : 'kubectl';
+    }
+
     /**
      * The namespace that hosts the shared Commons services.
      */
@@ -252,7 +267,7 @@ trait InteractsWithPlex
     {
         $ns = $this->plexNamespace();
         $json = trim((string) shell_exec(
-            "kubectl get configmap plex-commons -n {$ns} -o jsonpath='{.data.commons\\.json}' 2>/dev/null",
+            $this->plexKubectl()." get configmap plex-commons -n {$ns} -o jsonpath='{.data.commons\\.json}' 2>/dev/null",
         ));
 
         if ($json === '') {
@@ -271,7 +286,7 @@ trait InteractsWithPlex
     {
         $ns = $this->plexNamespace();
         $json = trim((string) shell_exec(
-            "kubectl get configmap plex-registry -n {$ns} -o jsonpath='{.data.registry\\.json}' 2>/dev/null",
+            $this->plexKubectl()." get configmap plex-registry -n {$ns} -o jsonpath='{.data.registry\\.json}' 2>/dev/null",
         ));
 
         $registry = $json === '' ? [] : json_decode($json, true);
@@ -289,10 +304,11 @@ trait InteractsWithPlex
         $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_registry');
         file_put_contents($tmp, (string) json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
+        $kubectl = $this->plexKubectl();
         shell_exec(
-            "kubectl create configmap plex-registry -n {$ns} ".
+            "{$kubectl} create configmap plex-registry -n {$ns} ".
             '--from-file=registry.json='.escapeshellarg($tmp).
-            ' --dry-run=client -o yaml | kubectl apply -f -',
+            " --dry-run=client -o yaml | {$kubectl} apply -f -",
         );
 
         @unlink($tmp);

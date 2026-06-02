@@ -3,10 +3,10 @@
 namespace App\Commands\Plex;
 
 use App\Data\ConfigData;
-use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
 
@@ -14,7 +14,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class PlexJoinCommand extends Command
 {
-    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'plex:join
         {environment=production : The cloud environment to join to the Commons}
@@ -60,14 +60,24 @@ class PlexJoinCommand extends Command
             return 1;
         }
 
-        // 2. Cluster must be reachable.
-        if (! $this->hasActiveCluster()) {
-            $this->laraKubeError('No reachable cluster on the current kube-context. Provision/select it first.');
+        // 2. Target the environment's OWN context (never the current/global one) —
+        //    recording the deploy target once if it isn't saved yet. No switching.
+        [$config, $context] = $this->resolveEnvironmentContext($config, $env, $projectPath);
+
+        if (! $context) {
+            $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:provision` (or set environments.{$env}.cloud).");
 
             return 1;
         }
 
-        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        $this->plexContext = $context;
+
+        if (! $this->environmentContextReachable($context)) {
+            $this->laraKubeError("Cluster context '{$context}' is unreachable. Check the server / re-run cloud:provision.");
+
+            return 1;
+        }
+
         $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>{$context}</>");
         $this->line('  <fg=gray>Services:</> '.implode(', ', $services));
         $this->laraKubeNewLine();
@@ -165,7 +175,7 @@ class PlexJoinCommand extends Command
         $namespace = $config->getNamespace($env);
         $pvc = $config->getName().'-postgres-pvc';
         $exists = trim((string) shell_exec(
-            'kubectl get pvc '.escapeshellarg($pvc).' -n '.escapeshellarg($namespace).' -o name 2>/dev/null',
+            $this->plexKubectl().' get pvc '.escapeshellarg($pvc).' -n '.escapeshellarg($namespace).' -o name 2>/dev/null',
         )) !== '';
 
         if ($exists) {
@@ -234,7 +244,7 @@ class PlexJoinCommand extends Command
         $code = 0;
         $this->withSpin("Allocating database '{$tenant}' in the Commons...", function () use ($ns, $tmp, &$output, &$code) {
             exec(
-                'kubectl exec -i -n '.escapeshellarg($ns).' deploy/postgres -- '.
+                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/postgres -- '.
                 'psql -U postgres -v ON_ERROR_STOP=1 < '.escapeshellarg($tmp).' 2>&1',
                 $output,
                 $code,
