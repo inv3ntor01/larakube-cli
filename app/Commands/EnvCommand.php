@@ -10,6 +10,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 
+use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
@@ -93,9 +94,26 @@ class EnvCommand extends Command
 
         $this->laraKubeInfo("Environment '{$envName}' is now part of your project DNA.");
         $this->newLine();
+
+        // 5. Offer to set up the CI/CD deploy workflow for this env now. It's a
+        // separate concern (cloud:configure also uploads GitHub secrets via the
+        // `gh` CLI, which needs auth), so we ask rather than force it.
+        $configureCicd = confirm(
+            label: "Set up the GitHub Actions deploy workflow for '{$envName}' now?",
+            default: false,
+            hint: 'Generates .github/workflows/larakube-deploy-'.$envName.'.yml (you pick its trigger branch) and uploads secrets.',
+        );
+
+        if ($configureCicd) {
+            $this->call('cloud:configure', ['action' => 'gha']);
+
+            return;
+        }
+
         $this->line('  <fg=gray>Next steps:</>');
         $this->line("  1. Preview the merged manifests:  <fg=yellow>larakube kustomize {$envName}</>");
-        $this->line("  2. Deploy via your CI/CD pipeline, or manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
+        $this->line("  2. Set up CI/CD (per-env workflow + branch):  <fg=yellow>larakube cloud:configure gha</> (choose '{$envName}')");
+        $this->line("  3. Or deploy manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
     }
 
     /**
