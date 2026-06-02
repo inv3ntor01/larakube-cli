@@ -54,7 +54,9 @@ build_standalone() {
 # 🔍 Static analysis gate — fail before packaging if new code has an undefined
 # class/method/function (the bug class that crashed init). Fast at level 0.
 echo -e "🔍 ${BOLD}Static analysis${RESET} (PHPStan/Larastan)..."
-run_php ./vendor/bin/phpstan analyse --no-progress
+# --memory-limit matches composer's "analyse" script; the 256M default OOMs a
+# parallel worker on the growing codebase.
+run_php ./vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 
 case $BUILD_TYPE in
     "--local")
