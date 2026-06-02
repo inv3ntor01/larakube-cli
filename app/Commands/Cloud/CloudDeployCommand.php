@@ -2,18 +2,21 @@
 
 namespace App\Commands\Cloud;
 
+use App\Data\ConfigData;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
 
 class CloudDeployCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput;
 
     protected $signature = 'cloud:deploy {environment? : The environment to deploy to}';
 
@@ -74,39 +77,83 @@ class CloudDeployCommand extends Command
             $config->setHost($environment, 'web', $newHost);
             $this->saveProjectConfig($projectPath, $config);
 
-            $this->withSpin('Updating architectural manifests with your domain...', function () use ($config) {
-                // Force a re-generation of manifests with the new domain
-                $this->orchestrateProjectScaffolding($config, installFeatures: false, buildImage: false, syncEnv: false);
-
-                return true;
-            });
+            // Reflect the domain in the env file's APP_URL too. Narrow on purpose
+            // (only APP_URL) rather than a full syncEnv, so we never clobber other
+            // env values — e.g. a Plex-managed DB_HOST. (The manifest regen below
+            // uses syncEnv:false for the same reason.)
+            $appUrl = 'https://'.$newHost;
+            if ($environment === 'production') {
+                $this->syncEnvFile($projectPath, ['APP_URL' => $appUrl], false, true);
+            } elseif (file_exists($projectPath.'/.env.'.$environment)) {
+                $envPath = $projectPath.'/.env.'.$environment;
+                $content = (string) file_get_contents($envPath);
+                $content = preg_match('/^#?\s*APP_URL=.*/m', $content)
+                    ? preg_replace('/^#?\s*APP_URL=.*/m', 'APP_URL='.$appUrl, $content)
+                    : rtrim($content)."\nAPP_URL=".$appUrl."\n";
+                file_put_contents($envPath, $content);
+            }
         }
 
-        $this->laraKubeInfo("Starting deployment to '{$environment}'...");
+        // Always regenerate manifests from the blueprint, so a CLI upgrade or a
+        // blueprint change is reflected on every deploy — not only when the domain
+        // was just set above.
+        $this->withSpin('Regenerating manifests from your blueprint...', function () use ($config) {
+            $this->orchestrateProjectScaffolding($config, installFeatures: false, buildImage: false, syncEnv: false);
 
-        // 1. Verify kubectl context
-        $context = shell_exec('kubectl config current-context');
-        $this->laraKubeInfo('Current Kubernetes Context: '.trim($context));
+            return true;
+        });
 
-        if (! confirm('Are you sure you want to deploy to this cluster?')) {
+        // Resolve the env's deploy target. It lives in .larakube.json
+        // (environments.{env}.cloud); if it's not recorded yet (e.g. the server
+        // was provisioned before this was persisted), ask once and save it — so
+        // the target is in the blueprint and future deploys are zero-prompt. The
+        // env's OWN kube-context is derived from it (larakube-<ip>), never the
+        // global current-context, so local dev pointed elsewhere is undisturbed.
+        $cloud = $config->getCloud($environment);
+        if (! $cloud || ! $cloud->ip) {
+            $config = $this->captureCloudConnection($config, $environment, $projectPath);
+            $cloud = $config->getCloud($environment);
+        }
+
+        $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
+        $this->line('   <fg=gray>Builds locally, sideloads the image into the remote node (no registry), applies manifests.</>');
+        $this->newLine();
+
+        if (! confirm('Proceed?', true)) {
             $this->laraKubeInfo('Deployment cancelled.');
 
             return 0;
         }
 
-        // 2. Offer to build and push
-        if (confirm('Would you like to build and push the production image now?')) {
-            $appName = basename(getcwd());
-            // In a real scenario, we'd ask for the registry URL (e.g., ghcr.io/user/repo)
-            $this->laraKubeInfo("Note: This assumes you have 'docker login' configured for your registry.");
+        return $this->deployViaSshSideload($config, $environment);
+    }
 
-            // For now, we delegate to the 'up' logic but ensure it targets production
-            $this->call('up', ['environment' => $environment]);
-        } else {
-            // Just apply manifests
-            $this->call('up', ['environment' => $environment]);
-        }
+    /**
+     * Capture and persist the deploy target for an environment when it isn't in
+     * the blueprint yet (e.g. the server was provisioned before cloud config was
+     * persisted). Saves to environments.{env}.cloud and returns the reloaded config.
+     */
+    protected function captureCloudConnection(ConfigData $config, string $environment, string $projectPath): ConfigData
+    {
+        $this->laraKubeInfo("No deploy target saved for '{$environment}' yet — let's record it once.");
 
-        return 0;
+        $ip = text(label: 'Server IP or host', required: true);
+        $user = text(label: 'SSH user', default: 'larakube', required: true);
+        $port = (int) text(label: 'SSH port', default: '22', required: true);
+        $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
+        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+
+        $data = $config->toArray();
+        $data['environments'][$environment]['cloud'] = [
+            'ip' => trim($ip),
+            'user' => trim($user),
+            'port' => $port,
+            'key' => $key,
+        ];
+        ConfigData::from($data)->saveToFile($projectPath);
+
+        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future deploys won't ask again.");
+
+        return $this->getProjectConfig($projectPath);
     }
 }
