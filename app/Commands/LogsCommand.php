@@ -61,22 +61,16 @@ class LogsCommand extends Command
 
         $labels = [];
         foreach ($services as $service) {
-            $labels[] = match (trim($service)) {
-                'web' => 'laravel-web',
-                'node' => 'laravel-node',
-                'horizon' => 'laravel-horizon',
-                'reverb' => 'laravel-reverb',
-                'mysql' => 'mysql',
-                'postgres' => 'postgres',
-                'redis' => 'redis',
-                'meilisearch' => 'meilisearch',
-                'typesense' => 'typesense',
-                'mailpit' => 'mailpit',
-                default => trim($service),
-            };
+            $service = trim($service);
+            // Pods are labelled with the bare service name (app=web, app=postgres,
+            // …). Include the legacy `laravel-` form so older deployments match too.
+            $labels[] = $service;
+            if (in_array($service, ['web', 'node', 'horizon', 'reverb', 'queues'], true)) {
+                $labels[] = "laravel-{$service}";
+            }
         }
 
-        $labelSelector = 'app in ('.implode(',', $labels).')';
+        $labelSelector = 'app in ('.implode(',', array_unique($labels)).')';
 
         $this->laraKubeInfo('Tailing logs for ['.implode(', ', $services)."] in namespace '{$namespace}'...");
         passthru("{$kubectl} logs -f -l '{$labelSelector}' -n {$namespace} --all-containers --prefix --max-log-requests=15 --tail=50");
