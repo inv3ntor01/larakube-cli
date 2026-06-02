@@ -82,6 +82,52 @@ trait GeneratesProjectInfrastructure
     }
 
     /**
+     * Pure: rewrite ASSET_URL to $target only when it's empty or a local
+     * "*.dev.test" value. Leaves a real asset host (CDN) or an absent ASSET_URL
+     * untouched. Kept side-effect-free so the policy is unit-testable.
+     */
+    public function alignAssetUrlValue(string $content, string $target): string
+    {
+        if (! preg_match('/^#?\s*ASSET_URL=(.*)$/m', $content, $m)) {
+            return $content; // not present — leave as-is
+        }
+
+        $current = trim($m[1]);
+        if ($current !== '' && ! str_contains($current, '.dev.test')) {
+            return $content; // deliberate non-local value — don't clobber
+        }
+
+        return preg_replace('/^#?\s*ASSET_URL=.*$/m', 'ASSET_URL='.$target, $content, 1);
+    }
+
+    /**
+     * Align ASSET_URL in .env.production with the deploy domain. Laravel's @vite
+     * prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test" value
+     * sends production assets to the dev host (404 / unstyled page). Rewrites
+     * ONLY an empty or "*.dev.test" value — never a deliberate CDN/asset host —
+     * and is a no-op when ASSET_URL is absent (assets then resolve relative to
+     * APP_URL, which is fine). Narrow on purpose, like the APP_URL sync.
+     */
+    protected function alignProductionAssetUrl(string $projectPath, ?string $webHost): void
+    {
+        if (empty($webHost)) {
+            return;
+        }
+
+        $envPath = $projectPath.'/.env.production';
+        if (! file_exists($envPath)) {
+            return;
+        }
+
+        $content = (string) file_get_contents($envPath);
+        $aligned = $this->alignAssetUrlValue($content, 'https://'.$webHost);
+
+        if ($aligned !== $content) {
+            file_put_contents($envPath, $aligned);
+        }
+    }
+
+    /**
      * Sync values to the .env file.
      */
     protected function syncEnvFile(string $projectPath, array $values, bool $commented = false, bool $isProduction = false): void
