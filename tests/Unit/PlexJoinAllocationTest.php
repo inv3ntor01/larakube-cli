@@ -132,3 +132,17 @@ test('registry transforms add, remove, and report used redis indexes', function 
         ->and($r['tenants'])->not->toHaveKey('app_one')
         ->and($p->registryUsedRedisIndexes($r))->toBe([1]);
 });
+
+test('commonsServiceTenants reports who uses a service (the plex:remove guard)', function () {
+    $p = plexJoin();
+    $registry = ['tenants' => [
+        'app_one' => ['db' => 'app_one', 'redis_index' => null],
+        'app_four' => ['db' => 'app_four', 'redis_index' => 0],
+        'app_five' => ['db' => 'app_five', 's3_service' => 'seaweedfs', 's3_bucket' => 'app_five'],
+    ]];
+
+    expect($p->commonsServiceTenants($registry, 'redis'))->toBe(['app_four'])            // only the one with an index
+        ->and($p->commonsServiceTenants($registry, 'seaweedfs'))->toBe(['app_five'])     // by recorded s3_service
+        ->and($p->commonsServiceTenants($registry, 'minio'))->toBe([])                   // no minio tenant → safe to remove
+        ->and($p->commonsServiceTenants($registry, 'postgres'))->toBe(['app_one', 'app_four', 'app_five']); // conservative: any db
+});

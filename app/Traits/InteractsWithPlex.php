@@ -343,6 +343,33 @@ trait InteractsWithPlex
     }
 
     /**
+     * Tenants that still use a given Commons service — the guard for plex:remove.
+     * Pure. Precise for redis (redis_index) and storage backends (s3_service);
+     * conservative for postgres (any tenant with a db). Other services have no
+     * per-tenant tracking yet, so they report no users.
+     *
+     * @return array<int, string>
+     */
+    public function commonsServiceTenants(array $registry, string $service): array
+    {
+        $users = [];
+        foreach ($registry['tenants'] ?? [] as $name => $alloc) {
+            $uses = match (true) {
+                $service === 'redis' => ($alloc['redis_index'] ?? null) !== null,
+                $service === 'postgres' => ! empty($alloc['db']),
+                ($alloc['s3_service'] ?? null) === $service => true,
+                default => false,
+            };
+
+            if ($uses) {
+                $users[] = $name;
+            }
+        }
+
+        return $users;
+    }
+
+    /**
      * @return array<int, int>
      */
     public function registryUsedRedisIndexes(array $registry): array
@@ -355,6 +382,30 @@ trait InteractsWithPlex
         }
 
         return $indexes;
+    }
+
+    /**
+     * Render the Commons manifest from a spec and apply it to the resolved plex
+     * context (creates/updates the spec ConfigMap + enabled service workloads).
+     * Disabled services aren't rendered — kubectl apply won't prune them, so a
+     * caller removing a service must delete its resources explicitly.
+     *
+     * @param  array<string, mixed>  $spec
+     */
+    protected function applyCommonsManifest(array $spec): void
+    {
+        $json = (string) json_encode($spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $manifest = view('k8s.plex.commons', [
+            'spec' => $spec,
+            'specJsonIndented' => preg_replace('/^/m', '    ', $json),
+        ])->render();
+
+        $ns = $this->plexNamespace();
+        $kubectl = $this->plexKubectl();
+        $tmp = sys_get_temp_dir().'/larakube-plex-commons.yaml';
+        file_put_contents($tmp, $manifest);
+        passthru("{$kubectl} apply -n {$ns} -f ".escapeshellarg($tmp));
+        @unlink($tmp);
     }
 
     /** A `kubectl` prefix scoped to the resolved plex context (current when null). */
