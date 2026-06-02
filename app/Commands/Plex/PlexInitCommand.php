@@ -2,12 +2,14 @@
 
 namespace App\Commands\Plex;
 
+use App\Contracts\HasPromptableHosts;
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\multiselect;
+use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
 
@@ -18,6 +20,7 @@ class PlexInitCommand extends Command
     protected $signature = 'plex:init
         {--services= : Comma-separated services to provision non-interactively, e.g. postgres,redis,meilisearch (no prompt; nothing assumed)}
         {--context= : Target a specific kube-context non-interactively (else you are prompted)}
+        {--s3-host= : Public host for the object-storage S3 (creates an ingress; used for tenant AWS_URL)}
         {--from= : Rebuild the Commons from an exported spec file (see plex:export)}';
 
     protected $description = 'Provision the shared "Commons" (Postgres + Redis) on the current cluster';
@@ -61,6 +64,10 @@ class PlexInitCommand extends Command
         if ($spec === null) {
             return 1;
         }
+
+        // 1b. Learn a public host for every enabled service that declares one
+        // (HasPromptableHosts — object storage today). Optional; blank = in-cluster.
+        $spec = $this->ensurePublicHosts($spec);
 
         $ns = $this->plexNamespace();
         $enabled = $this->enabledCommonsServices($spec);
@@ -226,6 +233,49 @@ class PlexInitCommand extends Command
     }
 
     /**
+     * Resolve a public host for every enabled service that declares one —
+     * identified by the HasPromptableHosts contract on its driver (object storage
+     * today; Postgres/Redis/search stay in-cluster and are never prompted). Each
+     * host-bearing service gets its OWN host (so distinct S3 backends don't
+     * collide). Source: --s3-host, an already-set value (kept), or a prompt.
+     * Optional — blank leaves the service in-cluster only.
+     *
+     * @param  array<string, mixed>  $spec
+     * @return array<string, mixed>
+     */
+    protected function ensurePublicHosts(array $spec): array
+    {
+        $catalog = $this->commonsServiceCatalog();
+
+        foreach (array_keys($spec['services'] ?? []) as $service) {
+            if (! ($spec['services'][$service]['enabled'] ?? false)) {
+                continue;
+            }
+            if (! (($catalog[$service]['driver'] ?? null) instanceof HasPromptableHosts)) {
+                continue; // no client-facing host → in-cluster only
+            }
+            if (! empty($spec['services'][$service]['host'])) {
+                continue; // already set (reconcile)
+            }
+
+            $host = (string) ($this->option('s3-host') ?? '');
+            if ($host === '' && $this->option('services') === null) {
+                $host = text(
+                    label: "Public host for the Commons '{$service}' (object storage)?",
+                    placeholder: 's3.example.com — leave blank for in-cluster only',
+                    hint: 'Sets up an ingress + tenant AWS_URL so files get public links.',
+                );
+            }
+
+            if (trim($host) !== '') {
+                $spec['services'][$service]['host'] = trim($host);
+            }
+        }
+
+        return $spec;
+    }
+
+    /**
      * Ensure the Commons admin Secret (Postgres password + Meili master key)
      * exists. Generated once; left untouched on re-run so the password is stable.
      */
@@ -278,9 +328,13 @@ class PlexInitCommand extends Command
         $this->laraKubeInfo('✅ Commons is ready.');
         $this->line('  Tenants reach these in-cluster hosts:');
 
-        foreach (['postgres' => 5432, 'redis' => 6379, 'meili' => 7700] as $service => $port) {
-            if ($spec['services'][$service]['enabled'] ?? false) {
-                $this->line("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:{$port}</>");
+        foreach ($spec['services'] ?? [] as $service => $cfg) {
+            if (! ($cfg['enabled'] ?? false)) {
+                continue;
+            }
+            $this->line("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:".($cfg['port'] ?? '').'</>');
+            if (! empty($cfg['host'])) {
+                $this->line("      <fg=gray>public:</> <fg=cyan>https://{$cfg['host']}</>");
             }
         }
 

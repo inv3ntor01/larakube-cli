@@ -314,4 +314,33 @@ spec:
       port: {{ $spec['services']['seaweedfs']['port'] }}
       targetPort: {{ $spec['services']['seaweedfs']['port'] }}
   type: ClusterIP
+@if(! empty($spec['services']['seaweedfs']['host']))
+---
+# Public S3 endpoint (so tenants can generate public file URLs via AWS_URL).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seaweedfs-s3
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: {{ $spec['services']['seaweedfs']['host'] }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seaweedfs
+                port:
+                  number: {{ $spec['services']['seaweedfs']['port'] }}
+  tls:
+    - hosts:
+        - {{ $spec['services']['seaweedfs']['host'] }}
+@endif
 @endif

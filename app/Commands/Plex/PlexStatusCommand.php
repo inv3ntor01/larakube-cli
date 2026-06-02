@@ -68,6 +68,9 @@ class PlexStatusCommand extends Command
             $mark = $on ? '<fg=green>●</>' : '<fg=gray>○</>';
             $detail = $on ? "{$service}.{$ns}.svc.cluster.local:".($cfg['port'] ?? '') : 'disabled';
             $this->line('    '.$mark.' '.str_pad($service, 12).' <fg=gray>'.$detail.'</>');
+            if ($on && ! empty($cfg['host'])) {
+                $this->line('      <fg=gray>public:</> <fg=cyan>https://'.$cfg['host'].'</>');
+            }
         }
 
         // Tenants from the registry (highlight this app if it's one).

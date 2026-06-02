@@ -128,26 +128,40 @@ class PlexJoinCommand extends Command
 
         // Object storage: a per-tenant bucket on the shared Commons S3, using the
         // shared Commons credentials (bucket-per-tenant isolation).
+        // Object storage: details come from the tenant's OWN StorageDriver (its
+        // commonsServiceName + port), so this works for whichever S3 backend the
+        // app declared — no hardcoded service.
         $s3 = null;
-        if (in_array('seaweedfs', $services, true)) {
-            $s3 = $this->readCommonsS3Credentials();
+        $storage = $config->getObjectStorage();
+        if ($storage !== null && in_array($storage->commonsServiceName(), $services, true)) {
+            $creds = $this->readCommonsS3Credentials();
 
-            if ($s3 === null) {
+            if ($creds === null) {
                 $this->laraKubeError('Commons S3 credentials (plex-admin) not found. Re-run `larakube plex:init`.');
 
                 return 1;
             }
 
-            if (! $this->allocateStorageBucket($tenant)) {
+            $svc = $storage->commonsServiceName();
+            $s3 = [
+                'service' => $svc,
+                'port' => $storage->port(),
+                'access' => $creds['access'],
+                'secret' => $creds['secret'],
+                'host' => $this->getCommonsSpec()['services'][$svc]['host'] ?? null,  // public host for AWS_URL
+            ];
+
+            if (! $this->allocateStorageBucket($tenant, $svc)) {
                 return 1;
             }
         }
 
-        // 6. Record the allocation (db + redis index + s3 bucket; never secrets).
+        // 6. Record the allocation (db + redis index + s3 bucket/backend; never secrets).
         $registry = $this->registryAdd($registry, $tenant, [
             'db' => $tenant,
             'redis_index' => $redisIndex,
-            's3_bucket' => in_array('seaweedfs', $services, true) ? $tenant : null,
+            's3_bucket' => $s3 !== null ? $tenant : null,
+            's3_service' => $s3['service'] ?? null,
         ]);
         $this->saveRegistry($registry);
 
@@ -327,16 +341,17 @@ class PlexJoinCommand extends Command
      * Create this tenant's bucket on the Commons SeaweedFS via `weed shell`
      * (idempotent — re-creating an existing bucket is a no-op).
      */
-    protected function allocateStorageBucket(string $tenant): bool
+    protected function allocateStorageBucket(string $tenant, string $service): bool
     {
         $ns = $this->plexNamespace();
+        // SeaweedFS (the wired backend) provisions buckets via `weed shell`.
         $weed = "echo 's3.bucket.create -name {$tenant}' | weed shell";
 
         $output = [];
         $code = 0;
-        $this->withSpin("Creating object-storage bucket '{$tenant}' in the Commons...", function () use ($ns, $weed, &$output, &$code) {
+        $this->withSpin("Creating object-storage bucket '{$tenant}' in the Commons...", function () use ($ns, $service, $weed, &$output, &$code) {
             exec(
-                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/seaweedfs -- sh -c '.escapeshellarg($weed).' 2>&1',
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$service.' -- sh -c '.escapeshellarg($weed).' 2>&1',
                 $output,
                 $code,
             );

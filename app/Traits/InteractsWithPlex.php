@@ -255,22 +255,26 @@ trait InteractsWithPlex
             }
         }
 
-        if (in_array('seaweedfs', $services, true) && $s3 !== null) {
-            // Shape from the StorageDriver enum (FILESYSTEM_DISK + AWS_* keys),
-            // then override the Commons-specific bits: the in-cluster endpoint,
-            // the per-tenant bucket, and the shared Commons credentials. AWS_URL
-            // (public asset links) needs a Commons S3 ingress — a follow-up — so
-            // it's dropped here; in-cluster access via AWS_ENDPOINT works now.
-            $base = StorageDriver::SEAWEEDFS->getPublicEnvironmentVariables();
-            unset($base['AWS_URL'], $base['AWS_TEMPORARY_URL']);
-            $base['AWS_ENDPOINT'] = 'http://seaweedfs.'.$ns.'.svc.cluster.local:'.StorageDriver::SEAWEEDFS->port();
-            $base['AWS_BUCKET'] = $tenant;
-            $base['AWS_ACCESS_KEY_ID'] = $s3['access'];
-
-            foreach ($base as $key => $value) {
-                $values[$key] = $value;
-            }
+        // Object storage. The caller passes the tenant's chosen backend in $s3
+        // (service name + port + creds + optional public host), so this stays
+        // generic across S3 backends — SeaweedFS, MinIO, Garage — with no
+        // hardcoded service. The AWS_* keys are the standard Laravel S3 contract.
+        if ($s3 !== null) {
+            $values['FILESYSTEM_DISK'] = 's3';
+            $values['AWS_ACCESS_KEY_ID'] = $s3['access'];
             $values['AWS_SECRET_ACCESS_KEY'] = $s3['secret'];
+            $values['AWS_DEFAULT_REGION'] = 'us-east-1';
+            $values['AWS_BUCKET'] = $tenant;
+            $values['AWS_ENDPOINT'] = 'http://'.$s3['service'].'.'.$ns.'.svc.cluster.local:'.$s3['port'];
+            $values['AWS_USE_PATH_STYLE_ENDPOINT'] = 'true';
+
+            // Public file URLs (Storage::url()) come from THIS backend's own public
+            // host (path-style → host/bucket), if one is configured. In-cluster
+            // access always works via AWS_ENDPOINT regardless.
+            if (! empty($s3['host'])) {
+                $values['AWS_URL'] = 'https://'.$s3['host'].'/'.$tenant;
+                $values['AWS_TEMPORARY_URL'] = 'https://'.$s3['host'].'/'.$tenant;
+            }
         }
 
         return $values;

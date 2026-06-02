@@ -66,19 +66,28 @@ test('commonsEnvValues emits only the requested services', function () {
         ->and($redisOnly['REDIS_DB'])->toBe(2);
 });
 
-test('commonsEnvValues wires S3 from the StorageDriver shape with a per-tenant bucket', function () {
+test('commonsEnvValues wires S3 generically from the tenant backend + per-tenant bucket', function () {
     $p = plexJoin();
 
-    $s3 = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['access' => 'larakube', 'secret' => 'sk']);
+    // The caller passes the tenant's OWN backend (service + port) — no hardcoded service.
+    $s3 = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['service' => 'seaweedfs', 'port' => 8333, 'access' => 'larakube', 'secret' => 'sk']);
     expect($s3['FILESYSTEM_DISK'])->toBe('s3')
         ->and($s3['AWS_BUCKET'])->toBe('app_four')                                                  // per-tenant bucket
-        ->and($s3['AWS_ENDPOINT'])->toBe('http://seaweedfs.larakube-shared.svc.cluster.local:8333') // in-cluster Commons
+        ->and($s3['AWS_ENDPOINT'])->toBe('http://seaweedfs.larakube-shared.svc.cluster.local:8333') // its backend's endpoint
         ->and($s3['AWS_ACCESS_KEY_ID'])->toBe('larakube')
         ->and($s3['AWS_SECRET_ACCESS_KEY'])->toBe('sk')
         ->and($s3['AWS_USE_PATH_STYLE_ENDPOINT'])->toBe('true')
-        ->and($s3)->not->toHaveKey('AWS_URL');                                                      // public asset URL deferred
+        ->and($s3)->not->toHaveKey('AWS_URL');                                                      // no public host → no public URL
 
-    // No S3 keys unless storage is requested AND creds are supplied.
+    // A different backend lands on its OWN endpoint — generic, not collapsed onto seaweedfs.
+    $minio = $p->commonsEnvValues('app_four', 'pw', null, ['minio'], ['service' => 'minio', 'port' => 9000, 'access' => 'k', 'secret' => 's']);
+    expect($minio['AWS_ENDPOINT'])->toBe('http://minio.larakube-shared.svc.cluster.local:9000');
+
+    // A configured public host → AWS_URL (path-style host/bucket).
+    $withHost = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['service' => 'seaweedfs', 'port' => 8333, 'access' => 'k', 'secret' => 's', 'host' => 's3.example.com']);
+    expect($withHost['AWS_URL'])->toBe('https://s3.example.com/app_four');
+
+    // No S3 details → no S3 env.
     expect($p->commonsEnvValues('app_four', 'pw', null, ['postgres']))->not->toHaveKey('AWS_BUCKET')
         ->and($p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], null))->not->toHaveKey('AWS_BUCKET');
 });

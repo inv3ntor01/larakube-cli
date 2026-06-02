@@ -72,6 +72,7 @@ class PlexLeaveCommand extends Command
         $db = $entry['db'] ?? null;
         $redisIndex = $entry['redis_index'] ?? null;
         $s3Bucket = $entry['s3_bucket'] ?? null;
+        $s3Service = $entry['s3_service'] ?? 'seaweedfs';
         $ns = $this->plexNamespace();
 
         $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>".($context ?: 'current').'</>');
@@ -131,7 +132,7 @@ class PlexLeaveCommand extends Command
         // 3b. Delete the tenant's S3 bucket (best-effort).
         if ($s3Bucket) {
             $this->withSpin("Deleting object-storage bucket '{$s3Bucket}'...", fn () => passthru(
-                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/seaweedfs -- sh -c '.escapeshellarg("echo 's3.bucket.delete -name {$s3Bucket}' | weed shell").' 2>/dev/null',
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$s3Service.' -- sh -c '.escapeshellarg("echo 's3.bucket.delete -name {$s3Bucket}' | weed shell").' 2>/dev/null',
             ));
         }
 
