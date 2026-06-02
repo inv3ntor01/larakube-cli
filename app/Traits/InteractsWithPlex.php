@@ -28,16 +28,16 @@ trait InteractsWithPlex
     protected ?string $plexContext = null;
 
     /**
-     * The default Commons spec. Postgres + Redis are always on (the $12/2GB
-     * sweet spot); Meilisearch is opt-in (it's the RAM hog). Pure.
+     * The default Commons spec: Postgres + Redis (the always-on $12/2GB pair).
+     * Everything else (Meilisearch, object storage, …) is opt-in via plex:init's
+     * picker or the spec — no per-service flags. Pure.
      */
-    public function defaultCommonsSpec(bool $withMeili = false): array
+    public function defaultCommonsSpec(): array
     {
         return $this->normalizeCommonsSpec([
             'services' => [
                 'postgres' => ['enabled' => true],
                 'redis' => ['enabled' => true],
-                'meilisearch' => ['enabled' => $withMeili],
             ],
         ]);
     }

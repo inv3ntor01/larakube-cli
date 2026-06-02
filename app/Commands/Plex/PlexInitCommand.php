@@ -16,8 +16,7 @@ class PlexInitCommand extends Command
     use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput;
 
     protected $signature = 'plex:init
-        {--with-meili : Include Meilisearch in the Commons (RAM-heavy; off by default)}
-        {--services= : Comma-separated services to provision, bypassing the prompt (used by plex:join)}
+        {--services= : Comma-separated services to provision, bypassing the prompt (e.g. postgres,redis,meilisearch)}
         {--from= : Rebuild the Commons from an exported spec file (see plex:export)}
         {--yes : Skip the confirmation prompt (for automation)}';
 
@@ -144,9 +143,6 @@ class PlexInitCommand extends Command
         $existing = $this->getCommonsSpec();
         $current = $existing !== null ? $this->enabledCommonsServices($existing) : [];
         $default = $existing !== null ? $current : $this->projectDefaultServices($ready);
-        if ($this->option('with-meili')) {
-            $default[] = 'meilisearch';
-        }
 
         // plex:init is ADDITIVE on an existing Commons — re-running never disables
         // a running service (removal isn't wired here): union(current, picked).

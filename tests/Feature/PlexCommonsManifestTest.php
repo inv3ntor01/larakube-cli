@@ -29,7 +29,7 @@ function plexHelper(): object
 }
 
 test('the default Commons manifest has Postgres + Redis, embeds the spec, and omits Meili', function () {
-    $yaml = plexManifest(plexHelper()->defaultCommonsSpec(false));
+    $yaml = plexManifest(plexHelper()->defaultCommonsSpec());
 
     expect($yaml)
         ->toContain('kind: ConfigMap')
@@ -43,8 +43,9 @@ test('the default Commons manifest has Postgres + Redis, embeds the spec, and om
         ->not->toContain('name: meilisearch');
 });
 
-test('--with-meili adds the Meilisearch service to the manifest', function () {
-    $yaml = plexManifest(plexHelper()->defaultCommonsSpec(true));
+test('enabling Meilisearch adds it to the manifest', function () {
+    $spec = plexHelper()->normalizeCommonsSpec(['services' => ['meilisearch' => ['enabled' => true]]]);
+    $yaml = plexManifest($spec);
 
     expect($yaml)
         ->toContain('image: '.ScoutDriver::MEILISEARCH->getDockerImage())  // in lockstep with the enum, not a stale literal
