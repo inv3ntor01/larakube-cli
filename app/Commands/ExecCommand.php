@@ -4,12 +4,14 @@ namespace App\Commands;
 
 use App\Traits\CapturesPassthroughArgs;
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 use LaravelZero\Framework\Commands\Command;
 
 class ExecCommand extends Command
 {
-    use CapturesPassthroughArgs, InteractsWithEnvironments, LaraKubeOutput;
+    use CapturesPassthroughArgs, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -55,6 +57,10 @@ class ExecCommand extends Command
 
         $namespace = $this->getNamespace($environment);
 
+        // Target the env's OWN context (local → current context, unchanged).
+        $config = $this->getProjectConfig(getcwd());
+        $kubectl = $config ? $this->environmentKubectl($config, $environment) : 'kubectl';
+
         // Resilient Label Matching:
         // 1. Try the clean standard label (e.g., app=web)
         // 2. Fallback to legacy label (e.g., app=laravel-web)
@@ -72,7 +78,7 @@ class ExecCommand extends Command
 
         $podName = null;
         foreach ($labels as $label) {
-            $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
+            $podName = trim(shell_exec("{$kubectl} get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
             if ($podName) {
                 break;
             }
@@ -95,7 +101,7 @@ class ExecCommand extends Command
         };
 
         // Execute the command.
-        passthru("kubectl exec -it -n {$namespace} -c {$container} {$podName} -- /bin/sh -c \"{$command}\" 2>/dev/null || kubectl exec -it -n {$namespace} -c {$container} {$podName} -- {$command}");
+        passthru("{$kubectl} exec -it -n {$namespace} -c {$container} {$podName} -- /bin/sh -c \"{$command}\" 2>/dev/null || {$kubectl} exec -it -n {$namespace} -c {$container} {$podName} -- {$command}");
 
         return 0;
     }

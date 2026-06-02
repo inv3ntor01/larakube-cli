@@ -5,6 +5,7 @@ namespace App\Commands;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\text;
 
@@ -12,7 +13,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class DownCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -47,6 +48,9 @@ class DownCommand extends Command
         $config = $this->getProjectConfig($projectPath);
         $appName = $config->getName() ?? basename($projectPath);
         $namespace = $this->getNamespace($environment, $appName);
+        // Tear down on the env's OWN context (local → current context). Targeting
+        // the env's cluster is safer — no accidental delete on the wrong context.
+        $kubectl = $this->environmentKubectl($config, $environment);
 
         if ($this->option('dry-run')) {
             $this->laraKubeInfo("DRY RUN: Project '$appName' cleanup preview:");
@@ -92,10 +96,10 @@ class DownCommand extends Command
 
         // 1. Cluster Cleanup
         $this->laraKubeInfo("Removing namespace '$namespace' (this will wipe ConfigMaps and Secrets)...");
-        passthru("kubectl delete namespace $namespace 2>/dev/null");
+        passthru("{$kubectl} delete namespace $namespace 2>/dev/null");
 
         $this->laraKubeInfo('Cleaning up cluster-scoped PersistentVolumes...');
-        passthru("kubectl delete pv -l larakube-project=$appName 2>/dev/null");
+        passthru("{$kubectl} delete pv -l larakube-project=$appName 2>/dev/null");
 
         // 2. Manifest Cleanup (Local)
         if ($this->option('k8s') || $this->option('full')) {

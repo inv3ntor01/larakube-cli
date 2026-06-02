@@ -8,6 +8,7 @@ use App\Enums\ServerVariation;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\select;
 
@@ -15,7 +16,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ShellCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -50,6 +51,9 @@ class ShellCommand extends Command
         $config = $this->getProjectConfig($projectPath);
         $appName = $config->getName() ?? basename($projectPath);
         $namespace = $this->getNamespace($environment, $appName);
+
+        // Shell into the env's OWN context (local → current context, unchanged).
+        $kubectl = $this->environmentKubectl($config, $environment);
 
         if (! $service) {
             $activeOptions = [];
@@ -129,7 +133,7 @@ class ShellCommand extends Command
         };
 
         // Find the pod name
-        $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
+        $podName = trim(shell_exec("{$kubectl} get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null"));
 
         if (! $podName) {
             $this->laraKubeError("Could not find a running {$service} pod in namespace '{$namespace}'. Is the environment up?");
@@ -143,7 +147,7 @@ class ShellCommand extends Command
         $container = in_array($service, ['web', 'horizon', 'reverb', 'scheduler']) ? 'php' : $service;
 
         // Execute the interactive shell. We try /bin/bash first, fallback to /bin/sh.
-        passthru("kubectl exec -it -n {$namespace} -c {$container} {$podName} -- /bin/bash 2>/dev/null || kubectl exec -it -n {$namespace} -c {$container} {$podName} -- /bin/sh");
+        passthru("{$kubectl} exec -it -n {$namespace} -c {$container} {$podName} -- /bin/bash 2>/dev/null || {$kubectl} exec -it -n {$namespace} -c {$container} {$podName} -- /bin/sh");
 
         return 0;
     }

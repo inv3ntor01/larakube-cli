@@ -6,11 +6,12 @@ use App\Contracts\HasReloadCommand;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 use LaravelZero\Framework\Commands\Command;
 
 class ReloadCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'reload {--environment=local : The environment to target}';
 
@@ -33,6 +34,8 @@ class ReloadCommand extends Command
 
         $environment = $this->option('environment');
         $namespace = $this->getNamespace($environment);
+        // Reload pods on the env's OWN context (local → current context, unchanged).
+        $kubectl = $this->environmentKubectl($config, $environment);
 
         $candidates = array_merge([$config->getServerVariation()], $config->getFeatures());
 
@@ -47,7 +50,7 @@ class ReloadCommand extends Command
                 continue;
             }
 
-            $this->reloadInPod($candidate->getPodName($config), $command, $namespace);
+            $this->reloadInPod($candidate->getPodName($config), $command, $namespace, $kubectl);
             $ran++;
         }
 
@@ -58,7 +61,7 @@ class ReloadCommand extends Command
         return 0;
     }
 
-    protected function reloadInPod(string $service, string $command, string $namespace): void
+    protected function reloadInPod(string $service, string $command, string $namespace, string $kubectl): void
     {
         $labels = ["app={$service}", "app=laravel-{$service}"];
 
@@ -69,7 +72,7 @@ class ReloadCommand extends Command
 
         $podName = null;
         foreach ($labels as $label) {
-            $podName = trim(shell_exec("kubectl get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null") ?? '');
+            $podName = trim(shell_exec("{$kubectl} get pods -n {$namespace} -l {$label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null") ?? '');
             if ($podName !== '') {
                 break;
             }
@@ -82,6 +85,6 @@ class ReloadCommand extends Command
         }
 
         $this->laraKubeInfo("↻ {$service}: {$command}");
-        passthru("kubectl exec -n {$namespace} -c php {$podName} -- {$command}");
+        passthru("{$kubectl} exec -n {$namespace} -c php {$podName} -- {$command}");
     }
 }

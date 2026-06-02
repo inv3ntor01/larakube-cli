@@ -54,6 +54,29 @@ trait ResolvesEnvironmentContext
         return [$config, $cloud?->ip ? $this->environmentContextName($cloud->ip) : null];
     }
 
+    /**
+     * The env's context if it has a saved cloud target, else null (→ current
+     * context). NON-prompting — for browse/run commands (logs, exec, shell, …)
+     * that shouldn't interrupt to record a server. Local always → null, so local
+     * behaviour is unchanged (plain kubectl against the current context).
+     */
+    protected function environmentContextOrCurrent(ConfigData $config, string $environment): ?string
+    {
+        if ($environment === 'local') {
+            return null;
+        }
+
+        $ip = $config->getCloud($environment)?->ip;
+
+        return $ip ? $this->environmentContextName($ip) : null;
+    }
+
+    /** `kubectl` scoped to an env's context (plain kubectl for local / no target). */
+    protected function environmentKubectl(ConfigData $config, string $environment): string
+    {
+        return $this->contextKubectl($this->environmentContextOrCurrent($config, $environment));
+    }
+
     /** Is the env's context present + reachable, without touching the global one? */
     protected function environmentContextReachable(?string $context): bool
     {
