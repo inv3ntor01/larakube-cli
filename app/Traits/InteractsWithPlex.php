@@ -211,6 +211,22 @@ trait InteractsWithPlex
     }
 
     /**
+     * Inverse of buildPostgresTenantSql: drop a tenant's database and role from
+     * the Commons. Terminates live connections first (Postgres refuses to drop a
+     * database with open sessions). $db/$role come from plexTenantIdentifier()
+     * (sanitised to [a-z0-9_]), so they are safe to interpolate — same trust
+     * model as the create path.
+     */
+    public function buildDropTenantSql(string $db, string $role): string
+    {
+        return implode("\n", [
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{$db}' AND pid <> pg_backend_pid();",
+            "DROP DATABASE IF EXISTS \"{$db}\";",
+            "DROP ROLE IF EXISTS \"{$role}\";",
+        ]);
+    }
+
+    /**
      * Pure registry transforms. The plex-registry shape is
      * {"tenants": {"<id>": {"db": "<id>", "redis_index": <int|null>}}}.
      */
