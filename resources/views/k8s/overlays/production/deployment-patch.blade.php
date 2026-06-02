@@ -16,7 +16,7 @@ spec:
 @endif
       containers:
         - name: php
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
 @if($pullSecret = $config->getImagePullSecret($environment))
       imagePullSecrets:
         - name: {{ $pullSecret }}

@@ -67,8 +67,6 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 30
           volumeMounts:
-            - name: code
-              mountPath: /var/www/html
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
@@ -88,10 +86,6 @@ spec:
               mountPath: /var/www/html/storage/app/public
               subPath: app/public
       volumes:
-        - name: code
-          hostPath:
-            path: /STABLE_TEST_PATH
-            type: Directory
         - name: storage
           persistentVolumeClaim:
             claimName: postgres-test-laravel-storage-pvc
@@ -508,7 +502,7 @@ spec:
     spec:
       containers:
         - name: php
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
 

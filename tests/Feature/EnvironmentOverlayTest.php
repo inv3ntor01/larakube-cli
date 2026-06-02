@@ -130,19 +130,30 @@ test('a managed service is removed from the env that manages it via a delete-pat
     // Base still ships the Postgres deployment (local keeps using it).
     expect($manifests)->toHaveKey('base/postgres-deployment.yaml');
 
-    // Production gets a delete-patch removing the Postgres Deployment + Service.
-    expect($manifests)->toHaveKey('overlays/production/postgres-managed-delete.yaml');
-    $deletePatch = $manifests['overlays/production/postgres-managed-delete.yaml'];
-    $kinds = array_map(fn ($doc) => $doc['kind'], $deletePatch);
-    expect($kinds)->toContain('Deployment')->toContain('Service');
-    foreach ($deletePatch as $doc) {
-        expect($doc['$patch'])->toBe('delete')
-            ->and($doc['metadata']['name'])->toBe('postgres');
-    }
+    // Production gets ONE SINGLE-document delete-patch PER resource (Deployment,
+    // Service). kustomize/kyaml panics on a multi-document $patch:delete file under
+    // the `patches:` field, so we must never bundle them — the old single
+    // `postgres-managed-delete.yaml` shape is gone.
+    expect($manifests)
+        ->toHaveKey('overlays/production/postgres-managed-delete-deployment.yaml')
+        ->toHaveKey('overlays/production/postgres-managed-delete-service.yaml')
+        ->not->toHaveKey('overlays/production/postgres-managed-delete.yaml');
 
-    // The delete-patch is registered as a patch in the production overlay.
+    // Each file is a single doc (parsed to a map, not a list), so kustomize is happy.
+    $deploymentDelete = $manifests['overlays/production/postgres-managed-delete-deployment.yaml'];
+    expect($deploymentDelete['kind'])->toBe('Deployment')
+        ->and($deploymentDelete['$patch'])->toBe('delete')
+        ->and($deploymentDelete['metadata']['name'])->toBe('postgres');
+
+    $serviceDelete = $manifests['overlays/production/postgres-managed-delete-service.yaml'];
+    expect($serviceDelete['kind'])->toBe('Service')
+        ->and($serviceDelete['$patch'])->toBe('delete')
+        ->and($serviceDelete['metadata']['name'])->toBe('postgres');
+
+    // Both are registered as patches in the production overlay.
     expect($manifests['overlays/production/kustomization.yaml']['patches'])
-        ->toContain(['path' => 'postgres-managed-delete.yaml']);
+        ->toContain(['path' => 'postgres-managed-delete-deployment.yaml'])
+        ->toContain(['path' => 'postgres-managed-delete-service.yaml']);
 
     // And Postgres volumes are NOT registered as a production resource.
     expect($manifests['overlays/production/kustomization.yaml']['resources'] ?? [])

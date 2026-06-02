@@ -372,23 +372,27 @@ trait GeneratesProjectInfrastructure
             default => 'apps/v1',
         };
 
-        $docs = [];
+        // One SINGLE-document delete file per resource. kustomize/kyaml panics on a
+        // multi-document `$patch: delete` file referenced from the modern `patches:`
+        // field, so we never bundle multiple docs into one patch (and we avoid the
+        // deprecated `patchesStrategicMerge`).
         foreach ($resources as $resource) {
-            $docs[] = implode("\n", [
+            $doc = implode("\n", [
                 'apiVersion: '.$apiVersionFor($resource['kind']),
                 'kind: '.$resource['kind'],
                 'metadata:',
                 '  name: '.$resource['name'],
                 '$patch: delete',
-            ]);
-        }
+            ])."\n";
 
-        $filename = "{$pod->value}-managed-delete.yaml";
-        $dest = "overlays/$env/$filename";
-        if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
-            file_put_contents("$k8sPath/$dest", implode("\n---\n", $docs)."\n");
+            $filename = "{$pod->value}-managed-delete-".strtolower($resource['kind']).'.yaml';
+            $dest = "overlays/$env/$filename";
+
+            if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+                file_put_contents("$k8sPath/$dest", $doc);
+            }
+            $this->appendToKustomization($k8sPath, "overlays/$env", $filename, 'patches');
         }
-        $this->appendToKustomization($k8sPath, "overlays/$env", $filename, 'patches');
     }
 
     /**

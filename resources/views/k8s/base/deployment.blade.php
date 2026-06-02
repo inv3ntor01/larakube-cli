@@ -60,8 +60,6 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 30
           volumeMounts:
-            - name: code
-              mountPath: /var/www/html
             - name: storage
               mountPath: /var/www/html/storage/logs
               subPath: logs
@@ -89,11 +87,7 @@ spec:
               mountPath: /var/lib/larakube-workspace
               readOnly: true
 @endif
-      volumes:
-        - name: code
-          hostPath:
-            path: {{ $config->getPath() }}
-            type: Directory
+      volumes:{{-- 'code' is hostPath-mounted only by the LOCAL overlay's deployment-patch; cloud envs use the image. --}}
         - name: storage
           persistentVolumeClaim:
             claimName: {{ $config->getName() }}-laravel-storage-pvc
