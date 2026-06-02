@@ -133,38 +133,36 @@ class PlexInitCommand extends Command
             return $this->normalizeCommonsSpec($decoded);
         }
 
-        $existing = $this->getCommonsSpec();
-
-        if ($existing !== null) {
-            // Reconcile the live spec; --with-meili can light up Meili on a re-run.
-            if ($this->option('with-meili')) {
-                $existing['services']['meilisearch']['enabled'] = true;
-            }
-
-            return $this->normalizeCommonsSpec($existing);
-        }
-
-        // Fresh Commons. The catalog (PlexProvisionable) is the source of truth
-        // for what can be offered; only plex-ready services are selectable.
+        // The catalog (PlexProvisionable) is the source of truth for what can be
+        // offered; only plex-ready services are selectable.
         $catalog = $this->commonsServiceCatalog();
         $ready = array_keys(array_filter($catalog, fn ($i) => $i['ready']));
 
-        // Project-aware default: inside a project, pre-select that project's
-        // plex-ready services; otherwise Postgres + Redis.
-        $default = $this->projectDefaultServices($ready);
+        // An existing Commons re-runs as RECONCILE: pre-select its current
+        // services so you can ADD more. A fresh one defaults to the project's
+        // plex-ready services (project-aware), else Postgres + Redis.
+        $existing = $this->getCommonsSpec();
+        $current = $existing !== null ? $this->enabledCommonsServices($existing) : [];
+        $default = $existing !== null ? $current : $this->projectDefaultServices($ready);
         if ($this->option('with-meili')) {
             $default[] = 'meilisearch';
         }
 
+        // plex:init is ADDITIVE on an existing Commons — re-running never disables
+        // a running service (removal isn't wired here): union(current, picked).
+        $finalize = fn (array $picked): array => $this->specFromServices(
+            array_values(array_unique(array_merge($current, array_intersect($picked, $ready)))),
+            $ready,
+            $existing,
+        );
+
         // Explicit --services (plex:join's demand-driven bootstrap), or --yes.
         if ($this->option('services') !== null) {
-            $requested = array_filter(array_map('trim', explode(',', (string) $this->option('services'))));
-
-            return $this->specFromServices(array_values(array_intersect($requested, $ready)), $ready);
+            return $finalize(array_filter(array_map('trim', explode(',', (string) $this->option('services')))));
         }
 
         if ($this->option('yes')) {
-            return $this->specFromServices(array_values(array_intersect($default, $ready)), $ready);
+            return $finalize($default);
         }
 
         // Show the WHOLE catalog (databases, cache, search, storage), marking the
@@ -175,18 +173,19 @@ class PlexInitCommand extends Command
         }
 
         $selected = multiselect(
-            label: 'Which shared services should the Commons provide?',
+            label: $existing !== null
+                ? 'Which services should the Commons provide? (current ones stay)'
+                : 'Which shared services should the Commons provide?',
             options: $options,
             default: array_values(array_intersect($default, array_keys($options))),
-            hint: 'Tenants use only what they declare; re-run plex:init to add more later.',
+            hint: 'Re-running plex:init adds services; it never removes a running one.',
         );
 
-        $effective = array_values(array_intersect($selected, $ready));
-        if ($skipped = array_diff($selected, $effective)) {
+        if ($skipped = array_diff($selected, $ready)) {
             $this->laraKubeWarn('Not available in the Commons yet, skipping: '.implode(', ', $skipped));
         }
 
-        return $this->specFromServices($effective, $ready);
+        return $finalize($selected);
     }
 
     /**
@@ -208,20 +207,26 @@ class PlexInitCommand extends Command
     }
 
     /**
-     * Build a normalized spec with exactly $selected enabled (every other ready
-     * service explicitly disabled, so no default silently turns one back on).
+     * Build a normalized spec with exactly $selected enabled. Merges onto an
+     * existing spec when given (preserving each service's customised
+     * image/storage), flipping only the enabled flag for every ready service.
      *
      * @param  array<int, string>  $selected
      * @param  array<int, string>  $ready
+     * @param  array<string, mixed>|null  $existing
      */
-    protected function specFromServices(array $selected, array $ready): array
+    protected function specFromServices(array $selected, array $ready, ?array $existing = null): array
     {
-        $services = [];
+        $services = $existing['services'] ?? [];
+
         foreach ($ready as $svc) {
-            $services[$svc] = ['enabled' => in_array($svc, $selected, true)];
+            $services[$svc] = array_merge($services[$svc] ?? [], ['enabled' => in_array($svc, $selected, true)]);
         }
 
-        return $this->normalizeCommonsSpec(['services' => $services]);
+        return $this->normalizeCommonsSpec([
+            'version' => $existing['version'] ?? 1,
+            'services' => $services,
+        ]);
     }
 
     /**
