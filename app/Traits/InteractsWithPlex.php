@@ -251,6 +251,14 @@ trait InteractsWithPlex
             : 'kubectl';
     }
 
+    /** Whether the resolved plex context's API server is reachable. */
+    protected function plexContextReachable(): bool
+    {
+        exec($this->plexKubectl().' get --raw=/readyz --request-timeout=5s 2>/dev/null', $out, $code);
+
+        return $code === 0;
+    }
+
     /**
      * The namespace that hosts the shared Commons services.
      */

@@ -2,10 +2,10 @@
 
 namespace App\Commands\Cloud;
 
-use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
@@ -14,7 +14,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudNukeCommand extends Command
 {
-    use InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -25,7 +25,7 @@ class CloudNukeCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Wipes all project resources from the remote cluster (Namespace, PVCs, etc.)';
+    protected $description = 'Wipes all project resources from a remote environment (Namespace, PVCs, etc.)';
 
     /**
      * Execute the console command.
@@ -38,26 +38,33 @@ class CloudNukeCommand extends Command
             return 1;
         }
 
-        $environment = $this->askForCloudEnvironment(
+        $environment = $this->argument('environment') ?: $this->askForCloudEnvironment(
             label: 'Which environment would you like to NUKE from the cluster?',
         );
-
-        if (! $this->validateContextForEnvironment($environment)) {
-            return 1;
-        }
 
         $projectPath = getcwd();
         $config = $this->getProjectConfig($projectPath);
         $appName = $config->getName();
-        $namespace = "{$appName}-{$environment}";
+        $namespace = $this->getNamespace($environment, $appName);
 
-        $this->laraKubeInfo("Cloud Nuke: Environment '{$environment}' in namespace '{$namespace}'");
-        $this->warn('⚠ WARNING: This will permanently delete all deployments, services, and PERSISTENT DATA on the remote cluster.');
+        // Target the environment's OWN cluster (no context switching). Showing the
+        // resolved context makes it explicit which remote cluster gets wiped.
+        $context = $this->environmentContextOrCurrent($config, $environment);
+        $where = $context ? "context '{$context}'" : 'the current context';
+
+        $this->laraKubeInfo("Cloud Nuke: '{$namespace}' on {$where}");
+        $this->warn('⚠ WARNING: This permanently deletes all deployments, services, and PERSISTENT DATA for this environment.');
+
+        // Plex tenants keep their data in the shared Commons, which this does NOT
+        // touch — point at plex:leave to reclaim the tenant database/role.
+        if (! empty($config->getPlex($environment))) {
+            $this->line("  <fg=gray>Note:</> the app's data in the shared Commons is left intact — run <fg=yellow>larakube plex:leave {$environment}</> to drop it.");
+        }
         $this->newLine();
 
         if (! $this->option('force')) {
             $confirmName = text(
-                label: "To confirm the NUKE, please type the app name '{$appName}':",
+                label: "To confirm the NUKE, type the app name '{$appName}':",
                 required: true,
             );
 
@@ -66,31 +73,20 @@ class CloudNukeCommand extends Command
 
                 return 1;
             }
+
+            if (! confirm("Are you absolutely sure you want to WIPE '{$namespace}'? This cannot be undone.", false)) {
+                $this->laraKubeInfo('Nuke cancelled.');
+
+                return 0;
+            }
         }
 
-        if (! confirm("Are you absolutely sure you want to WIPE '{$namespace}'? This cannot be undone.", false)) {
-            $this->laraKubeInfo('Nuke cancelled.');
-
-            return 0;
-        }
-
-        $this->withSpin('Purging project resources from cluster...', function () use ($namespace, $appName) {
-            // 1. Delete the Namespace (Aggressive)
-            exec("kubectl delete namespace {$namespace} --wait=false 2>/dev/null");
-
-            // 2. Delete Cluster-Scoped Volumes (if any labeled)
-            exec("kubectl delete pv -l larakube.io/project={$appName} 2>/dev/null");
-
-            // 3. Delete the Blueprint backup secret (if it exists)
-            exec("kubectl delete secret larakube-blueprint -n {$namespace} 2>/dev/null");
-
-            return true;
-        });
-
-        $this->laraKubeInfo("✅ Nuke command issued for '{$namespace}'.");
-        $this->info('Kubernetes is now tearing down the resources in the background.');
-        $this->line('You can monitor the status with: <fg=cyan>kubectl get namespaces</>');
-
-        return 0;
+        // Delegate the teardown to `down`, which auto-targets the environment's own
+        // context (no switching) and removes the namespace + project PVs. --force
+        // because we've already confirmed above — one teardown path for both.
+        return (int) $this->call('down', [
+            'environment' => $environment,
+            '--force' => true,
+        ]);
     }
 }

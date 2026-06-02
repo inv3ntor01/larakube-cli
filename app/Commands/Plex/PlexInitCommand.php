@@ -26,7 +26,9 @@ class PlexInitCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Plex — Commons Installer');
 
-        // Pick the target cluster (the picker preselects the current context).
+        // Pick the target cluster and TARGET it directly (no context switching) —
+        // every Commons operation below runs through plexKubectl() against it.
+        // With --yes (automation) we stay on the current context.
         if (! $this->option('yes')) {
             $target = $this->askForClusterContext();
 
@@ -36,16 +38,16 @@ class PlexInitCommand extends Command
                 return 1;
             }
 
-            $this->switchClusterContext($target);
+            $this->plexContext = $target;
         }
 
-        if (! $this->hasActiveCluster()) {
+        if (! $this->plexContextReachable()) {
             $this->laraKubeError('The selected cluster is not reachable. Pick a running cluster and retry.');
 
             return 1;
         }
 
-        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        $context = $this->plexContext ?: trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
         $this->line("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
         $this->newLine();
 
@@ -60,8 +62,9 @@ class PlexInitCommand extends Command
         $enabled = $this->enabledCommonsServices($spec);
 
         // 2. Namespace (idempotent).
+        $kubectl = $this->plexKubectl();
         $this->withSpin("Ensuring namespace {$ns}...", fn () => shell_exec(
-            "kubectl create namespace {$ns} --dry-run=client -o yaml | kubectl apply -f -",
+            "{$kubectl} create namespace {$ns} --dry-run=client -o yaml | {$kubectl} apply -f -",
         ));
 
         // 3. Admin credentials — generated once, reused on re-run (never rotated).
@@ -73,10 +76,10 @@ class PlexInitCommand extends Command
             'specJsonIndented' => $this->indentedSpecJson($spec),
         ])->render();
 
-        $this->withSpin('Applying Commons manifests...', function () use ($manifest, $ns) {
+        $this->withSpin('Applying Commons manifests...', function () use ($manifest, $ns, $kubectl) {
             $tmp = sys_get_temp_dir().'/larakube-plex-commons.yaml';
             file_put_contents($tmp, $manifest);
-            passthru("kubectl apply -n {$ns} -f {$tmp}");
+            passthru("{$kubectl} apply -n {$ns} -f {$tmp}");
             @unlink($tmp);
 
             return true;
@@ -84,14 +87,14 @@ class PlexInitCommand extends Command
 
         // 5. Tenant registry — create once, declaratively (so later `apply`s don't
         //    warn about a missing last-applied-configuration), never overwrite.
-        if (trim((string) shell_exec("kubectl get configmap plex-registry -n {$ns} -o name 2>/dev/null")) === '') {
+        if (trim((string) shell_exec("{$kubectl} get configmap plex-registry -n {$ns} -o name 2>/dev/null")) === '') {
             $this->saveRegistry([]);
         }
 
         // 6. Wait for each enabled service to roll out.
         foreach ($enabled as $service) {
             $this->withSpin("Waiting for {$service} to be ready...", fn () => passthru(
-                "kubectl rollout status deploy/{$service} -n {$ns} --timeout=120s",
+                "{$kubectl} rollout status deploy/{$service} -n {$ns} --timeout=120s",
             ));
         }
 
@@ -176,9 +179,10 @@ class PlexInitCommand extends Command
     protected function ensureCommonsSecret(): void
     {
         $ns = $this->plexNamespace();
+        $kubectl = $this->plexKubectl();
 
         $exists = trim((string) shell_exec(
-            "kubectl get secret plex-admin -n {$ns} -o name 2>/dev/null",
+            "{$kubectl} get secret plex-admin -n {$ns} -o name 2>/dev/null",
         )) !== '';
 
         if ($exists) {
@@ -189,10 +193,10 @@ class PlexInitCommand extends Command
         $meiliMasterKey = bin2hex(random_bytes(16));
 
         shell_exec(
-            "kubectl create secret generic plex-admin -n {$ns} ".
+            "{$kubectl} create secret generic plex-admin -n {$ns} ".
             '--from-literal=POSTGRES_PASSWORD='.escapeshellarg($postgresPassword).' '.
             '--from-literal=MEILI_MASTER_KEY='.escapeshellarg($meiliMasterKey).
-            ' --dry-run=client -o yaml | kubectl apply -f -',
+            " --dry-run=client -o yaml | {$kubectl} apply -f -",
         );
     }
 
