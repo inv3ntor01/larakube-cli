@@ -44,3 +44,32 @@ test('leaves an absent ASSET_URL alone (assets resolve relative to APP_URL)', fu
     expect(aligner()->alignAssetUrlValue($env, 'https://app.luchtech.dev'))
         ->toBe($env); // unchanged — no ASSET_URL line added
 });
+
+test('aligns a NON-production env file too (.env.staging) — multi-environment', function () {
+    $dir = sys_get_temp_dir().'/asset-staging-'.uniqid();
+    mkdir($dir, 0755, true);
+    file_put_contents($dir.'/.env.staging', "APP_URL=https://staging.app.com\nASSET_URL=https://app.dev.test\n");
+
+    aligner()->alignEnv($dir, 'staging', 'staging.app.com');
+
+    expect(file_get_contents($dir.'/.env.staging'))
+        ->toContain('ASSET_URL=https://staging.app.com')
+        ->not->toContain('dev.test');
+
+    exec('rm -rf '.escapeshellarg($dir));
+});
+
+test('skips local — the .dev.test host is correct there', function () {
+    $dir = sys_get_temp_dir().'/asset-local-'.uniqid();
+    mkdir($dir, 0755, true);
+    $env = "ASSET_URL=https://app.dev.test\n";
+    file_put_contents($dir.'/.env', $env);
+
+    aligner()->alignEnv($dir, 'local', 'app.dev.test');
+
+    // Untouched: local intentionally keeps the dev host, and no .env.local is written.
+    expect(file_get_contents($dir.'/.env'))->toBe($env)
+        ->and(file_exists($dir.'/.env.local'))->toBeFalse();
+
+    exec('rm -rf '.escapeshellarg($dir));
+});

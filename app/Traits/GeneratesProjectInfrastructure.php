@@ -101,20 +101,23 @@ trait GeneratesProjectInfrastructure
     }
 
     /**
-     * Align ASSET_URL in .env.production with the deploy domain. Laravel's @vite
-     * prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test" value
-     * sends production assets to the dev host (404 / unstyled page). Rewrites
-     * ONLY an empty or "*.dev.test" value — never a deliberate CDN/asset host —
-     * and is a no-op when ASSET_URL is absent (assets then resolve relative to
-     * APP_URL, which is fine). Narrow on purpose, like the APP_URL sync.
+     * Align ASSET_URL in a cloud environment's env file (.env.<environment> —
+     * production, staging, …) with that environment's web domain. Laravel's
+     *
+     * @vite prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test"
+     * value sends the deployed assets to the dev host (404 / unstyled page).
+     * Rewrites ONLY an empty or "*.dev.test" value — never a deliberate CDN/asset
+     * host — and is a no-op when ASSET_URL is absent (assets then resolve
+     * relative to APP_URL, which is fine). Skips local, which is meant to use the
+     * .dev.test host. Narrow on purpose, like the APP_URL sync.
      */
-    protected function alignProductionAssetUrl(string $projectPath, ?string $webHost): void
+    protected function alignEnvironmentAssetUrl(string $projectPath, string $environment, ?string $webHost): void
     {
-        if (empty($webHost)) {
+        if (empty($webHost) || $environment === 'local') {
             return;
         }
 
-        $envPath = $projectPath.'/.env.production';
+        $envPath = $projectPath.'/.env.'.$environment;
         if (! file_exists($envPath)) {
             return;
         }

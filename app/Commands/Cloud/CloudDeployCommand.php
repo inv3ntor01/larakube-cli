@@ -93,14 +93,13 @@ class CloudDeployCommand extends Command
             }
         }
 
-        // Keep ASSET_URL aligned with the web domain. @vite prefixes asset URLs
-        // with ASSET_URL, so a leaked local "*.dev.test" value sends production
-        // assets to the dev host (404 / unstyled). Runs every production deploy
-        // (the domain block above is skipped once the host is set) and only
-        // rewrites an empty or "*.dev.test" value — never a real CDN/asset host.
-        if ($environment === 'production') {
-            $this->alignProductionAssetUrl($projectPath, $config->getHost($environment, 'web'));
-        }
+        // Keep ASSET_URL aligned with this environment's web domain. @vite
+        // prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test"
+        // value sends the deployed assets to the dev host (404 / unstyled). Runs
+        // for every cloud env (production, staging, …) on every deploy — the
+        // domain block above is skipped once the host is set — and only rewrites
+        // an empty or "*.dev.test" value, never a real CDN/asset host.
+        $this->alignEnvironmentAssetUrl($projectPath, $environment, $config->getHost($environment, 'web'));
 
         // Always regenerate manifests from the blueprint, so a CLI upgrade or a
         // blueprint change is reflected on every deploy — not only when the domain
