@@ -11,16 +11,6 @@ USER root
 RUN install-php-extensions {{ implode(' ', $config->getAllPhpExtensions()) }}
 USER www-data
 @endif
-@if($config->hasFeature(\App\Enums\LaravelFeature::SSR))
-
-# Inertia SSR runs `node bootstrap/ssr/ssr.js` from this image — the node-ssr
-# pod reuses it in production — so Node.js must be present in every stage that
-# builds on `base` (development AND the production `deploy` image). Installed
-# once here rather than per stage.
-USER root
-RUN apk add --no-cache nodejs npm
-USER www-data
-@endif
 
 ############################################
 # Development Image
@@ -35,6 +25,10 @@ ARG GROUP_ID
 
 # Switch to root so we can set the user ID and group ID
 USER root
+
+# Vite HMR runs in a local `node` pod built from this development image
+# (`npm run dev`), so Node.js is always required here — independent of SSR.
+RUN apk add --no-cache nodejs npm
 
 # Match www-data's UID/GID to the host user (for hostPath code mounts locally).
 RUN docker-php-serversideup-set-id www-data $USER_ID:$GROUP_ID  && \
@@ -61,6 +55,13 @@ FROM base AS deploy
 
 # Switch to root to fix permissions
 USER root
+@if($config->hasFeature(\App\Enums\LaravelFeature::SSR))
+
+# Inertia SSR runs `node bootstrap/ssr/ssr.js` from this production image, so
+# Node.js is required here. Non-SSR apps serve pre-built static assets and never
+# run Node, so it's omitted to keep the image lean.
+RUN apk add --no-cache nodejs npm
+@endif
 
 # Copy application files
 COPY --chown=www-data:www-data . /var/www/html
