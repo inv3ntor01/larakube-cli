@@ -185,10 +185,21 @@ trait InteractsWithPlex
         $pw = str_replace("'", "''", $password);
 
         return implode("\n", [
-            "SELECT 'CREATE DATABASE \"{$db}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{$db}')\\gexec",
+            // Role first — the database is created OWNED BY it.
             "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{$role}') THEN CREATE ROLE \"{$role}\" LOGIN PASSWORD '{$pw}'; END IF; END \$\$;",
             "ALTER ROLE \"{$role}\" PASSWORD '{$pw}';",
+            // Tenant OWNS its database, so it can create its own schema/tables and
+            // run migrations (Postgres 15+ locks down the public schema for
+            // non-owners) — full per-tenant isolation, no shared-schema grants.
+            "SELECT 'CREATE DATABASE \"{$db}\" OWNER \"{$role}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{$db}')\\gexec",
+            "ALTER DATABASE \"{$db}\" OWNER TO \"{$role}\";",
             "GRANT ALL PRIVILEGES ON DATABASE \"{$db}\" TO \"{$role}\";",
+            // Hand the tenant its DB's public schema too — ALTER DATABASE OWNER
+            // doesn't transfer it, and Postgres 15+ won't let a non-owner create
+            // objects in `public`. Without this, migrations fail with
+            // "permission denied for schema public".
+            "\\connect \"{$db}\"",
+            "ALTER SCHEMA public OWNER TO \"{$role}\";",
         ]);
     }
 

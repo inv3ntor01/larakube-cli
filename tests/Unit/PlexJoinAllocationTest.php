@@ -74,6 +74,9 @@ test('postgres tenant SQL is idempotent and escapes the password', function () {
     expect($sql)
         ->toContain("WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'app_one')")  // create-db guard
         ->toContain('IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = \'app_one\')')      // create-role guard
+        ->toContain('ALTER DATABASE "app_one" OWNER TO "app_one"')                           // tenant owns its db
+        ->toContain('\connect "app_one"')                                                    // switch into the tenant db
+        ->toContain('ALTER SCHEMA public OWNER TO "app_one"')                                // …so migrations can create tables
         ->toContain('GRANT ALL PRIVILEGES ON DATABASE "app_one" TO "app_one"')
         ->toContain("PASSWORD 'pa''ss'");                                                    // '' escaping
 });

@@ -21,6 +21,7 @@ use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
 use App\Enums\StorageDriver;
 use App\Traits\LaraKubeOutput;
+use BackedEnum;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\LaravelData\Data;
@@ -381,6 +382,17 @@ class ConfigData extends Data
     public function getManaged(string $environment): array
     {
         return $this->getEnvironment($environment)?->managed ?? [];
+    }
+
+    /**
+     * Services backed by the shared Plex "Commons" in this env. Their connection
+     * env is owned by `plex:join` (in .env), so env-sync must not recompute it.
+     *
+     * @return array<int, string>
+     */
+    public function getPlex(string $environment): array
+    {
+        return $this->getEnvironment($environment)?->plex ?? [];
     }
 
     /**
@@ -1133,6 +1145,9 @@ class ConfigData extends Data
 
         foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasEnvironmentVariables && ! ($component instanceof ServerVariation)) {
+                if ($this->isPlexBacked($component, $environment)) {
+                    continue;
+                }
                 $envs = array_merge($envs, $component->getPublicEnvironmentVariables($this, $environment));
             }
         }
@@ -1145,6 +1160,9 @@ class ConfigData extends Data
         $envs = $this->serverVariation?->getSecretEnvironmentVariables($this, $environment) ?? [];
         foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasEnvironmentVariables && ! ($component instanceof ServerVariation)) {
+                if ($this->isPlexBacked($component, $environment)) {
+                    continue;
+                }
                 $envs = array_merge($envs, $component->getSecretEnvironmentVariables($this, $environment));
             }
         }
@@ -1329,5 +1347,17 @@ class ConfigData extends Data
         }
 
         return self::from(json_decode(base64_decode($encoded), true));
+    }
+
+    /**
+     * Is this component backed by the Plex Commons in this env? If so, its
+     * connection env is owned by `plex:join` (in .env) and must NOT be
+     * recomputed by env-sync — otherwise a `heal`/regenerate would overwrite
+     * the Commons host/db/user/password with in-namespace defaults.
+     */
+    protected function isPlexBacked(object $component, string $environment): bool
+    {
+        return $component instanceof BackedEnum
+            && in_array($component->value, $this->getPlex($environment), true);
     }
 }

@@ -68,8 +68,8 @@ class PlexJoinCommand extends Command
         }
 
         $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
-        $this->laraKubeLine("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>{$context}</>");
-        $this->laraKubeLine('  <fg=gray>Services:</> '.implode(', ', $services));
+        $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>{$context}</>");
+        $this->line('  <fg=gray>Services:</> '.implode(', ', $services));
         $this->laraKubeNewLine();
 
         if (! $this->option('yes') && ! confirm("Join '{$tenant}' to the Commons?", true)) {
@@ -278,26 +278,32 @@ class PlexJoinCommand extends Command
                 ? (string) file_get_contents($envPath)
                 : (file_exists($projectPath.'/.env') ? (string) file_get_contents($projectPath.'/.env') : '');
             file_put_contents($envPath, $this->applyEnvValues($content, $values));
-            $this->laraKubeLine("  <fg=gray>Wrote Commons connection to</> {$envFile}");
+            $this->line("  <fg=gray>Wrote Commons connection to</> {$envFile}");
         }
 
-        // environments.{env}.managed += services (match $pod->value; deploy skips the pods).
+        // environments.{env}.managed += services (so the deploy skips their pods),
+        // and .plex += services so env-sync (heal/regenerate) never recomputes
+        // their connection and clobbers the Commons values we just wrote to .env.
         $data = $config->toArray();
         $data['environments'][$env]['managed'] = array_values(array_unique(array_merge(
             $data['environments'][$env]['managed'] ?? [],
             $services,
         )));
+        $data['environments'][$env]['plex'] = array_values(array_unique(array_merge(
+            $data['environments'][$env]['plex'] ?? [],
+            $services,
+        )));
         ConfigData::from($data)->saveToFile($projectPath);
-        $this->laraKubeLine('  <fg=gray>Marked managed in .larakube.json:</> '.implode(', ', $services));
+        $this->line('  <fg=gray>Marked managed + plex in .larakube.json:</> '.implode(', ', $services));
     }
 
     protected function printNext(string $env): void
     {
         $this->laraKubeNewLine();
         $this->laraKubeInfo('✅ Joined the Commons.');
-        $this->laraKubeLine('  Next:');
-        $this->laraKubeLine('    1. <fg=yellow>git add .larakube.json && git commit</> (the managed change is config)');
-        $this->laraKubeLine("    2. <fg=yellow>larakube gha:configure {$env}</> (re-upload the .env.{$env} secret)");
-        $this->laraKubeLine('    3. Deploy as usual — the app now uses the Commons, not its own pods.');
+        $this->line('  Next:');
+        $this->line('    1. <fg=yellow>git add .larakube.json && git commit</> (the managed change is config)');
+        $this->line("    2. <fg=yellow>larakube gha:configure {$env}</> (re-upload the .env.{$env} secret)");
+        $this->line('    3. Deploy as usual — the app now uses the Commons, not its own pods.');
     }
 }

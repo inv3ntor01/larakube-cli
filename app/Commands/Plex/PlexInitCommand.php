@@ -6,7 +6,7 @@ use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\LaraKubeOutput;
 
-use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\multiselect;
 
 use LaravelZero\Framework\Commands\Command;
 
@@ -26,22 +26,28 @@ class PlexInitCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Plex — Commons Installer');
 
-        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        // Pick the target cluster (the picker preselects the current context).
+        if (! $this->option('yes')) {
+            $target = $this->askForClusterContext();
+
+            if (! $target) {
+                $this->laraKubeError('No Kubernetes context selected.');
+
+                return 1;
+            }
+
+            $this->switchClusterContext($target);
+        }
 
         if (! $this->hasActiveCluster()) {
-            $this->laraKubeError('No reachable Kubernetes cluster on the current context. Provision/select one first.');
+            $this->laraKubeError('The selected cluster is not reachable. Pick a running cluster and retry.');
 
             return 1;
         }
 
-        $this->laraKubeLine("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
-        $this->laraKubeNewLine();
-
-        if (! $this->option('yes') && ! confirm("Provision/refresh the Commons on context '{$context}'?", true)) {
-            $this->laraKubeInfo('Aborted.');
-
-            return 0;
-        }
+        $context = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+        $this->line("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
+        $this->newLine();
 
         // 1. Resolve the spec: imported file > existing cluster spec > defaults.
         $spec = $this->resolveSpec();
@@ -76,8 +82,11 @@ class PlexInitCommand extends Command
             return true;
         });
 
-        // 5. Tenant registry — create once, never overwrite (plex:join populates it).
-        shell_exec("kubectl get configmap plex-registry -n {$ns} >/dev/null 2>&1 || kubectl create configmap plex-registry -n {$ns}");
+        // 5. Tenant registry — create once, declaratively (so later `apply`s don't
+        //    warn about a missing last-applied-configuration), never overwrite.
+        if (trim((string) shell_exec("kubectl get configmap plex-registry -n {$ns} -o name 2>/dev/null")) === '') {
+            $this->saveRegistry([]);
+        }
 
         // 6. Wait for each enabled service to roll out.
         foreach ($enabled as $service) {
@@ -130,7 +139,34 @@ class PlexInitCommand extends Command
             return $this->normalizeCommonsSpec($existing);
         }
 
-        return $this->defaultCommonsSpec((bool) $this->option('with-meili'));
+        // Fresh Commons: nothing is inferred from any project — let the operator
+        // choose which services to provision (Postgres + Redis pre-checked; Meili
+        // opt-in). --yes / --with-meili stay non-interactive.
+        if ($this->option('yes')) {
+            return $this->defaultCommonsSpec((bool) $this->option('with-meili'));
+        }
+
+        $default = ['postgres', 'redis'];
+        if ($this->option('with-meili')) {
+            $default[] = 'meili';
+        }
+
+        $selected = multiselect(
+            label: 'Which shared services should the Commons provide?',
+            options: [
+                'postgres' => 'PostgreSQL (shared database)',
+                'redis' => 'Redis (shared cache / queue)',
+                'meili' => 'Meilisearch (search — RAM-heavy)',
+            ],
+            default: $default,
+            hint: 'Tenants use only what they declare; re-run plex:init to add more later.',
+        );
+
+        return $this->normalizeCommonsSpec(['services' => [
+            'postgres' => ['enabled' => in_array('postgres', $selected, true)],
+            'redis' => ['enabled' => in_array('redis', $selected, true)],
+            'meili' => ['enabled' => in_array('meili', $selected, true)],
+        ]]);
     }
 
     /**
@@ -179,15 +215,15 @@ class PlexInitCommand extends Command
 
         $this->laraKubeNewLine();
         $this->laraKubeInfo('✅ Commons is ready.');
-        $this->laraKubeLine('  Tenants reach these in-cluster hosts:');
+        $this->line('  Tenants reach these in-cluster hosts:');
 
         foreach (['postgres' => 5432, 'redis' => 6379, 'meili' => 7700] as $service => $port) {
             if ($spec['services'][$service]['enabled'] ?? false) {
-                $this->laraKubeLine("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:{$port}</>");
+                $this->line("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:{$port}</>");
             }
         }
 
-        $this->laraKubeNewLine();
-        $this->laraKubeLine('  Save the spec for disaster recovery: <fg=yellow>larakube plex:export</>');
+        $this->newLine();
+        $this->line('  Save the spec for disaster recovery: <fg=yellow>larakube plex:export</>');
     }
 }

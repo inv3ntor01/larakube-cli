@@ -49,6 +49,16 @@ class EnvironmentData extends Data
          */
         public array $managed = [],
         /**
+         * Services backed by the shared Plex "Commons" in this env (a
+         * specialisation of `managed`). Their connection (host/db/user/password)
+         * is written into .env by `plex:join`; env-sync SKIPS recomputing these
+         * components so a `heal`/regenerate can't clobber the Commons values
+         * back to the in-namespace defaults.
+         *
+         * @var array<int, string>
+         */
+        public array $plex = [],
+        /**
          * Service → external hostname map. Example for production:
          *   ['web' => 'app.example.com', 'reverb' => 'ws.example.com']
          *
