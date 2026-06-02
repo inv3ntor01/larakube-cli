@@ -5,11 +5,12 @@ namespace App\Commands;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 use LaravelZero\Framework\Commands\Command;
 
 class K9sCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -55,10 +56,22 @@ class K9sCommand extends Command
         $config = $this->getProjectConfig($projectPath);
         $namespace = $this->getNamespace($environment, $config->getName());
 
+        // Browse the ENV's OWN context (never switch the global one). Local uses
+        // the current context; a cloud env targets its saved larakube-<ip>. We
+        // don't prompt here — k9s is read-only browsing — just hint if unset.
+        $contextFlag = '';
+        if ($environment !== 'local') {
+            if ($ip = $config->getCloud($environment)?->ip) {
+                $contextFlag = ' --context '.escapeshellarg($this->environmentContextName($ip));
+            } else {
+                $this->laraKubeWarn("No deploy target saved for '{$environment}' — opening k9s on your current context. Run `larakube cloud:deploy {$environment}` to record it.");
+            }
+        }
+
         $this->laraKubeInfo("Launching K9s for project <fg=cyan;options=bold>{$config->getName()}</> in namespace: <fg=yellow;options=bold>{$namespace}</>...");
 
         // Execute k9s
-        passthru("k9s -n {$namespace}");
+        passthru("k9s{$contextFlag} -n {$namespace}");
 
         return 0;
     }
