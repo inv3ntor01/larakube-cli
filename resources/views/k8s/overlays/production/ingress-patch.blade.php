@@ -12,6 +12,9 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 @endif
 @endif
+@if($config->environments[$environment]->certManagerIssuer)
+    cert-manager.io/cluster-issuer: {{ $config->environments[$environment]->certManagerIssuer }}
+@endif
 @if($extraAnnotations = $config->getIngressAnnotations($environment))
 {{-- Per-env passthrough (ACM cert ARN, security groups, ALB conditions/actions).
      JSON-encoded so free-form values stay valid YAML. Dumb merge: extends the

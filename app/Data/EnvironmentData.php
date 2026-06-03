@@ -135,5 +135,13 @@ class EnvironmentData extends Data
          * When migrating between clouds, simply update this value.
          */
         public ?string $storageClass = null,
+        /**
+         * Enable cert-manager TLS on this environment. When set, a ClusterIssuer
+         * annotation is added to the ingress for automatic certificate provisioning.
+         * Requires cert-manager to be installed on the cluster first.
+         * Example: "letsencrypt-prod" (must match an existing ClusterIssuer name).
+         * Null = no automatic TLS (start on HTTP, or use the raw ingressAnnotations knob).
+         */
+        public ?string $certManagerIssuer = null,
     ) {}
 }
