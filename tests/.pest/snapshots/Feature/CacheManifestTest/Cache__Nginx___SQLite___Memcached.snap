@@ -284,7 +284,30 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          # Local dev: service connection vars (DB_*, REDIS_*, etc.) come from
+          # ConfigMap/Secret via envFrom; everything else reads from .env
+          # mounted on the hostPath. .env edits are live without larakube up.
+          # Explicit env entries override Kubernetes service discovery auto-injection.
+          envFrom:
+            - configMapRef:
+                name: laravel-config
+            - secretRef:
+                name: laravel-secrets
           env:
+            # Override Kubernetes auto-injected service discovery vars with ConfigMap values.
+            # (Explicit env takes precedence over envFrom, which takes precedence over service links)
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: REDIS_PORT
+                  optional: true
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: laravel-config
+                  key: DB_PORT
+                  optional: true
             # Skip all SSU on-startup caching in local dev. Caching freezes
             # pod env vars (DB_CONNECTION=pgsql, etc.) into bootstrap/cache/*.php
             # files that win over process env, silently breaking test-time

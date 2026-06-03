@@ -304,14 +304,19 @@ class UpCommand extends Command
         $envFile = $environment === 'local' ? '.env' : ".env.$environment";
         $envPath = getcwd().'/'.$envFile;
 
+        // LOCAL: ConfigMap/Secret contain only service connection variables (DB_*,
+        // REDIS_*, MEILISEARCH_*, etc.). App-specific config lives in .env on the
+        // hostPath mount for instant edits without larakube up.
+        // REMOTE: ConfigMap/Secret contain all variables (no hostPath mount exists).
         if (file_exists($envPath)) {
             $this->withSpin('Injecting configuration and blueprint...', function () use ($namespace, $envPath, $projectPath, $config, $environment) {
-                // 🔐 SECURE SEPARATION: Split .env into ConfigMap and Secrets
                 $envLines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
                 $publicLiterals = '';
                 $secretLiterals = '';
 
-                // Known Secret Keys from the Blueprint
+                $serviceConnectionNames = $environment === 'local'
+                    ? $config->getServiceConnectionVariableNames($environment)
+                    : [];
                 $knownSecrets = array_keys($config->getAllSecretEnvironmentVariables($environment));
 
                 foreach ($envLines as $line) {
@@ -329,6 +334,12 @@ class UpCommand extends Command
 
                     // Skip empty keys
                     if (empty($key)) {
+                        continue;
+                    }
+
+                    // LOCAL only: filter to service connection variables (others read from .env mount).
+                    // REMOTE: include all non-secret variables (no .env mount exists).
+                    if ($environment === 'local' && ! in_array($key, $serviceConnectionNames, true)) {
                         continue;
                     }
 

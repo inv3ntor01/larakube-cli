@@ -1211,6 +1211,31 @@ class ConfigData extends Data
         return $envs;
     }
 
+    public function getServiceConnectionVariableNames(string $environment = 'local'): array
+    {
+        $names = [];
+
+        $serviceDrivers = [
+            $this->database,
+            ...$this->databases,
+            $this->cacheDriver,
+            ...$this->cacheDrivers,
+            $this->scoutDriver,
+            ...$this->scoutDrivers,
+            $this->objectStorage,
+            ...$this->objectStorages,
+        ];
+
+        foreach (array_filter($serviceDrivers) as $driver) {
+            if ($driver instanceof HasEnvironmentVariables && ! ($this->isPlexBacked($driver, $environment))) {
+                $vars = $driver->getEnvironmentVariables($this, $environment);
+                $names = array_merge($names, array_keys($vars));
+            }
+        }
+
+        return array_unique($names);
+    }
+
     public function getAllPhpExtensions(): array
     {
         $extensions = $this->additionalExtensions;

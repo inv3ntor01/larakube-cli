@@ -68,18 +68,6 @@ trait GeneratesProjectInfrastructure
             $managed = false;
         }
 
-        // 3. Pre-bundle dependencies at cold start so Vite doesn't discover them
-        // lazily mid-session and hard-reload the page (which wipes form input).
-        // Independent of the server block above; skip configs we've left custom.
-        if ($managed) {
-            $content = file_get_contents($viteFile);
-
-            if (! str_contains($content, 'optimizeDeps')) {
-                $optimize = view('k8s.viteoptimize')->render();
-                $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$optimize}", $content, 1);
-                file_put_contents($viteFile, $content);
-            }
-        }
     }
 
     /**

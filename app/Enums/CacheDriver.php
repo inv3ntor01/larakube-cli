@@ -236,6 +236,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         return match ($this) {
             self::REDIS => [
                 'REDIS_HOST' => $config ? $config->getInternalFqdn($this, $environment) : 'redis',
+                'REDIS_PORT' => (string) $this->dbPort(),
                 'CACHE_STORE' => 'redis',
                 'SESSION_DRIVER' => 'redis',
                 'QUEUE_CONNECTION' => 'redis',
@@ -244,6 +245,7 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             ],
             self::MEMCACHED => [
                 'MEMCACHED_HOST' => $config ? $config->getInternalFqdn($this, $environment) : 'memcached',
+                'MEMCACHED_PORT' => (string) $this->dbPort(),
                 'CACHE_STORE' => 'memcached',
                 'SESSION_DRIVER' => 'memcached',
             ],
