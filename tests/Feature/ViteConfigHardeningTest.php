@@ -3,7 +3,7 @@
 use App\Data\ConfigData;
 use Tests\Feature\ViteHardenHelper;
 
-test('Vite Hardening: Strips Wayfinder and injects K8s config', function () {
+test('Vite Hardening: Preserves Wayfinder and injects K8s config', function () {
     $tempDir = sys_get_temp_dir().'/vite-harden-test-'.uniqid();
     mkdir($tempDir, 0755, true);
 
@@ -33,8 +33,9 @@ TS;
 
     $result = file_get_contents($tempDir.'/vite.config.ts');
 
-    // Verify Wayfinder is gone
-    expect($result)->not->toContain('wayfinder');
+    // Wayfinder must be preserved — the build runs in the PHP image now, so the
+    // Vite plugin generates the route/action/form files itself.
+    expect($result)->toContain('wayfinder');
 
     // Verify K8s config is injected
     expect($result)->toContain("origin: 'https://vite-test-app.dev.test'");

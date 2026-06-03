@@ -32,9 +32,10 @@ trait GeneratesProjectInfrastructure
         if ($config->isScaffolding) {
             $this->laraKubeInfo('Hardening Vite configuration for Kubernetes...');
 
-            // Strip Wayfinder
-            $content = preg_replace("/import\s+({?\s*wayfinder\s*}?)\s+from\s+['\"].*?wayfinder.*?['\"];?\n?/s", '', $content);
-            $content = preg_replace("/\bwayfinder\s*\((?:[^()]|(?R))*\),?\n?/s", '', $content);
+            // Wayfinder is intentionally left in place. The asset build now runs
+            // in the PHP image, so the Vite plugin can shell out to
+            // `php artisan wayfinder:generate` itself — stripping it was only
+            // necessary when the build ran in a pure-Node image with no PHP.
 
             // Disable Inertia SSR
             $content = preg_replace('/inertia\(\)/', 'inertia({ ssr: false })', $content);
