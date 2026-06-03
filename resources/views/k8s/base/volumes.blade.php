@@ -8,6 +8,9 @@ spec:
   resources:
     requests:
       storage: 1Gi
+@if($config->environments[$environment]->storageClass ?? false)
+  storageClassName: {{ $config->environments[$environment]->storageClass }}
+@endif
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -19,3 +22,6 @@ spec:
   resources:
     requests:
       storage: 1Gi
+@if($config->environments[$environment]->storageClass ?? false)
+  storageClassName: {{ $config->environments[$environment]->storageClass }}
+@endif

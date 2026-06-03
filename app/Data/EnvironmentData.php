@@ -125,5 +125,12 @@ class EnvironmentData extends Data
          * @var array<string, string>
          */
         public array $ingressAnnotations = [],
+        /**
+         * StorageClass name for PVCs in this env. Null = cluster default
+         * (snapshot-stable). For DOKS: set to "do-block-storage" for RWO or
+         * use a managed DB for RWX on multi-node. For other clusters: point
+         * at their persistent storage provider.
+         */
+        public ?string $storageClass = null,
     ) {}
 }
