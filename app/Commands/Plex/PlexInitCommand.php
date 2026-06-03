@@ -284,27 +284,54 @@ class PlexInitCommand extends Command
         $ns = $this->plexNamespace();
         $kubectl = $this->plexKubectl();
 
+        // Generators for every admin credential. S3_ACCESS_KEY is a stable id; the
+        // rest are random. (S3 creds were added later, so older Commons secrets
+        // are missing them — see the additive patch below.)
+        $generators = [
+            'POSTGRES_PASSWORD' => fn () => bin2hex(random_bytes(16)),
+            'MEILI_MASTER_KEY' => fn () => bin2hex(random_bytes(16)),
+            'S3_ACCESS_KEY' => fn () => 'larakube',
+            'S3_SECRET_KEY' => fn () => bin2hex(random_bytes(16)),
+        ];
+
         $exists = trim((string) shell_exec(
             "{$kubectl} get secret plex-admin -n {$ns} -o name 2>/dev/null",
         )) !== '';
 
-        if ($exists) {
+        if (! $exists) {
+            $literals = '';
+            foreach ($generators as $key => $generate) {
+                $literals .= '--from-literal='.$key.'='.escapeshellarg($generate()).' ';
+            }
+            shell_exec(
+                "{$kubectl} create secret generic plex-admin -n {$ns} {$literals}".
+                "--dry-run=client -o yaml | {$kubectl} apply -f -",
+            );
+
             return;
         }
 
-        $postgresPassword = bin2hex(random_bytes(16));
-        $meiliMasterKey = bin2hex(random_bytes(16));
-        // Shared Commons S3 credentials (one key, bucket-per-tenant isolation).
-        $s3SecretKey = bin2hex(random_bytes(16));
+        // Existing secret: ADD any missing keys (e.g. S3 creds on a Commons that
+        // predates them) but NEVER rotate the ones already there — rotating
+        // POSTGRES_PASSWORD would desync from the running Postgres (its password is
+        // set only on first init).
+        $patch = [];
+        foreach ($generators as $key => $generate) {
+            $present = trim((string) shell_exec(
+                "{$kubectl} get secret plex-admin -n {$ns} -o jsonpath=".escapeshellarg('{.data.'.$key.'}').' 2>/dev/null',
+            )) !== '';
 
-        shell_exec(
-            "{$kubectl} create secret generic plex-admin -n {$ns} ".
-            '--from-literal=POSTGRES_PASSWORD='.escapeshellarg($postgresPassword).' '.
-            '--from-literal=MEILI_MASTER_KEY='.escapeshellarg($meiliMasterKey).' '.
-            '--from-literal=S3_ACCESS_KEY='.escapeshellarg('larakube').' '.
-            '--from-literal=S3_SECRET_KEY='.escapeshellarg($s3SecretKey).
-            " --dry-run=client -o yaml | {$kubectl} apply -f -",
-        );
+            if (! $present) {
+                $patch[$key] = base64_encode($generate());
+            }
+        }
+
+        if (! empty($patch)) {
+            shell_exec(
+                "{$kubectl} patch secret plex-admin -n {$ns} --type merge -p ".
+                escapeshellarg((string) json_encode(['data' => $patch])),
+            );
+        }
     }
 
     /**
