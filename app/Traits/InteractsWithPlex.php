@@ -53,7 +53,7 @@ trait InteractsWithPlex
         // uses, so the Commons never drifts from the project defaults (e.g. Meili's
         // version stays in lockstep with ScoutDriver instead of a stale literal).
         $defaults = [
-            'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi'],
+            'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
             'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
             'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
             'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(), 'port' => StorageDriver::SEAWEEDFS->port(), 'storage' => '10Gi'],

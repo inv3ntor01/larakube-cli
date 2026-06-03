@@ -66,7 +66,9 @@ spec:
               memory: "128Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              # Shared DB ceiling — raise via the spec's postgres.memory if it OOMs
+              # (a Commons serving many tenant databases needs headroom).
+              memory: "{{ $spec['services']['postgres']['memory'] }}"
               cpu: "500m"
           readinessProbe:
             tcpSocket:

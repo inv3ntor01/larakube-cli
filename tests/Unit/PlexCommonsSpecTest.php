@@ -28,6 +28,7 @@ test('the default spec enables only Postgres + Redis', function () {
     expect($p->enabledCommonsServices($spec))->toBe(['postgres', 'redis'])
         ->and($spec['services']['postgres']['image'])->toBe('postgres:17.9')
         ->and($spec['services']['postgres']['storage'])->toBe('10Gi')
+        ->and($spec['services']['postgres']['memory'])->toBe('1Gi')   // shared-DB ceiling, configurable
         ->and($spec['services']['redis']['port'])->toBe(6379)
         ->and($spec['services']['meilisearch']['enabled'])->toBeFalse()  // opt-in, off by default
         ->and($spec['services']['seaweedfs']['enabled'])->toBeFalse();
