@@ -143,12 +143,13 @@ trait InteractsWithHosts
         }
 
         $this->laraKubeInfo('Windows hosts file needs updating (so your Windows browser resolves these).');
-        $this->line("  <fg=gray>●</> <fg=blue>$entry</>");
-        $this->line('');
+        $this->printWindowsHostsManualHelp($entry);
 
-        if (! confirm('Sync your Windows hosts file now? (a Windows UAC/admin prompt will appear)', true)) {
-            $this->printWindowsHostsManualHelp($entry);
-
+        // Editing the Windows hosts file needs admin, and UAC auto-elevation across
+        // the WSL→Windows boundary is unreliable (it can just flash a window and
+        // fail). So the manual steps above are the recommended path, and the
+        // auto-sync is strictly opt-in — we no longer rely on the elevation.
+        if (! confirm('Or have LaraKube try to sync it now via a Windows admin prompt?', false)) {
             return;
         }
 

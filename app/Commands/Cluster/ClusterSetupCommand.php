@@ -152,7 +152,10 @@ class ClusterSetupCommand extends Command
         }
 
         $this->laraKubeInfo('Installing native k3s...');
-        passthru('curl -sfL https://get.k3s.io | sh -', $installCode);
+        // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
+        // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
+        // below work without sudo.
+        passthru('curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" sh -', $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');
@@ -180,6 +183,12 @@ class ClusterSetupCommand extends Command
         } else {
             $this->laraKubeWarn('Timed out waiting for the k3s node to register. It may still come up shortly.');
         }
+
+        // On an ALREADY-installed k3s the installer prints "No change detected so
+        // skipping service start" — so K3S_KUBECONFIG_MODE is never applied (the
+        // mode is only written when k3s (re)starts). Force the kubeconfig readable
+        // so a re-run actually heals the 0600 permission instead of looping.
+        passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
 
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
         // never touches ~/.kube/config — so kubectl and `larakube context` can't
@@ -252,8 +261,31 @@ class ClusterSetupCommand extends Command
         file_put_contents($kubeConfig, $merged);
         @chmod($kubeConfig, 0600);
 
-        exec('kubectl config use-context '.escapeshellarg($contextName).' 2>/dev/null');
+        // Target ~/.kube/config explicitly — a bare `kubectl` would use $KUBECONFIG
+        // (often k3s's own file), where this context doesn't exist.
+        exec('KUBECONFIG='.escapeshellarg($kubeConfig).' kubectl config use-context '.escapeshellarg($contextName).' 2>/dev/null');
+
+        // Verify the context actually landed — the flatten/merge can silently no-op.
+        $contexts = array_filter(explode("\n", trim((string) shell_exec(
+            'KUBECONFIG='.escapeshellarg($kubeConfig).' kubectl config get-contexts -o name 2>/dev/null',
+        ))));
+        if (! in_array($contextName, $contexts, true)) {
+            $this->laraKubeWarn("Merge did not produce the '{$contextName}' context in ~/.kube/config.");
+            $this->laraKubeLine('  👉 Ensure /etc/rancher/k3s/k3s.yaml is readable, then re-run `larakube cluster:setup`.');
+
+            return;
+        }
 
         $this->laraKubeInfo("Merged k3s into ~/.kube/config as context <fg=cyan>{$contextName}</>.");
+
+        // A KUBECONFIG env var pointing elsewhere (e.g. at k3s's own
+        // /etc/rancher/k3s/k3s.yaml, which the k3s installer suggests exporting)
+        // SHADOWS this merge — kubectl/larakube would read that file (context
+        // "default") and never see "k3s-larakube".
+        $envKubeconfig = (string) getenv('KUBECONFIG');
+        if ($envKubeconfig !== '' && realpath($envKubeconfig) !== realpath($kubeConfig)) {
+            $this->laraKubeWarn("Heads up: your KUBECONFIG points at {$envKubeconfig}, which hides this merge.");
+            $this->laraKubeLine('  👉 Run `unset KUBECONFIG` (and remove any KUBECONFIG=… line from ~/.bashrc) so kubectl uses ~/.kube/config.');
+        }
     }
 }

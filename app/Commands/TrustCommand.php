@@ -63,10 +63,41 @@ class TrustCommand extends Command
         $os = PHP_OS_FAMILY;
 
         if ($this->isWsl()) {
-            $this->info('  🪟 WSL2 detected. Installing to Windows Root Store...');
-            $winPath = trim(shell_exec("wslpath -w $tempCa"));
-            passthru("certutil.exe -addstore -f \"Root\" \"$winPath\"");
-        } elseif ($os === 'Darwin') {
+            $this->info('  🪟 WSL2 detected. Installing to the Windows current-user trust store...');
+
+            // Persist the CA where Windows can read it (the temp file is unlinked,
+            // and the bundled CA lives inside the PHAR), so both certutil and the
+            // manual fallback below can reference the same path.
+            $home = getenv('HOME') ?: sys_get_temp_dir();
+            @mkdir($home.'/.larakube', 0755, true);
+            $caFile = $home.'/.larakube/larakube-local-ca.crt';
+            file_put_contents($caFile, $caContent);
+            @unlink($tempCa);
+
+            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
+
+            // -user → the CURRENT USER's Root store: trusted by Chrome/Edge, needs
+            // NO admin/UAC. This replaces the old `-addstore Root` (machine store)
+            // that required elevation and just flashed a window and failed.
+            passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $trustCode);
+
+            $this->line('');
+            if ($trustCode !== 0) {
+                $this->laraKubeWarn('Could not add the CA to the Windows user store automatically.');
+                $this->line('  👉 In a Windows terminal (no admin needed) run:');
+                $this->line("       certutil -user -addstore -f Root \"{$winPath}\"");
+                $this->line('     …or double-click that .crt → Install Certificate → Current User → Trusted Root Certification Authorities.');
+
+                return 1;
+            }
+
+            $this->laraKubeInfo('✅ LaraKube Local CA trusted (Windows current-user store). Restart your browser.');
+            $this->line('  <fg=gray>Note: Firefox uses its own trust store — import the CA there separately if you use Firefox.</>');
+
+            return 0;
+        }
+
+        if ($os === 'Darwin') {
             $this->info('  🔒 macOS detected. Installing to System Keychain...');
             passthru("sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"{$tempCa}\"");
         } elseif ($os === 'Linux') {
