@@ -532,9 +532,78 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function isPlexReady(): bool
     {
-        // Postgres is the only Commons-provisionable database today (plex:join's
-        // buildPostgresTenantSql). The rest are mapped but not yet wired.
-        return $this === self::POSTGRESQL;
+        // Relational engines wired as Commons database backends (per-tenant
+        // database + login via commonsTenantSql). MongoDB is mapped but not wired.
+        return match ($this) {
+            self::POSTGRESQL, self::MYSQL, self::MARIADB => true,
+            default => false,
+        };
+    }
+
+    /**
+     * SQL that idempotently provisions a tenant's database + login in the shared
+     * Commons, piped to this engine's admin client (commonsAdminClient). $db/$user
+     * are pre-sanitized identifiers; the password is engine-escaped. Null for
+     * engines that aren't a relational Commons backend (SQLite is a local file;
+     * MongoDB auto-creates and isn't wired). Pure.
+     */
+    public function commonsTenantSql(string $db, string $user, string $password): ?string
+    {
+        return match ($this) {
+            self::POSTGRESQL => $this->postgresCommonsCreateSql($db, $user, $password),
+            self::MYSQL, self::MARIADB => $this->mysqlCommonsCreateSql($db, $user, $password),
+            default => null,
+        };
+    }
+
+    /**
+     * SQL that drops a tenant's database + login (the plex:leave teardown).
+     * Mirrors commonsTenantSql. Null for non-relational engines. Pure.
+     */
+    public function commonsDropSql(string $db, string $user): ?string
+    {
+        return match ($this) {
+            self::POSTGRESQL => implode("\n", [
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{$db}' AND pid <> pg_backend_pid();",
+                "DROP DATABASE IF EXISTS \"{$db}\";",
+                "DROP ROLE IF EXISTS \"{$user}\";",
+            ]),
+            self::MYSQL, self::MARIADB => implode("\n", [
+                "DROP DATABASE IF EXISTS `{$db}`;",
+                "DROP USER IF EXISTS '{$user}'@'%';",
+                'FLUSH PRIVILEGES;',
+            ]),
+            default => null,
+        };
+    }
+
+    /**
+     * The in-pod client that reads tenant SQL on stdin. Intended to be invoked as
+     * `kubectl exec -i deploy/<value> -- sh -c '<this>' < tenant.sql` so the pod's
+     * shell expands the password env var. Postgres connects as the local-socket
+     * superuser (trust), so it needs no password.
+     */
+    public function commonsAdminClient(): string
+    {
+        return match ($this) {
+            self::POSTGRESQL => 'psql -U postgres -v ON_ERROR_STOP=1',
+            self::MYSQL, self::MARIADB => 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            default => '',
+        };
+    }
+
+    /**
+     * The in-pod command that dumps a tenant database to stdout (the plex:leave
+     * safety backup). $db is a sanitized identifier. Same sh -c invocation as
+     * commonsAdminClient so the password env var expands in the pod.
+     */
+    public function commonsBackupCommand(string $db): string
+    {
+        return match ($this) {
+            self::POSTGRESQL => "pg_dump -U postgres --no-owner {$db}",
+            self::MYSQL, self::MARIADB => "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            default => '',
+        };
     }
 
     public function commonsServiceName(): ?string
@@ -542,6 +611,46 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         // The Commons service name IS the driver value — no remapping. SQLite is
         // a local file, never a shared service.
         return $this === self::SQLITE ? null : $this->value;
+    }
+
+    /**
+     * Postgres: role first (the db is created OWNED BY it); the tenant owns its
+     * database + the public schema so migrations can create tables (PG 15+ locks
+     * `public` down for non-owners) — full per-tenant isolation, no shared grants.
+     */
+    private function postgresCommonsCreateSql(string $db, string $role, string $password): string
+    {
+        $pw = str_replace("'", "''", $password);
+
+        return implode("\n", [
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{$role}') THEN CREATE ROLE \"{$role}\" LOGIN PASSWORD '{$pw}'; END IF; END \$\$;",
+            "ALTER ROLE \"{$role}\" PASSWORD '{$pw}';",
+            "SELECT 'CREATE DATABASE \"{$db}\" OWNER \"{$role}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{$db}')\\gexec",
+            "ALTER DATABASE \"{$db}\" OWNER TO \"{$role}\";",
+            "GRANT ALL PRIVILEGES ON DATABASE \"{$db}\" TO \"{$role}\";",
+            "\\connect \"{$db}\"",
+            "ALTER SCHEMA public OWNER TO \"{$role}\";",
+        ]);
+    }
+
+    /**
+     * MySQL/MariaDB: create the database + a '%'-host login scoped to it
+     * (GRANT ... ON `db`.*). Idempotent and re-asserts the password on re-run.
+     * utf8mb4 for full Unicode. The engine caps user names at 32 chars — tenant
+     * identifiers (app names) are short, but we truncate to stay valid.
+     */
+    private function mysqlCommonsCreateSql(string $db, string $user, string $password): string
+    {
+        $pw = addslashes($password);
+        $user = substr($user, 0, 32);
+
+        return implode("\n", [
+            "CREATE DATABASE IF NOT EXISTS `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+            "CREATE USER IF NOT EXISTS '{$user}'@'%' IDENTIFIED BY '{$pw}';",
+            "ALTER USER '{$user}'@'%' IDENTIFIED BY '{$pw}';",
+            "GRANT ALL PRIVILEGES ON `{$db}`.* TO '{$user}'@'%';",
+            'FLUSH PRIVILEGES;',
+        ]);
     }
 
     case MYSQL = 'mysql';

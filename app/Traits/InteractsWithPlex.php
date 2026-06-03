@@ -54,9 +54,12 @@ trait InteractsWithPlex
         // version stays in lockstep with ScoutDriver instead of a stale literal).
         $defaults = [
             'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
+            'mysql' => ['image' => DatabaseDriver::MYSQL->getDockerImage(), 'port' => DatabaseDriver::MYSQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
+            'mariadb' => ['image' => DatabaseDriver::MARIADB->getDockerImage(), 'port' => DatabaseDriver::MARIADB->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
             'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
             'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
             'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(), 'port' => StorageDriver::SEAWEEDFS->port(), 'storage' => '10Gi'],
+            'minio' => ['image' => StorageDriver::MINIO->getDockerImage(), 'port' => StorageDriver::MINIO->port(), 'storage' => '10Gi'],
         ];
 
         $given = $spec['services'] ?? [];
@@ -175,6 +178,26 @@ trait InteractsWithPlex
     }
 
     /**
+     * Turn a tenant identifier into a DNS-safe S3 bucket name (lowercase, hyphens,
+     * 3–63 chars) — MinIO/S3 reject the underscores plexTenantIdentifier produces,
+     * and SeaweedFS tolerates either, so this one rule serves every backend
+     * (e.g. "app_five" → "app-five"). Pure.
+     */
+    public function plexBucketName(string $tenant): string
+    {
+        $name = strtolower($tenant);
+        $name = (string) preg_replace('/[^a-z0-9-]+/', '-', $name);
+        $name = (string) preg_replace('/-+/', '-', $name);
+        $name = trim($name, '-');
+
+        if (strlen($name) < 3) {
+            $name = 'lk-'.$name; // S3 requires ≥3 chars.
+        }
+
+        return substr($name, 0, 63);
+    }
+
+    /**
      * Pick the lowest free Redis logical-DB index (0..max-1), or null if the
      * Commons Redis is full. Pure.
      *
@@ -239,12 +262,20 @@ trait InteractsWithPlex
         $ns = $this->plexNamespace();
         $values = [];
 
-        if (in_array('postgres', $services, true)) {
-            $values['DB_HOST'] = "postgres.{$ns}.svc.cluster.local";
-            $values['DB_PORT'] = 5432;
+        // Database. A tenant declares exactly one relational engine; point its
+        // DB_* at that engine's Commons service (host = service name, port from
+        // the driver). DB_CONNECTION is already correct in the app's own .env.
+        foreach (['postgres', 'mysql', 'mariadb'] as $dbService) {
+            if (! in_array($dbService, $services, true)) {
+                continue;
+            }
+            $driver = DatabaseDriver::tryFrom($dbService);
+            $values['DB_HOST'] = "{$dbService}.{$ns}.svc.cluster.local";
+            $values['DB_PORT'] = $driver?->dbPort() ?? 5432;
             $values['DB_DATABASE'] = $tenant;
             $values['DB_USERNAME'] = $tenant;
             $values['DB_PASSWORD'] = $password;
+            break;
         }
 
         if (in_array('redis', $services, true)) {
@@ -260,11 +291,14 @@ trait InteractsWithPlex
         // generic across S3 backends — SeaweedFS, MinIO, Garage — with no
         // hardcoded service. The AWS_* keys are the standard Laravel S3 contract.
         if ($s3 !== null) {
+            // DNS-safe bucket name (S3/MinIO reject the underscores a tenant id
+            // can carry); SeaweedFS tolerates either, so one rule fits all backends.
+            $bucket = $this->plexBucketName($tenant);
             $values['FILESYSTEM_DISK'] = 's3';
             $values['AWS_ACCESS_KEY_ID'] = $s3['access'];
             $values['AWS_SECRET_ACCESS_KEY'] = $s3['secret'];
             $values['AWS_DEFAULT_REGION'] = 'us-east-1';
-            $values['AWS_BUCKET'] = $tenant;
+            $values['AWS_BUCKET'] = $bucket;
             $values['AWS_ENDPOINT'] = 'http://'.$s3['service'].'.'.$ns.'.svc.cluster.local:'.$s3['port'];
             $values['AWS_USE_PATH_STYLE_ENDPOINT'] = 'true';
 
@@ -272,8 +306,8 @@ trait InteractsWithPlex
             // host (path-style → host/bucket), if one is configured. In-cluster
             // access always works via AWS_ENDPOINT regardless.
             if (! empty($s3['host'])) {
-                $values['AWS_URL'] = 'https://'.$s3['host'].'/'.$tenant;
-                $values['AWS_TEMPORARY_URL'] = 'https://'.$s3['host'].'/'.$tenant;
+                $values['AWS_URL'] = 'https://'.$s3['host'].'/'.$bucket;
+                $values['AWS_TEMPORARY_URL'] = 'https://'.$s3['host'].'/'.$bucket;
             }
         }
 
@@ -287,41 +321,19 @@ trait InteractsWithPlex
      */
     public function buildPostgresTenantSql(string $db, string $role, string $password): string
     {
-        $pw = str_replace("'", "''", $password);
-
-        return implode("\n", [
-            // Role first — the database is created OWNED BY it.
-            "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{$role}') THEN CREATE ROLE \"{$role}\" LOGIN PASSWORD '{$pw}'; END IF; END \$\$;",
-            "ALTER ROLE \"{$role}\" PASSWORD '{$pw}';",
-            // Tenant OWNS its database, so it can create its own schema/tables and
-            // run migrations (Postgres 15+ locks down the public schema for
-            // non-owners) — full per-tenant isolation, no shared-schema grants.
-            "SELECT 'CREATE DATABASE \"{$db}\" OWNER \"{$role}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{$db}')\\gexec",
-            "ALTER DATABASE \"{$db}\" OWNER TO \"{$role}\";",
-            "GRANT ALL PRIVILEGES ON DATABASE \"{$db}\" TO \"{$role}\";",
-            // Hand the tenant its DB's public schema too — ALTER DATABASE OWNER
-            // doesn't transfer it, and Postgres 15+ won't let a non-owner create
-            // objects in `public`. Without this, migrations fail with
-            // "permission denied for schema public".
-            "\\connect \"{$db}\"",
-            "ALTER SCHEMA public OWNER TO \"{$role}\";",
-        ]);
+        // The per-engine tenant SQL lives on the DatabaseDriver enum now (so each
+        // Commons backend owns its own provisioning); this stays as the Postgres
+        // shorthand the unit tests pin.
+        return (string) DatabaseDriver::POSTGRESQL->commonsTenantSql($db, $role, $password);
     }
 
     /**
      * Inverse of buildPostgresTenantSql: drop a tenant's database and role from
-     * the Commons. Terminates live connections first (Postgres refuses to drop a
-     * database with open sessions). $db/$role come from plexTenantIdentifier()
-     * (sanitised to [a-z0-9_]), so they are safe to interpolate — same trust
-     * model as the create path.
+     * the Commons Postgres. Delegates to the enum (see commonsDropSql).
      */
     public function buildDropTenantSql(string $db, string $role): string
     {
-        return implode("\n", [
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{$db}' AND pid <> pg_backend_pid();",
-            "DROP DATABASE IF EXISTS \"{$db}\";",
-            "DROP ROLE IF EXISTS \"{$role}\";",
-        ]);
+        return (string) DatabaseDriver::POSTGRESQL->commonsDropSql($db, $role);
     }
 
     /**
@@ -356,7 +368,8 @@ trait InteractsWithPlex
         foreach ($registry['tenants'] ?? [] as $name => $alloc) {
             $uses = match (true) {
                 $service === 'redis' => ($alloc['redis_index'] ?? null) !== null,
-                $service === 'postgres' => ! empty($alloc['db']),
+                in_array($service, ['postgres', 'mysql', 'mariadb'], true) => ! empty($alloc['db'])
+                    && ($alloc['db_service'] ?? 'postgres') === $service,
                 ($alloc['s3_service'] ?? null) === $service => true,
                 default => false,
             };

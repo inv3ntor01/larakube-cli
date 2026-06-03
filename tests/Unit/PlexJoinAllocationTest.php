@@ -7,6 +7,8 @@
  * PlexJoinCommand belongs in a cluster smoke test, not here.
  */
 
+use App\Enums\DatabaseDriver;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 
 function plexJoin(): object
@@ -70,9 +72,10 @@ test('commonsEnvValues wires S3 generically from the tenant backend + per-tenant
     $p = plexJoin();
 
     // The caller passes the tenant's OWN backend (service + port) — no hardcoded service.
+    // The bucket is the DNS-safe form of the tenant id (app_four → app-four).
     $s3 = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['service' => 'seaweedfs', 'port' => 8333, 'access' => 'larakube', 'secret' => 'sk']);
     expect($s3['FILESYSTEM_DISK'])->toBe('s3')
-        ->and($s3['AWS_BUCKET'])->toBe('app_four')                                                  // per-tenant bucket
+        ->and($s3['AWS_BUCKET'])->toBe('app-four')                                                  // per-tenant bucket, DNS-safe
         ->and($s3['AWS_ENDPOINT'])->toBe('http://seaweedfs.larakube-shared.svc.cluster.local:8333') // its backend's endpoint
         ->and($s3['AWS_ACCESS_KEY_ID'])->toBe('larakube')
         ->and($s3['AWS_SECRET_ACCESS_KEY'])->toBe('sk')
@@ -83,9 +86,9 @@ test('commonsEnvValues wires S3 generically from the tenant backend + per-tenant
     $minio = $p->commonsEnvValues('app_four', 'pw', null, ['minio'], ['service' => 'minio', 'port' => 9000, 'access' => 'k', 'secret' => 's']);
     expect($minio['AWS_ENDPOINT'])->toBe('http://minio.larakube-shared.svc.cluster.local:9000');
 
-    // A configured public host → AWS_URL (path-style host/bucket).
+    // A configured public host → AWS_URL (path-style host/bucket, DNS-safe bucket).
     $withHost = $p->commonsEnvValues('app_four', 'pw', null, ['seaweedfs'], ['service' => 'seaweedfs', 'port' => 8333, 'access' => 'k', 'secret' => 's', 'host' => 's3.example.com']);
-    expect($withHost['AWS_URL'])->toBe('https://s3.example.com/app_four');
+    expect($withHost['AWS_URL'])->toBe('https://s3.example.com/app-four');
 
     // No S3 details → no S3 env.
     expect($p->commonsEnvValues('app_four', 'pw', null, ['postgres']))->not->toHaveKey('AWS_BUCKET')
@@ -136,13 +139,74 @@ test('registry transforms add, remove, and report used redis indexes', function 
 test('commonsServiceTenants reports who uses a service (the plex:remove guard)', function () {
     $p = plexJoin();
     $registry = ['tenants' => [
-        'app_one' => ['db' => 'app_one', 'redis_index' => null],
+        'app_one' => ['db' => 'app_one', 'redis_index' => null],                                  // legacy: no db_service → Postgres
         'app_four' => ['db' => 'app_four', 'redis_index' => 0],
         'app_five' => ['db' => 'app_five', 's3_service' => 'seaweedfs', 's3_bucket' => 'app_five'],
+        'app_six' => ['db' => 'app_six', 'db_service' => 'mysql', 'redis_index' => null],          // explicit MySQL tenant
     ]];
 
     expect($p->commonsServiceTenants($registry, 'redis'))->toBe(['app_four'])            // only the one with an index
         ->and($p->commonsServiceTenants($registry, 'seaweedfs'))->toBe(['app_five'])     // by recorded s3_service
         ->and($p->commonsServiceTenants($registry, 'minio'))->toBe([])                   // no minio tenant → safe to remove
-        ->and($p->commonsServiceTenants($registry, 'postgres'))->toBe(['app_one', 'app_four', 'app_five']); // conservative: any db
+        ->and($p->commonsServiceTenants($registry, 'mysql'))->toBe(['app_six'])          // only the explicit MySQL tenant
+        ->and($p->commonsServiceTenants($registry, 'postgres'))->toBe(['app_one', 'app_four', 'app_five']); // legacy rows = Postgres, NOT app_six
+});
+
+test('commonsEnvValues points DB_* at the tenant engine service (postgres/mysql/mariadb)', function () {
+    $p = plexJoin();
+
+    $pg = $p->commonsEnvValues('app_one', 'secret', null, ['postgres']);
+    expect($pg['DB_HOST'])->toBe('postgres.larakube-shared.svc.cluster.local')
+        ->and($pg['DB_PORT'])->toBe(5432);
+
+    $my = $p->commonsEnvValues('app_one', 'secret', null, ['mysql']);
+    expect($my['DB_HOST'])->toBe('mysql.larakube-shared.svc.cluster.local')
+        ->and($my['DB_PORT'])->toBe(3306)
+        ->and($my['DB_DATABASE'])->toBe('app_one')
+        ->and($my['DB_USERNAME'])->toBe('app_one')
+        ->and($my['DB_PASSWORD'])->toBe('secret');
+
+    expect($p->commonsEnvValues('app_one', 'secret', null, ['mariadb'])['DB_HOST'])
+        ->toBe('mariadb.larakube-shared.svc.cluster.local');
+});
+
+test('MySQL/MariaDB Commons tenant SQL scopes a db + user and escapes the password', function () {
+    $sql = DatabaseDriver::MYSQL->commonsTenantSql('app_one', 'app_one', "pa'ss");
+
+    expect($sql)
+        ->toContain('CREATE DATABASE IF NOT EXISTS `app_one`')
+        ->toContain("CREATE USER IF NOT EXISTS 'app_one'@'%' IDENTIFIED BY 'pa\\'ss'")  // backslash-escaped quote
+        ->toContain('GRANT ALL PRIVILEGES ON `app_one`.* TO \'app_one\'@\'%\'')
+        ->toContain('FLUSH PRIVILEGES;');
+
+    expect(DatabaseDriver::MARIADB->commonsDropSql('app_one', 'app_one'))
+        ->toContain('DROP DATABASE IF EXISTS `app_one`')
+        ->toContain("DROP USER IF EXISTS 'app_one'@'%'");
+
+    // Non-relational engines aren't Commons DB backends.
+    expect(DatabaseDriver::SQLITE->commonsTenantSql('a', 'a', 'a'))->toBeNull();
+});
+
+test('plexBucketName makes a DNS-safe bucket from a tenant id', function () {
+    $p = plexJoin();
+
+    expect($p->plexBucketName('app_five'))->toBe('app-five')          // underscores → hyphens (S3/MinIO reject _)
+        ->and($p->plexBucketName('My_App__1'))->toBe('my-app-1')      // collapse + lowercase
+        ->and($p->plexBucketName('_edge_'))->toBe('edge')             // trim leading/trailing hyphens
+        ->and($p->plexBucketName('ab'))->toBe('lk-ab');              // pad to the 3-char S3 minimum
+});
+
+test('Commons bucket commands are per-backend (SeaweedFS weed shell, MinIO mc)', function () {
+    expect(StorageDriver::SEAWEEDFS->commonsBucketCreateCommand('app-five'))
+        ->toContain('s3.bucket.create -name app-five')
+        ->toContain('weed shell');
+
+    $mc = StorageDriver::MINIO->commonsBucketCreateCommand('app-five');
+    expect($mc)
+        ->toContain('mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"')  // pod expands creds
+        ->toContain('mc mb --ignore-existing local/app-five')
+        ->toContain('MC_CONFIG_DIR=/tmp/mc');
+
+    expect(StorageDriver::MINIO->commonsBucketDeleteCommand('app-five'))->toContain('mc rb --force local/app-five')
+        ->and(StorageDriver::SEAWEEDFS->commonsBucketDeleteCommand('app-five'))->toContain('s3.bucket.delete -name app-five');
 });

@@ -2,6 +2,7 @@
 
 namespace App\Commands\Plex;
 
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -10,9 +11,11 @@ use LaravelZero\Framework\Commands\Command;
 
 class PlexStatusCommand extends Command
 {
-    use InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
+    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
-    protected $signature = 'plex:status {environment=production : The cloud environment whose Commons to inspect}';
+    protected $signature = 'plex:status
+        {environment=production : The cloud environment whose Commons to inspect (used only inside a project)}
+        {--context= : Target a specific kube-context (else: the project env context, or you are prompted)}';
 
     protected $description = 'Show the shared Commons services and its tenants';
 
@@ -21,27 +24,34 @@ class PlexStatusCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Plex — Commons Status');
 
-        if (! $this->isLaraKubeProject()) {
-            return 1;
+        // Resolve the target context like plex:init — so `plex:status` works
+        // inside OR outside a project. Precedence: --context > the project env's
+        // context (read-only, no prompt) > an interactive picker (outside a
+        // project). isLaraKubeProject(false) just branches, without erroring.
+        $config = $this->isLaraKubeProject(false) ? $this->getProjectConfig(getcwd()) : null;
+
+        if ($this->option('context')) {
+            $this->plexContext = (string) $this->option('context');
+        } elseif ($config !== null) {
+            $env = (string) $this->argument('environment');
+            if ($env === 'local') {
+                $this->laraKubeError('Plex is a cloud topology — pick a cloud environment.');
+
+                return 1;
+            }
+            $this->plexContext = $this->environmentContextOrCurrent($config, $env);
+        } else {
+            // Outside a project (no env config to map): pick the cluster, like plex:init.
+            $target = $this->askForClusterContext();
+            if (! $target) {
+                $this->laraKubeError('No Kubernetes context selected.');
+
+                return 1;
+            }
+            $this->plexContext = $target;
         }
 
-        $config = $this->getProjectConfig(getcwd());
-        if (! $config) {
-            return 1;
-        }
-
-        $env = (string) $this->argument('environment');
-        if ($env === 'local') {
-            $this->laraKubeError('Plex is a cloud topology — pick a cloud environment.');
-
-            return 1;
-        }
-
-        // Read-only: target the env's own context if recorded, else fall back to
-        // the current context. Never prompt to capture a deploy target just to look.
-        $context = $this->environmentContextOrCurrent($config, $env);
-        $this->plexContext = $context;
-
+        $context = $this->plexContext;
         if (! $this->plexContextReachable()) {
             $this->laraKubeError('The '.($context ? "context '{$context}'" : 'current context').' is unreachable.');
 
@@ -75,7 +85,8 @@ class PlexStatusCommand extends Command
 
         // Tenants from the registry (highlight this app if it's one).
         $tenants = $this->getRegistry()['tenants'] ?? [];
-        $self = $this->plexTenantIdentifier($config->getName());
+        // Highlight "this app" only when run inside a project.
+        $self = $config !== null ? $this->plexTenantIdentifier($config->getName()) : null;
 
         $this->laraKubeNewLine();
         if (empty($tenants)) {
@@ -87,6 +98,9 @@ class PlexStatusCommand extends Command
         $this->line('  <fg=green>Tenants</> ('.count($tenants).'):');
         foreach ($tenants as $name => $alloc) {
             $db = $alloc['db'] ?? '—';
+            if (($alloc['db'] ?? null) && ($alloc['db_service'] ?? null)) {
+                $db .= " ({$alloc['db_service']})";   // which engine holds it (postgres/mysql/mariadb)
+            }
             $redis = ($alloc['redis_index'] ?? null) === null ? 'no redis' : 'redis db '.$alloc['redis_index'];
             $s3 = ($alloc['s3_bucket'] ?? null) ? ', s3 '.$alloc['s3_bucket'] : '';
             $you = $name === $self ? ' <fg=yellow>(this app)</>' : '';

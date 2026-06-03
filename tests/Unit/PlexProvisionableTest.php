@@ -38,31 +38,36 @@ test('non-shareable drivers have no Commons service', function () {
 
 test('plex-readiness reflects what is actually wired today', function () {
     expect(DatabaseDriver::POSTGRESQL->isPlexReady())->toBeTrue()
-        ->and(DatabaseDriver::MYSQL->isPlexReady())->toBeFalse()        // mapped, not yet wired
+        ->and(DatabaseDriver::MYSQL->isPlexReady())->toBeTrue()         // wired Commons db backend
+        ->and(DatabaseDriver::MARIADB->isPlexReady())->toBeTrue()       // wired Commons db backend
+        ->and(DatabaseDriver::MONGODB->isPlexReady())->toBeFalse()      // mapped, not yet wired
         ->and(CacheDriver::REDIS->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::MEILISEARCH->isPlexReady())->toBeTrue()
         ->and(ScoutDriver::TYPESENSE->isPlexReady())->toBeFalse()
         ->and(StorageDriver::SEAWEEDFS->isPlexReady())->toBeTrue()   // wired: Commons S3 backend
-        ->and(StorageDriver::MINIO->isPlexReady())->toBeFalse();     // mapped, not the wired backend
+        ->and(StorageDriver::MINIO->isPlexReady())->toBeTrue()       // wired: SeaweedFS alternative
+        ->and(StorageDriver::GARAGE->isPlexReady())->toBeFalse();    // mapped, not yet wired (#94)
 });
 
 test('the catalog lists every shareable service, including coexisting S3 backends', function () {
     $catalog = plexCatalog()->commonsServiceCatalog();
 
-    // ready (wired today) services — incl. the SeaweedFS S3 backend
+    // ready (wired today) services — both db engines + both S3 backends
     expect($catalog['postgres']['ready'])->toBeTrue()
+        ->and($catalog['mysql']['ready'])->toBeTrue()
+        ->and($catalog['mariadb']['ready'])->toBeTrue()
         ->and($catalog['redis']['ready'])->toBeTrue()
         ->and($catalog['meilisearch']['ready'])->toBeTrue()
-        ->and($catalog['seaweedfs']['ready'])->toBeTrue();
+        ->and($catalog['seaweedfs']['ready'])->toBeTrue()
+        ->and($catalog['minio']['ready'])->toBeTrue();
 
     // each S3 backend is its OWN entry (so they coexist), not collapsed into one;
-    // MinIO/Garage map but aren't the wired backend yet.
+    // Garage maps but isn't the wired backend yet (#94).
     expect($catalog)->toHaveKeys(['seaweedfs', 'minio', 'garage'])
-        ->and($catalog['minio']['ready'])->toBeFalse()
         ->and($catalog['garage']['ready'])->toBeFalse();
 
     // mapped-but-not-ready services are still listed
-    expect($catalog['mysql']['ready'])->toBeFalse()
+    expect($catalog['mongodb']['ready'])->toBeFalse()
         ->and($catalog['typesense']['ready'])->toBeFalse();
 
     // non-shareable drivers are excluded entirely

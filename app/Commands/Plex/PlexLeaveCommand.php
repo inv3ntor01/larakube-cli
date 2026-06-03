@@ -3,6 +3,8 @@
 namespace App\Commands\Plex;
 
 use App\Data\ConfigData;
+use App\Enums\DatabaseDriver;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -73,12 +75,15 @@ class PlexLeaveCommand extends Command
         $redisIndex = $entry['redis_index'] ?? null;
         $s3Bucket = $entry['s3_bucket'] ?? null;
         $s3Service = $entry['s3_service'] ?? 'seaweedfs';
+        // Which engine holds the tenant DB — legacy entries predate db_service,
+        // so default to Postgres (the only Commons backend back then).
+        $dbDriver = DatabaseDriver::tryFrom($entry['db_service'] ?? 'postgres') ?? DatabaseDriver::POSTGRESQL;
         $ns = $this->plexNamespace();
 
         $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>".($context ?: 'current').'</>');
         $this->laraKubeWarn('⚠ This will PERMANENTLY drop this tenant from the Commons:');
         if ($db) {
-            $this->laraKubeLine("    • Postgres database \"{$db}\" and role \"{$tenant}\" (all data)");
+            $this->laraKubeLine("    • {$dbDriver->getLabel()} database \"{$db}\" and login \"{$tenant}\" (all data)");
         }
         if ($redisIndex !== null) {
             $this->laraKubeLine("    • Redis logical DB {$redisIndex} (flushed)");
@@ -108,7 +113,7 @@ class PlexLeaveCommand extends Command
         // 1. Backup the tenant database before dropping (default ON — irreversible).
         if ($db && ! $this->option('no-backup')) {
             $backupPath = $this->option('backup') ?: $projectPath."/{$tenant}-commons-{$env}.sql";
-            if (! $this->backupTenantDatabase($ns, $db, $backupPath)) {
+            if (! $this->backupTenantDatabase($ns, $dbDriver, $db, $backupPath)) {
                 $this->laraKubeError('Backup failed — aborting before any destructive change. Re-run with --no-backup to skip (dangerous).');
 
                 return 1;
@@ -116,8 +121,8 @@ class PlexLeaveCommand extends Command
             $this->line("  <fg=gray>Backed up to</> {$backupPath}");
         }
 
-        // 2. Drop the tenant's Postgres database + role.
-        if ($db && ! $this->dropTenantDatabase($ns, $db, $tenant)) {
+        // 2. Drop the tenant's database + login from its Commons engine.
+        if ($db && ! $this->dropTenantDatabase($ns, $dbDriver, $db, $tenant)) {
             return 1;
         }
 
@@ -129,10 +134,13 @@ class PlexLeaveCommand extends Command
             ));
         }
 
-        // 3b. Delete the tenant's S3 bucket (best-effort).
-        if ($s3Bucket) {
+        // 3b. Delete the tenant's S3 bucket (best-effort). The per-backend command
+        //     comes from the StorageDriver enum, so this works for SeaweedFS/MinIO.
+        $s3Driver = StorageDriver::tryFrom($s3Service);
+        if ($s3Bucket && $s3Driver !== null) {
+            $cmd = $s3Driver->commonsBucketDeleteCommand($s3Bucket);
             $this->withSpin("Deleting object-storage bucket '{$s3Bucket}'...", fn () => passthru(
-                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$s3Service.' -- sh -c '.escapeshellarg("echo 's3.bucket.delete -name {$s3Bucket}' | weed shell").' 2>/dev/null',
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$s3Service.' -- sh -c '.escapeshellarg($cmd).' 2>/dev/null',
             ));
         }
 
@@ -161,16 +169,19 @@ class PlexLeaveCommand extends Command
     }
 
     /**
-     * pg_dump the tenant database to a local file. Returns false (and writes no
+     * Dump the tenant database to a local file using the engine's own tool
+     * (pg_dump / mysqldump, from the driver). Returns false (and writes no
      * destructive change) if the dump fails or is empty.
      */
-    protected function backupTenantDatabase(string $ns, string $db, string $path): bool
+    protected function backupTenantDatabase(string $ns, DatabaseDriver $driver, string $db, string $path): bool
     {
+        $service = $driver->value;
+        $cmd = $driver->commonsBackupCommand($db);
         $code = 0;
-        $this->withSpin("Backing up database '{$db}' (pg_dump)...", function () use ($ns, $db, $path, &$code) {
+        $this->withSpin("Backing up database '{$db}'...", function () use ($ns, $service, $cmd, $path, &$code) {
             exec(
-                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/postgres -- '.
-                'pg_dump -U postgres --no-owner '.escapeshellarg($db).' > '.escapeshellarg($path).' 2>/dev/null',
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$service.' -- '.
+                'sh -c '.escapeshellarg($cmd).' > '.escapeshellarg($path).' 2>/dev/null',
                 $o,
                 $code,
             );
@@ -182,20 +193,27 @@ class PlexLeaveCommand extends Command
     }
 
     /**
-     * Run the drop SQL (terminate connections → DROP DATABASE → DROP ROLE) in the
-     * Commons Postgres via kubectl exec.
+     * Run the engine's drop SQL (DROP DATABASE + DROP login) in the Commons via
+     * kubectl exec. SQL + admin client come from the DatabaseDriver enum.
      */
-    protected function dropTenantDatabase(string $ns, string $db, string $tenant): bool
+    protected function dropTenantDatabase(string $ns, DatabaseDriver $driver, string $db, string $tenant): bool
     {
-        $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_drop');
-        file_put_contents($tmp, $this->buildDropTenantSql($db, $tenant));
+        $sql = $driver->commonsDropSql($db, $tenant);
+        if ($sql === null) {
+            return true; // non-relational engine — nothing to drop.
+        }
 
+        $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_drop');
+        file_put_contents($tmp, $sql);
+
+        $service = $driver->value;
+        $client = $driver->commonsAdminClient();
         $output = [];
         $code = 0;
-        $this->withSpin("Dropping database '{$db}' and role '{$tenant}'...", function () use ($ns, $tmp, &$output, &$code) {
+        $this->withSpin("Dropping database '{$db}' and login '{$tenant}'...", function () use ($ns, $service, $client, $tmp, &$output, &$code) {
             exec(
-                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/postgres -- '.
-                'psql -U postgres -v ON_ERROR_STOP=1 < '.escapeshellarg($tmp).' 2>&1',
+                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/'.$service.' -- '.
+                'sh -c '.escapeshellarg($client).' < '.escapeshellarg($tmp).' 2>&1',
                 $output,
                 $code,
             );
@@ -206,7 +224,7 @@ class PlexLeaveCommand extends Command
         @unlink($tmp);
 
         if ($code !== 0) {
-            $this->laraKubeError('Could not drop the tenant database/role from the Commons.');
+            $this->laraKubeError('Could not drop the tenant database/login from the Commons.');
             foreach (array_slice($output, -4) as $line) {
                 $this->laraKubeLine('    '.$line);
             }

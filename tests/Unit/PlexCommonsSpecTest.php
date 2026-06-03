@@ -31,7 +31,10 @@ test('the default spec enables only Postgres + Redis', function () {
         ->and($spec['services']['postgres']['memory'])->toBe('1Gi')   // shared-DB ceiling, configurable
         ->and($spec['services']['redis']['port'])->toBe(6379)
         ->and($spec['services']['meilisearch']['enabled'])->toBeFalse()  // opt-in, off by default
-        ->and($spec['services']['seaweedfs']['enabled'])->toBeFalse();
+        ->and($spec['services']['seaweedfs']['enabled'])->toBeFalse()
+        ->and($spec['services']['minio']['enabled'])->toBeFalse()        // MinIO is an opt-in S3 backend (SeaweedFS alternative)
+        ->and($spec['services']['mysql']['enabled'])->toBeFalse()        // MySQL/MariaDB are opt-in db backends
+        ->and($spec['services']['mariadb']['enabled'])->toBeFalse();
 });
 
 test('Commons service images/ports derive from the driver enums (no drift)', function () {
@@ -41,12 +44,18 @@ test('Commons service images/ports derive from the driver enums (no drift)', fun
 
     expect($spec['postgres']['image'])->toBe(DatabaseDriver::POSTGRESQL->getDockerImage())
         ->and($spec['postgres']['port'])->toBe(DatabaseDriver::POSTGRESQL->dbPort())
+        ->and($spec['mysql']['image'])->toBe(DatabaseDriver::MYSQL->getDockerImage())
+        ->and($spec['mysql']['port'])->toBe(DatabaseDriver::MYSQL->dbPort())
+        ->and($spec['mariadb']['image'])->toBe(DatabaseDriver::MARIADB->getDockerImage())
+        ->and($spec['mariadb']['port'])->toBe(DatabaseDriver::MARIADB->dbPort())
         ->and($spec['redis']['image'])->toBe(CacheDriver::REDIS->getDockerImage())
         ->and($spec['redis']['port'])->toBe(CacheDriver::REDIS->dbPort())
         ->and($spec['meilisearch']['image'])->toBe(ScoutDriver::MEILISEARCH->getDockerImage())  // stays in lockstep, no stale literal
         ->and($spec['meilisearch']['port'])->toBe(ScoutDriver::MEILISEARCH->port())
         ->and($spec['seaweedfs']['image'])->toBe(StorageDriver::SEAWEEDFS->getDockerImage())
-        ->and($spec['seaweedfs']['port'])->toBe(StorageDriver::SEAWEEDFS->port());
+        ->and($spec['seaweedfs']['port'])->toBe(StorageDriver::SEAWEEDFS->port())
+        ->and($spec['minio']['image'])->toBe(StorageDriver::MINIO->getDockerImage())
+        ->and($spec['minio']['port'])->toBe(StorageDriver::MINIO->port());
 });
 
 test('enabling Meilisearch in the spec turns it on', function () {

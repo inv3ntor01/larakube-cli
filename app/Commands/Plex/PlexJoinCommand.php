@@ -4,6 +4,8 @@ namespace App\Commands\Plex;
 
 use App\Contracts\PlexProvisionable;
 use App\Data\ConfigData;
+use App\Enums\DatabaseDriver;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -55,8 +57,8 @@ class PlexJoinCommand extends Command
         $services = $this->resolveTenantServices($config);
 
         if (empty($services)) {
-            $this->laraKubeError('No Commons-eligible services found. Plex shares Postgres and/or Redis;');
-            $this->laraKubeLine('  this app declares neither (SQLite / Memcached / database-cache are not shared).');
+            $this->laraKubeError('No Commons-eligible services found. Plex shares a database (Postgres/MySQL/MariaDB), Redis, Meilisearch or S3;');
+            $this->laraKubeLine('  this app declares none that are shareable (SQLite / Memcached / database-cache are not shared).');
 
             return 1;
         }
@@ -122,7 +124,12 @@ class PlexJoinCommand extends Command
 
         $password = bin2hex(random_bytes(16));
 
-        if (in_array('postgres', $services, true) && ! $this->allocatePostgres($tenant, $password)) {
+        // Database: the tenant's declared engine (Postgres/MySQL/MariaDB) maps to
+        // its own Commons service — allocate the per-tenant DB + login there.
+        $dbDriver = $config->getDatabase();
+        $dbService = $dbDriver?->commonsServiceName();
+        if ($dbDriver !== null && $dbService !== null && in_array($dbService, $services, true)
+            && ! $this->allocateDatabase($dbDriver, $tenant, $password)) {
             return 1;
         }
 
@@ -143,6 +150,7 @@ class PlexJoinCommand extends Command
             }
 
             $svc = $storage->commonsServiceName();
+            $bucket = $this->plexBucketName($tenant);
             $s3 = [
                 'service' => $svc,
                 'port' => $storage->port(),
@@ -151,16 +159,17 @@ class PlexJoinCommand extends Command
                 'host' => $this->getCommonsSpec()['services'][$svc]['host'] ?? null,  // public host for AWS_URL
             ];
 
-            if (! $this->allocateStorageBucket($tenant, $svc)) {
+            if (! $this->allocateStorageBucket($storage, $bucket)) {
                 return 1;
             }
         }
 
         // 6. Record the allocation (db + redis index + s3 bucket/backend; never secrets).
         $registry = $this->registryAdd($registry, $tenant, [
-            'db' => $tenant,
+            'db' => $dbService !== null ? $tenant : null,
+            'db_service' => $dbService,            // which engine holds this tenant's DB (Postgres/MySQL/MariaDB)
             'redis_index' => $redisIndex,
-            's3_bucket' => $s3 !== null ? $tenant : null,
+            's3_bucket' => $s3 !== null ? $this->plexBucketName($tenant) : null,
             's3_service' => $s3['service'] ?? null,
         ]);
         $this->saveRegistry($registry);
@@ -210,21 +219,24 @@ class PlexJoinCommand extends Command
      */
     protected function guardExistingData(ConfigData $config, string $env, array $services): bool
     {
-        if (! in_array('postgres', $services, true) || in_array('postgres', $config->getManaged($env), true)) {
-            return true; // not managing postgres here, or already managed → nothing to strand.
+        $dbDriver = $config->getDatabase();
+        $dbService = $dbDriver?->commonsServiceName();
+        if ($dbService === null || ! in_array($dbService, $services, true) || in_array($dbService, $config->getManaged($env), true)) {
+            return true; // no shareable DB here, not joining it, or already managed → nothing to strand.
         }
 
         $namespace = $config->getNamespace($env);
-        $pvc = $config->getName().'-postgres-pvc';
+        $pvc = $config->getName().'-'.$dbService.'-pvc';
         $exists = trim((string) shell_exec(
             $this->plexKubectl().' get pvc '.escapeshellarg($pvc).' -n '.escapeshellarg($namespace).' -o name 2>/dev/null',
         )) !== '';
 
         if ($exists) {
-            $this->laraKubeError("This app still runs its own Postgres in '{$namespace}' (PVC {$pvc}).");
+            $label = $dbDriver?->getLabel() ?? $dbService;
+            $this->laraKubeError("This app still runs its own {$label} in '{$namespace}' (PVC {$pvc}).");
             $this->laraKubeLine('  Joining now would point it at an EMPTY Commons database and strand that data.');
             $this->laraKubeLine('  Migrate the data first (plex:migrate — see the guide §1e), or keep it on its own');
-            $this->laraKubeLine('  Postgres (mixed mode) and only join Redis.');
+            $this->laraKubeLine("  {$label} (mixed mode) and only join Redis.");
 
             return false;
         }
@@ -278,23 +290,31 @@ class PlexJoinCommand extends Command
     }
 
     /**
-     * Create/refresh this tenant's database + role in the Commons Postgres via
-     * `kubectl exec` (peer auth inside the pod — no password needed).
+     * Create/refresh this tenant's database + login in the Commons via
+     * `kubectl exec` into the engine's pod. The engine-specific SQL and admin
+     * client come from the DatabaseDriver enum (commonsTenantSql /
+     * commonsAdminClient), so this one path serves Postgres, MySQL and MariaDB.
+     * `sh -c` wraps the client so the pod expands its password env var.
      */
-    protected function allocatePostgres(string $tenant, string $password): bool
+    protected function allocateDatabase(DatabaseDriver $driver, string $tenant, string $password): bool
     {
         $ns = $this->plexNamespace();
-        $sql = $this->buildPostgresTenantSql($tenant, $tenant, $password);
+        $sql = $driver->commonsTenantSql($tenant, $tenant, $password);
+        if ($sql === null) {
+            return true; // not a relational Commons backend — nothing to allocate.
+        }
 
         $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_sql');
         file_put_contents($tmp, $sql);
 
+        $service = $driver->value;
+        $client = $driver->commonsAdminClient();
         $output = [];
         $code = 0;
-        $this->withSpin("Allocating database '{$tenant}' in the Commons...", function () use ($ns, $tmp, &$output, &$code) {
+        $this->withSpin("Allocating database '{$tenant}' in the Commons...", function () use ($ns, $service, $client, $tmp, &$output, &$code) {
             exec(
-                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/postgres -- '.
-                'psql -U postgres -v ON_ERROR_STOP=1 < '.escapeshellarg($tmp).' 2>&1',
+                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/'.$service.' -- '.
+                'sh -c '.escapeshellarg($client).' < '.escapeshellarg($tmp).' 2>&1',
                 $output,
                 $code,
             );
@@ -305,7 +325,7 @@ class PlexJoinCommand extends Command
         @unlink($tmp);
 
         if ($code !== 0) {
-            $this->laraKubeError('Could not allocate the tenant database in the Commons Postgres.');
+            $this->laraKubeError("Could not allocate the tenant database in the Commons {$driver->getLabel()}.");
             foreach (array_slice($output, -4) as $line) {
                 $this->laraKubeLine('    '.$line);
             }
@@ -338,20 +358,21 @@ class PlexJoinCommand extends Command
     }
 
     /**
-     * Create this tenant's bucket on the Commons SeaweedFS via `weed shell`
-     * (idempotent — re-creating an existing bucket is a no-op).
+     * Create this tenant's bucket on its Commons S3 backend (idempotent). The
+     * per-backend command (weed / mc / …) comes from the StorageDriver enum, run
+     * via `kubectl exec deploy/<value> -- sh -c '…'` so the pod expands its creds.
      */
-    protected function allocateStorageBucket(string $tenant, string $service): bool
+    protected function allocateStorageBucket(StorageDriver $driver, string $bucket): bool
     {
         $ns = $this->plexNamespace();
-        // SeaweedFS (the wired backend) provisions buckets via `weed shell`.
-        $weed = "echo 's3.bucket.create -name {$tenant}' | weed shell";
+        $service = $driver->value;
+        $cmd = $driver->commonsBucketCreateCommand($bucket);
 
         $output = [];
         $code = 0;
-        $this->withSpin("Creating object-storage bucket '{$tenant}' in the Commons...", function () use ($ns, $service, $weed, &$output, &$code) {
+        $this->withSpin("Creating object-storage bucket '{$bucket}' in the Commons...", function () use ($ns, $service, $cmd, &$output, &$code) {
             exec(
-                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$service.' -- sh -c '.escapeshellarg($weed).' 2>&1',
+                $this->plexKubectl().' exec -n '.escapeshellarg($ns).' deploy/'.$service.' -- sh -c '.escapeshellarg($cmd).' 2>&1',
                 $output,
                 $code,
             );
@@ -360,7 +381,7 @@ class PlexJoinCommand extends Command
         });
 
         if ($code !== 0) {
-            $this->laraKubeError("Could not create the Commons S3 bucket '{$tenant}'.");
+            $this->laraKubeError("Could not create the Commons S3 bucket '{$bucket}'.");
             foreach (array_slice($output, -4) as $line) {
                 $this->laraKubeLine('    '.$line);
             }

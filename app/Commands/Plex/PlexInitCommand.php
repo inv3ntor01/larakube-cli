@@ -289,6 +289,7 @@ class PlexInitCommand extends Command
         // are missing them — see the additive patch below.)
         $generators = [
             'POSTGRES_PASSWORD' => fn () => bin2hex(random_bytes(16)),
+            'MYSQL_ROOT_PASSWORD' => fn () => bin2hex(random_bytes(16)),
             'MEILI_MASTER_KEY' => fn () => bin2hex(random_bytes(16)),
             'S3_ACCESS_KEY' => fn () => 'larakube',
             'S3_SECRET_KEY' => fn () => bin2hex(random_bytes(16)),

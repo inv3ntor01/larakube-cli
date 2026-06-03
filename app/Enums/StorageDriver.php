@@ -360,10 +360,41 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function isPlexReady(): bool
     {
-        // SeaweedFS is the wired Commons S3 backend (deployment + per-tenant
-        // bucket provisioning). MinIO/Garage are valid backends with their own
-        // Commons service (so they'll coexist) but aren't wired yet.
-        return $this === self::SEAWEEDFS;
+        // Wired Commons S3 backends (deployment + per-tenant bucket provisioning
+        // via commonsBucketCreateCommand). Garage is mapped but not wired (#94).
+        return match ($this) {
+            self::SEAWEEDFS, self::MINIO => true,
+            default => false,
+        };
+    }
+
+    /**
+     * Shell command — run via `kubectl exec deploy/<value> -- sh -c '<this>'` —
+     * that idempotently creates a tenant's bucket on this Commons S3 backend.
+     * Bucket-per-tenant isolation under the shared admin key. The pod's shell
+     * expands the credential env vars (MinIO's root user/pass), so they stay out
+     * of the local process. Garage isn't wired yet (#94) and fails loudly.
+     */
+    public function commonsBucketCreateCommand(string $bucket): string
+    {
+        return match ($this) {
+            self::SEAWEEDFS => "echo 's3.bucket.create -name {$bucket}' | weed shell",
+            self::MINIO => $this->minioMcCommand('mb --ignore-existing local/'.$bucket),
+            self::GARAGE => 'echo "Garage Commons provisioning is not wired yet (#94)" >&2; exit 1',
+        };
+    }
+
+    /**
+     * Inverse of commonsBucketCreateCommand — drops a tenant's bucket (the
+     * plex:leave/remove teardown). Same sh -c invocation contract.
+     */
+    public function commonsBucketDeleteCommand(string $bucket): string
+    {
+        return match ($this) {
+            self::SEAWEEDFS => "echo 's3.bucket.delete -name {$bucket}' | weed shell",
+            self::MINIO => $this->minioMcCommand('rb --force local/'.$bucket),
+            self::GARAGE => 'echo "Garage Commons provisioning is not wired yet (#94)" >&2; exit 1',
+        };
     }
 
     public function commonsServiceName(): ?string
@@ -371,6 +402,19 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
         // Each S3 backend is its own Commons service (keyed by value), so several
         // can coexist when different tenants declare different backends.
         return $this->value;
+    }
+
+    /**
+     * A `mc` invocation against the in-pod MinIO. Configures a throwaway alias
+     * first (the server image ships `mc` at /usr/bin/mc but unconfigured), using
+     * the root creds the Commons deployment injects from the plex-admin Secret.
+     * MC_CONFIG_DIR keeps the alias out of an unwritable $HOME.
+     */
+    private function minioMcCommand(string $mc): string
+    {
+        return 'export MC_CONFIG_DIR=/tmp/mc; '.
+            'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && '.
+            'mc '.$mc;
     }
 
     case MINIO = 'minio';

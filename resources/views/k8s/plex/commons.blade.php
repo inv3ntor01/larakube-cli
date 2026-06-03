@@ -104,6 +104,99 @@ spec:
       targetPort: {{ $spec['services']['postgres']['port'] }}
   type: ClusterIP
 @endif
+@foreach(['mysql', 'mariadb'] as $engine)
+@if(($spec['services'][$engine]['enabled'] ?? false))
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $engine }}-data
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $spec['services'][$engine]['storage'] }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $engine }}
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $engine }}
+  template:
+    metadata:
+      labels:
+        app: {{ $engine }}
+    spec:
+      containers:
+        - name: {{ $engine }}
+          image: {{ $spec['services'][$engine]['image'] }}
+          ports:
+            - containerPort: {{ $spec['services'][$engine]['port'] }}
+          env:
+            # MySQL's root creds ARE the admin login the CLI uses to provision
+            # tenant DBs (commonsAdminClient). MariaDB honours MYSQL_ROOT_PASSWORD
+            # too, so the in-pod client command stays identical across engines.
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: plex-admin
+                  key: MYSQL_ROOT_PASSWORD
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              # Shared DB ceiling — raise via the spec's {{ $engine }}.memory if it OOMs.
+              memory: "{{ $spec['services'][$engine]['memory'] }}"
+              cpu: "500m"
+          readinessProbe:
+            tcpSocket:
+              port: {{ $spec['services'][$engine]['port'] }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ $spec['services'][$engine]['port'] }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $engine }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $engine }}
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  selector:
+    app: {{ $engine }}
+  ports:
+    - protocol: TCP
+      port: {{ $spec['services'][$engine]['port'] }}
+      targetPort: {{ $spec['services'][$engine]['port'] }}
+  type: ClusterIP
+@endif
+@endforeach
 @if(($spec['services']['redis']['enabled'] ?? false))
 ---
 apiVersion: apps/v1
@@ -344,5 +437,127 @@ spec:
   tls:
     - hosts:
         - {{ $spec['services']['seaweedfs']['host'] }}
+@endif
+@endif
+@if(($spec['services']['minio']['enabled'] ?? false))
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $spec['services']['minio']['storage'] }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: {{ $spec['services']['minio']['image'] }}
+          # S3 API on 9000, web console on 9001. Tenants are isolated by bucket.
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: {{ $spec['services']['minio']['port'] }}
+            - containerPort: 9001
+          env:
+            # MinIO's root creds ARE the shared S3 key the CLI provisions buckets
+            # with (commonsBucketCreateCommand) and tenants authenticate against.
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plex-admin
+                  key: S3_ACCESS_KEY
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: plex-admin
+                  key: S3_SECRET_KEY
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: {{ $spec['services']['minio']['port'] }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+spec:
+  selector:
+    app: minio
+  ports:
+    - protocol: TCP
+      port: {{ $spec['services']['minio']['port'] }}
+      targetPort: {{ $spec['services']['minio']['port'] }}
+  type: ClusterIP
+@if(! empty($spec['services']['minio']['host']))
+---
+# Public S3 endpoint (so tenants can generate public file URLs via AWS_URL).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-s3
+  labels:
+    larakube.io/managed-by: larakube
+    larakube.io/component: plex
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: {{ $spec['services']['minio']['host'] }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: {{ $spec['services']['minio']['port'] }}
+  tls:
+    - hosts:
+        - {{ $spec['services']['minio']['host'] }}
 @endif
 @endif
