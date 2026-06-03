@@ -2,6 +2,7 @@
 
 namespace App\Commands\Cloud;
 
+use App\Contracts\PlexProvisionable;
 use App\Enums\DeploymentStrategy;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
@@ -9,7 +10,6 @@ use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\password;
-use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
@@ -21,12 +21,12 @@ class CloudConfigureCommand extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'cloud:configure {action? : The configuration action (server, gha)}';
+    protected $signature = 'cloud:configure {action? : Run a single step (base, server, gha, users); omit to run the full guided setup}';
 
     /**
      * The console command description.
      */
-    protected $description = 'Configures the server and deployment pipeline for a specific project';
+    protected $description = 'Set up cloud deployment for an environment — server, web host, optional Commons, and CI — in one guided flow';
 
     /**
      * Execute the console command.
@@ -41,17 +41,10 @@ class CloudConfigureCommand extends Command
 
         $action = $this->argument('action');
 
+        // No action → the full guided setup (the common case). Pass an explicit
+        // action only to re-run a single step surgically.
         if (! $action) {
-            $action = select(
-                label: 'What would you like to configure?',
-                options: [
-                    'base' => 'Base Deployment Config (.larakube.json)',
-                    'server' => 'Initial Server Setup (Clone & Env)',
-                    'gha' => 'GitHub Actions (Secrets & Workflows)',
-                    'users' => 'Manage Teammate Access (SSH Keys)',
-                ],
-                default: 'base',
-            );
+            return $this->configureAll();
         }
 
         return match ($action) {
@@ -63,9 +56,9 @@ class CloudConfigureCommand extends Command
         };
     }
 
-    protected function configureBase(): int
+    protected function configureBase(?string $environment = null): int
     {
-        $environment = $this->askForCloudEnvironment(
+        $environment ??= $this->askForCloudEnvironment(
             label: 'Which environment are you configuring?',
         );
 
@@ -104,9 +97,11 @@ class CloudConfigureCommand extends Command
             'key' => $key,
         ]);
 
-        // 🌐 Ensure Web Domain is set for this env (fires for any non-local env)
+        // 🌐 Ensure Web Domain is set for this env (fires for any non-local env).
+        // Re-prompt when the host is missing, the {name}.com placeholder, OR a
+        // local .dev.test host — which must never ship to a remote environment.
         $currentHost = $config->getHost($environment, 'web');
-        if (! $currentHost || $currentHost === "{$config->getName()}.com") {
+        if (! $currentHost || $currentHost === "{$config->getName()}.com" || str_contains((string) $currentHost, '.dev.test')) {
             $this->newLine();
             $this->info(' 🌐 ARCHITECTURAL ALIGNMENT');
             $this->line("   Remote deployments require a real web domain for '{$environment}'.");
@@ -129,9 +124,72 @@ class CloudConfigureCommand extends Command
         return 0;
     }
 
-    protected function configureServer(): int
+    /**
+     * The full guided setup: pick the environment once, then run every step in
+     * the right order — server + web host (base), an optional Commons join, and
+     * CI + secrets (gha) — so there's nothing to sequence or memorise. Stops at
+     * the first failing step. The repo-on-VPS clone is left to the explicit
+     * `cloud:configure server` action (manual deploys only; GHA never uses it).
+     */
+    protected function configureAll(): int
     {
         $environment = $this->askForCloudEnvironment(
+            label: 'Which cloud environment are you setting up?',
+        );
+
+        // 1. Server connection details + the real web domain.
+        if (($code = $this->configureBase($environment)) !== 0) {
+            return $code;
+        }
+
+        // 2. Offer a shared Commons (runs BEFORE gha, so the rewritten .env ships).
+        $this->maybeJoinCommons($environment);
+
+        // 3. CI workflow + GitHub/GHCR secrets.
+        //    The repo-on-VPS clone (`cloud:configure server`) is intentionally NOT
+        //    here: a GHA deploy pulls its image from GHCR and gets .env from a
+        //    GitHub secret, so it never uses a VPS checkout. Run that step
+        //    explicitly only for a manual, non-GHA deploy.
+        return $this->configureGha($environment);
+    }
+
+    /**
+     * Prompt to join a shared Commons when the project's drivers map to a
+     * plex-ready Commons service (a Postgres/MySQL/MariaDB database, Redis,
+     * Meilisearch, or S3 via SeaweedFS/MinIO). plex:join rewrites .env and
+     * regenerates manifests, so it must run before the CI secret upload reads
+     * the .env.
+     */
+    protected function maybeJoinCommons(string $environment): void
+    {
+        $config = $this->getProjectConfigObject(getcwd());
+
+        $shareable = [];
+        foreach (array_filter([
+            $config->getDatabase(),
+            $config->getCacheDriver(),
+            $config->getScoutDriver(),
+            $config->getObjectStorage(),
+        ]) as $driver) {
+            if ($driver instanceof PlexProvisionable && $driver->isPlexReady() && $driver->commonsServiceName() !== null) {
+                $shareable[] = $driver->commonsServiceName();
+            }
+        }
+
+        if (empty($shareable)) {
+            return;
+        }
+
+        $this->newLine();
+        $this->line('  This app can share these on a Commons: <fg=cyan>'.implode(', ', array_unique($shareable)).'</>');
+        if (confirm('Join a shared Commons for these (instead of self-hosting them)?', false)) {
+            $this->call('plex:join', ['environment' => $environment]);
+        }
+    }
+
+    protected function configureServer(?string $environment = null): int
+    {
+        $environment ??= $this->askForCloudEnvironment(
             label: 'Which environment are you configuring for server setup?',
         );
 
@@ -170,7 +228,12 @@ else
 fi
 BASH;
 
-        $this->runRemoteCommand($cloud, $setupCommand);
+        if ($this->runRemoteCommand($cloud, $setupCommand) !== 0) {
+            $this->laraKubeError('Failed to clone the repository on the server.');
+            $this->laraKubeLine('  Check the Git URL (e.g. git@github.com:user/repo.git) and that the server can reach GitHub.');
+
+            return 1;
+        }
 
         // 2. Upload .env.{env}
         $localEnv = ".env.{$environment}";
@@ -186,9 +249,9 @@ BASH;
         return 0;
     }
 
-    protected function configureGha(): int
+    protected function configureGha(?string $environment = null): int
     {
-        $environment = $this->askForCloudEnvironment(
+        $environment ??= $this->askForCloudEnvironment(
             label: 'Which environment are you configuring for GitHub Actions?',
         );
 
@@ -403,9 +466,11 @@ BASH;
         return 0;
     }
 
-    protected function runRemoteCommand(array $cloud, string $remoteCommand): void
+    protected function runRemoteCommand(array $cloud, string $remoteCommand): int
     {
         $sshCommand = "ssh -i {$cloud['key']} -p {$cloud['port']} {$cloud['user']}@{$cloud['ip']} ".escapeshellarg($remoteCommand);
-        passthru($sshCommand);
+        passthru($sshCommand, $exitCode);
+
+        return (int) $exitCode;
     }
 }

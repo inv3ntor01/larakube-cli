@@ -4,12 +4,13 @@ namespace App\Commands\Github;
 
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithGlobalConfig;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class GhaConfigureCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithGlobalConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput;
 
     protected $signature = 'gha:configure {environment? : The environment to configure (production, staging, etc.)}';
 

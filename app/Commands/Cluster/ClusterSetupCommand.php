@@ -21,7 +21,7 @@ class ClusterSetupCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Install and configure a local Kubernetes cluster (k3d)';
+    protected $description = 'Install and configure a local Kubernetes cluster (native k3s on Linux, k3d on macOS/Windows)';
 
     /**
      * Execute the console command.
@@ -31,24 +31,33 @@ class ClusterSetupCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Local Cluster Installer');
 
-        // 1. Check for Docker
-        if (shell_exec('docker ps 2>&1') === null) {
-            $this->laraKubeError('Docker is not running. Please start Docker/OrbStack and try again.');
-
-            return 1;
+        // 1. Select engine. Native k3s is the lightest option and the default on
+        //    Linux; k3d (k3s-in-Docker) pays a container/VM tax on top of k3s and
+        //    is the only choice on macOS/Windows (no native Linux kernel there).
+        if (PHP_OS_FAMILY === 'Linux') {
+            $engine = select(
+                label: 'Which Kubernetes engine would you like to use?',
+                options: [
+                    'k3s' => 'k3s (native Linux service — lightest, recommended)',
+                    'k3d' => 'k3d (k3s in Docker — heavier; for throwaway clusters)',
+                ],
+                default: 'k3s',
+            );
+        } else {
+            $this->laraKubeLine('  <fg=gray>Native k3s needs a Linux kernel — using k3d (k3s in Docker).</>');
+            $this->laraKubeLine('  <fg=gray>Tip: OrbStack\'s built-in Kubernetes is k3s-based and lighter than k3d;</>');
+            $this->laraKubeLine('  <fg=gray>if you run it, `larakube context` can target it instead of creating a k3d cluster.</>');
+            $engine = 'k3d';
         }
 
-        // 2. Select Engine
-        $engine = select(
-            label: 'Which Kubernetes engine would you like to use?',
-            options: [
-                'k3d' => 'k3d (k3s in Docker - Recommended)',
-                'k3s' => 'k3s (Native Linux Service)',
-            ],
-            default: 'k3d',
-        );
-
+        // 2. k3d needs Docker running + the ingress ports free; native k3s needs neither.
         if ($engine === 'k3d') {
+            if (shell_exec('docker ps 2>&1') === null) {
+                $this->laraKubeError('Docker is not running. Please start Docker/OrbStack and try again.');
+
+                return 1;
+            }
+
             if (! $this->checkPortsAvailable([80, 443])) {
                 return 1;
             }

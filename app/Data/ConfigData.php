@@ -531,6 +531,31 @@ class ConfigData extends Data
         return $this->frontend;
     }
 
+    /**
+     * Whether the project depends on Laravel Wayfinder. Its generated
+     * route/action/form helpers are imported by the frontend, so CI must run
+     * `php artisan wayfinder:generate` BEFORE building assets — scaffolding
+     * strips the Wayfinder Vite plugin, so the build won't regenerate them.
+     * Read from composer.json (the ground truth); `path` isn't persisted in the
+     * blueprint, so fall back to the cwd (generation always runs in-project).
+     */
+    public function usesWayfinder(): bool
+    {
+        $base = $this->getPath() !== '' ? $this->getPath() : getcwd();
+        $composer = rtrim((string) $base, '/').'/composer.json';
+
+        if (! is_file($composer)) {
+            return false;
+        }
+
+        $json = json_decode((string) file_get_contents($composer), true);
+
+        return is_array($json) && (
+            isset($json['require']['laravel/wayfinder'])
+            || isset($json['require-dev']['laravel/wayfinder'])
+        );
+    }
+
     public function getServerVariation(): ?ServerVariation
     {
         return $this->serverVariation;
@@ -1155,6 +1180,17 @@ class ConfigData extends Data
                 }
                 $envs = array_merge($envs, $component->getPublicEnvironmentVariables($this, $environment));
             }
+        }
+
+        // Cloud environments deploy production-safe: APP_ENV=production (hardcoded,
+        // NOT the env name) + debug OFF, instead of inheriting local/true from the
+        // scaffolded .env. Hardcoded because Laravel keys its safeguards on exactly
+        // App::environment('production') / isProduction(), so staging/qa must still
+        // report "production". Set last so nothing overrides them; a locked
+        // .env.<env> is still honoured (syncEnvFile skips locked files entirely).
+        if ($environment !== 'local') {
+            $envs['APP_ENV'] = 'production';
+            $envs['APP_DEBUG'] = 'false';
         }
 
         return $envs;

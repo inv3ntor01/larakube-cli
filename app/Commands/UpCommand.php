@@ -123,7 +123,7 @@ class UpCommand extends Command
                 $this->line('  It looks like you haven\'t set up a local cluster yet, or Docker is not running.');
                 $this->newLine();
 
-                if (confirm('Would you like LaraKube to automatically set up a local cluster for you? (k3d)', true)) {
+                if (confirm('Would you like LaraKube to automatically set up a local cluster for you?', true)) {
                     return $this->call('cluster:setup');
                 }
 

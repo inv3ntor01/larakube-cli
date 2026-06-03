@@ -101,6 +101,33 @@ class ConfigDataTest extends TestCase
         $this->assertSame('https://example.com', $config->getAppUrl('production'));
     }
 
+    public function test_cloud_envs_deploy_production_safe_app_env_and_debug()
+    {
+        $config = ConfigData::from([
+            'name' => 'demo',
+            'environments' => [
+                'local' => ['hosts' => []],
+                'production' => ['hosts' => ['web' => 'example.com']],
+                'staging' => ['hosts' => ['web' => 'staging.example.com']],
+            ],
+        ]);
+
+        // Cloud envs report APP_ENV=production (hardcoded — Laravel keys its
+        // production safeguards on exactly "production") + debug OFF.
+        $prod = $config->getAllPublicEnvironmentVariables('production');
+        $this->assertSame('production', $prod['APP_ENV']);
+        $this->assertSame('false', $prod['APP_DEBUG']);
+
+        // Even a non-production cloud env (staging) reports "production".
+        $staging = $config->getAllPublicEnvironmentVariables('staging');
+        $this->assertSame('production', $staging['APP_ENV']);
+        $this->assertSame('false', $staging['APP_DEBUG']);
+
+        // Local is left alone (keeps Laravel's own APP_ENV=local / APP_DEBUG=true).
+        $local = $config->getAllPublicEnvironmentVariables('local');
+        $this->assertArrayNotHasKey('APP_DEBUG', $local);
+    }
+
     public function test_features_filter_by_env_with_enum_defaults()
     {
         // BOOST + MCP default to local only; HORIZON to all envs; SSR to prod only.

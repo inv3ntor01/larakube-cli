@@ -91,7 +91,7 @@ jobs:
 
       - name: 🛠 Install Node dependencies
         run: {!! $config->getPackageManager()->installCommand() !!}
-@if($config->hasFeature(\App\Enums\LaravelFeature::BOOST))
+@if($config->usesWayfinder())
 
       - name: 🏎 Generate Wayfinder files
         run: php artisan wayfinder:generate --with-form
