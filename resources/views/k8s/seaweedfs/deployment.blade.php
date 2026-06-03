@@ -15,33 +15,22 @@ spec:
         app: {{ $driver->getPodName($config) }}
     spec:
       containers:
+        # All-in-one: `weed server -s3` runs master (9333), volume (8080), filer
+        # (8888) and the S3 gateway (8333) in ONE process. Do NOT add standalone
+        # volume/filer containers — they collide with the built-ins on those ports.
         - name: {{ $driver->getPodName($config) }}
           image: {{ $driver->getDockerImage($config) }}
           args: {!! $driver->getK8sDeploymentArgs() !!}
-
           ports:
-            - containerPort: 9333
-        - name: volume
-          image: {{ $driver->getDockerImage($config) }}
-          args: ["volume", "-mserver=localhost:9333", "-port=8081"]
-          ports:
-            - containerPort: 8081
-        - name: filer
-          image: {{ $driver->getDockerImage($config) }}
-          args: ["filer", "-master=localhost:9333", "-s3"]
-          env:
-            - name: AWS_ACCESS_KEY_ID
-              value: "larakube"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "larakubesecretpassword"
-          ports:
-            - containerPort: 8888
-            - containerPort: 8333
+            - containerPort: 9333   # master
+            - containerPort: 8080   # volume
+            - containerPort: 8888   # filer
+            - containerPort: 8333   # s3
           readinessProbe:
             httpGet:
               path: /
               port: 8333
-            initialDelaySeconds: 2
+            initialDelaySeconds: 3
             periodSeconds: 5
           volumeMounts:
             - name: seaweedfs-data
@@ -65,8 +54,8 @@ spec:
       targetPort: 9333
     - name: volume
       protocol: TCP
-      port: 8081
-      targetPort: 8081
+      port: 8080
+      targetPort: 8080
     - name: s3
       protocol: TCP
       port: 8333
