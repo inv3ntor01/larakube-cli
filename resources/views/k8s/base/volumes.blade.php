@@ -8,7 +8,7 @@ spec:
   resources:
     requests:
       storage: 1Gi
-@if($config->environments[$environment]->storageClass ?? false)
+@if($config->environments[$environment]->storageClass)
   storageClassName: {{ $config->environments[$environment]->storageClass }}
 @endif
 ---
@@ -22,6 +22,6 @@ spec:
   resources:
     requests:
       storage: 1Gi
-@if($config->environments[$environment]->storageClass ?? false)
+@if($config->environments[$environment]->storageClass)
   storageClassName: {{ $config->environments[$environment]->storageClass }}
 @endif

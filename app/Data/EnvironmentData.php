@@ -127,9 +127,12 @@ class EnvironmentData extends Data
         public array $ingressAnnotations = [],
         /**
          * StorageClass name for PVCs in this env. Null = cluster default
-         * (snapshot-stable). For DOKS: set to "do-block-storage" for RWO or
-         * use a managed DB for RWX on multi-node. For other clusters: point
-         * at their persistent storage provider.
+         * (snapshot-stable). Provider-specific:
+         *   DOKS: "do-block-storage"
+         *   EKS: "gp2" or "gp3"
+         *   GKE: "standard"
+         *   AKS: "default" or "managed-premium"
+         * When migrating between clouds, simply update this value.
          */
         public ?string $storageClass = null,
     ) {}
