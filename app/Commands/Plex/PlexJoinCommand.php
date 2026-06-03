@@ -177,6 +177,20 @@ class PlexJoinCommand extends Command
         // 7. Write tenant config (.env + managed).
         $this->writeTenantConfig($projectPath, $config, $env, $tenant, $password, $redisIndex, $services, $s3);
 
+        // 8. Regenerate manifests so this env's overlay DROPS the now-managed
+        //    services (heal writes their delete-patches) instead of shipping
+        //    duplicates next to the Commons — the deploy applies committed
+        //    manifests, so this can't be left to the user to remember. --force
+        //    keeps it non-interactive; the .plex markers stop heal from
+        //    clobbering the Commons .env values written above.
+        $this->laraKubeNewLine();
+        if ($this->callSilent('heal', ['--force' => true]) === 0) {
+            $this->laraKubeInfo("Regenerated manifests — '{$env}' now deploys against the Commons (no duplicate pods).");
+        } else {
+            $this->laraKubeWarn('Could not auto-regenerate manifests. Run `larakube heal --force` before deploying,');
+            $this->laraKubeLine("  or '{$env}' will ship its own ".implode('/', $services).' pods alongside the Commons.');
+        }
+
         $this->printNext($env);
 
         return 0;
@@ -437,7 +451,7 @@ class PlexJoinCommand extends Command
         $this->laraKubeNewLine();
         $this->laraKubeInfo('✅ Joined the Commons.');
         $this->line('  Next:');
-        $this->line('    1. <fg=yellow>git add .larakube.json && git commit</> (the managed change is config)');
+        $this->line('    1. <fg=yellow>git add . && git commit</> (blueprint + regenerated manifests now target the Commons)');
         $this->line("    2. <fg=yellow>larakube gha:configure {$env}</> (re-upload the .env.{$env} secret)");
         $this->line('    3. Deploy as usual — the app now uses the Commons, not its own pods.');
     }
