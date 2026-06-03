@@ -24,8 +24,12 @@ use App\Enums\PhpVersion;
 use App\Enums\ServerVariation;
 use App\Enums\StorageDriver;
 use App\Traits\GathersInfrastructureConfig;
+use Laravel\Prompts\Prompt;
 
 test('the init wizard runs every prompt step without a missing-symbol crash', function () {
+    // 🔍 FIX: Force Laravel Prompts to use its non-interactive fallback mode
+    Prompt::interactive(false);
+
     $config = new ConfigData(name: 'wizardtest');
     $config->setServerVariation(ServerVariation::FPM_NGINX)
         ->setPhpVersion(PhpVersion::PHP_8_5)
