@@ -217,6 +217,7 @@ trait GeneratesProjectInfrastructure
         $rules = [
             '# LaraKube Local Infrastructure (Dynamic paths)',
             '.infrastructure/k8s/overlays/local',
+            '.infrastructure/volume_data',
         ];
 
         $toAdd = [];
