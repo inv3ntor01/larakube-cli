@@ -143,5 +143,11 @@ class EnvironmentData extends Data
          * Null = no automatic TLS (start on HTTP, or use the raw ingressAnnotations knob).
          */
         public ?string $certManagerIssuer = null,
+        /**
+         * Container registry configuration for CI/CD image builds and pushes.
+         * Null = no registry (local builds only, no CI deploy).
+         * Example: {"provider": "ghcr"} or {"provider": "dockerhub", "image": "owner/repo"}
+         */
+        public ?RegistryData $registry = null,
     ) {}
 }

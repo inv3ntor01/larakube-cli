@@ -99,12 +99,27 @@ class PlexStatusCommand extends Command
         foreach ($tenants as $name => $alloc) {
             $db = $alloc['db'] ?? '—';
             if (($alloc['db'] ?? null) && ($alloc['db_service'] ?? null)) {
-                $db .= " ({$alloc['db_service']})";   // which engine holds it (postgres/mysql/mariadb)
+                $db .= " (<fg=gray>{$alloc['db_service']}</>)";   // which engine holds it (postgres/mysql/mariadb)
             }
-            $redis = ($alloc['redis_index'] ?? null) === null ? 'no redis' : 'redis db '.$alloc['redis_index'];
-            $s3 = ($alloc['s3_bucket'] ?? null) ? ', s3 '.$alloc['s3_bucket'] : '';
             $you = $name === $self ? ' <fg=yellow>(this app)</>' : '';
-            $this->line("    <fg=cyan>{$name}</>{$you}  <fg=gray>db={$db}, {$redis}{$s3}</>");
+            $this->line("    <fg=cyan>{$name}</>{$you}");
+
+            // Database
+            $this->line("      <fg=gray>├─ Database:</> {$db}");
+
+            // Redis
+            if (($alloc['redis_index'] ?? null) !== null) {
+                $this->line("      <fg=gray>├─ Redis DB:</> {$alloc['redis_index']}");
+            } else {
+                $this->line('      <fg=gray>├─ Redis DB:</> <fg=gray>—</>');
+            }
+
+            // S3 Bucket
+            if ($alloc['s3_bucket'] ?? null) {
+                $this->line("      <fg=gray>└─ S3 Bucket:</> {$alloc['s3_bucket']}");
+            } else {
+                $this->line('      <fg=gray>└─ S3 Bucket:</> <fg=gray>—</>');
+            }
         }
 
         return 0;

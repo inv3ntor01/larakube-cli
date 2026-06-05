@@ -500,6 +500,11 @@ class ConfigData extends Data
         return $this->getEnvironment($environment)?->ingressAnnotations ?? [];
     }
 
+    public function getRegistry(string $environment): ?RegistryData
+    {
+        return $this->getEnvironment($environment)?->registry;
+    }
+
     public function getScoutDriver(): ?ScoutDriver
     {
         return $this->scoutDriver;
