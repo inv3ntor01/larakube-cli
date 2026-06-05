@@ -114,8 +114,15 @@ class CloudDeployCommand extends Command
             $cloud = $config->getCloud($environment);
         }
 
-        $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
-        $this->line('   <fg=gray>Builds locally, sideloads the image into the remote node (no registry), applies manifests.</>');
+        // Check if environment has registry configured
+        $registry = $config->getRegistry($environment);
+        if ($registry) {
+            $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
+            $this->line('   <fg=gray>Builds locally, pushes to '.$registry->getRegistryHost().', applies manifests.</>');
+        } else {
+            $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
+            $this->line('   <fg=gray>Builds locally, sideloads the image into the remote node (no registry), applies manifests.</>');
+        }
         $this->newLine();
 
         if (! confirm('Proceed?', true)) {
@@ -124,6 +131,6 @@ class CloudDeployCommand extends Command
             return 0;
         }
 
-        return $this->deployViaSshSideload($config, $environment);
+        return $registry ? $this->deployViaRegistry($config, $environment) : $this->deployViaSshSideload($config, $environment);
     }
 }

@@ -137,6 +137,23 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
+     * Build a registry image reference command (build + push). Pure.
+     * Uses docker buildx to cross-compile for linux/amd64, then pushes to registry.
+     */
+    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path): string
+    {
+        return 'docker buildx build --platform linux/amd64 --target deploy '
+            .'-t '.escapeshellarg($registryImage).' -f '.escapeshellarg($dockerfile).' '
+            .escapeshellarg($path).' --push';
+    }
+
+    /** Test docker login to a registry. Pure. */
+    public function dockerLoginCommand(string $registryHost, string $username, string $password): string
+    {
+        return 'echo '.escapeshellarg($password).' | docker login -u '.escapeshellarg($username).' --password-stdin '.escapeshellarg($registryHost);
+    }
+
+    /**
      * Deploy a project to its remote VPS via SSH-sideload, targeting the env's
      * own kube-context. Returns a command exit code.
      */
@@ -206,6 +223,79 @@ trait InteractsWithRemoteDeploy
         passthru("kubectl --context {$ctx} rollout status deploy/web -n {$ns} --timeout=180s");
 
         $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' ({$context}).");
+
+        return 0;
+    }
+
+    /**
+     * Deploy a project to a remote cluster via container registry push, targeting the
+     * env's own kube-context. Returns a command exit code.
+     */
+    protected function deployViaRegistry(ConfigData $config, string $environment): int
+    {
+        $registry = $config->getRegistry($environment);
+        if (! $registry) {
+            $this->laraKubeError("No registry configured for '{$environment}'.");
+
+            return 1;
+        }
+
+        $context = $config->getEnvironments()[$environment]->cloud?->ip
+            ? $this->remoteContextName($config->getEnvironments()[$environment]->cloud->ip)
+            : 'default';
+
+        $name = $config->getName();
+        $path = $config->getPath();
+        $namespace = $config->getNamespace($environment);
+        $tag = $this->resolveImageTag($path);
+        $registryImage = $registry->getFullImageReference($tag);
+
+        $this->line("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
+        $this->line("  <fg=gray>Registry:</> <fg=cyan>".$registry->getRegistryHost().'</>');
+
+        if (! $this->remoteContextReachable($context)) {
+            $this->laraKubeError("Context '{$context}' is missing or unreachable.");
+
+            return 1;
+        }
+
+        $dockerfile = "{$path}/Dockerfile.php";
+
+        // 1. Verify Docker login to registry.
+        // For now, assume credentials are in environment or docker config.
+        // In future, we could prompt for credentials.
+        $this->laraKubeInfo("Verifying registry credentials...");
+        // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
+
+        // 2. Build and push the production image to registry.
+        $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()}...");
+        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path), $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Image build/push failed. Ensure Docker credentials are configured and you have push access.');
+
+            return 1;
+        }
+
+        // 3. Namespace + env (ConfigMap/Secret) on the env's context.
+        $ctx = escapeshellarg($context);
+        $ns = escapeshellarg($namespace);
+        shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
+        $this->syncRemoteEnv($config, $environment, $context, $namespace);
+
+        // 4. Apply manifests, rewriting the local :latest ref to the registry image.
+        $overlay = $config->getK8sPath().'/overlays/'.$environment;
+        $this->laraKubeInfo('Applying Kubernetes manifests...');
+        passthru($this->applyWithImageRewriteCommand($context, $overlay, "{$name}:latest", $registryImage), $code);
+        if ($code !== 0) {
+            $this->laraKubeError('kubectl apply failed.');
+
+            return 1;
+        }
+
+        // 5. Wait for the web rollout.
+        passthru("kubectl --context {$ctx} rollout status deploy/web -n {$ns} --timeout=180s");
+
+        $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' via registry ({$context}).");
 
         return 0;
     }
