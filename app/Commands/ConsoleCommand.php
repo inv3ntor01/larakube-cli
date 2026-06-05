@@ -118,7 +118,7 @@ class ConsoleCommand extends Command
 
                     $tmp = sys_get_temp_dir().'/larakube-dashboard.yaml';
                     file_put_contents($tmp, $manifest);
-                    passthru("kubectl apply -f {$tmp}");
+                    passthru("kubectl apply -f {$tmp} --validate=false");
                     unlink($tmp);
                 });
 
@@ -129,6 +129,12 @@ class ConsoleCommand extends Command
         $url = 'https://console.dev.test';
 
         $this->laraKubeInfo("Opening: {$url}");
+
+        if ($this->isWsl()) {
+            passthru("powershell.exe -NoProfile -Command \"Start-Process '{$url}'\"");
+
+            return 0;
+        }
 
         $command = match (PHP_OS_FAMILY) {
             'Darwin' => 'open',

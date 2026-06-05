@@ -45,6 +45,11 @@ class WebCommand extends Command
 
         $this->switchClusterContext($context);
 
+        // 🔄 Sync State with Dashboard before opening
+        $this->withSpin('Synchronizing cluster state with Console...', function () {
+            app(\App\Dashboard\StateSynchronizer::class)->sync();
+        });
+
         return $this->call('console', ['--web' => true]);
     }
 }

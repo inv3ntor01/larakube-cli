@@ -76,10 +76,23 @@ class TrustCommand extends Command
 
             $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
 
+            // 🛠 Path Relay: certutil.exe often fails with \\wsl.localhost paths.
+            // We'll try to mirror the cert to the Windows Public folder (C:\Users\Public)
+            // to get a clean C:\ path that certutil definitely supports.
+            $publicCa = '/mnt/c/Users/Public/larakube-local-ca.crt';
+            if (@copy($caFile, $publicCa)) {
+                $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($publicCa).' 2>/dev/null'));
+            }
+
             // -user → the CURRENT USER's Root store: trusted by Chrome/Edge, needs
             // NO admin/UAC. This replaces the old `-addstore Root` (machine store)
             // that required elevation and just flashed a window and failed.
             passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $trustCode);
+
+            // Cleanup the relay file
+            if (file_exists($publicCa)) {
+                @unlink($publicCa);
+            }
 
             $this->line('');
             if ($trustCode !== 0) {
