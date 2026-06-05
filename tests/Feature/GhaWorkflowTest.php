@@ -32,8 +32,9 @@ test('GHA workflow generation uses correct literal injection syntax', function (
             'actor' => '${{ github.actor }}',
             'token' => '${{ secrets.GITHUB_TOKEN }}',
             'sha' => '${{ github.sha }}',
-            'registry' => '${{ env.REGISTRY }}',
-            'image_name' => '${{ env.IMAGE_NAME }}',
+            'registry_provider' => 'ghcr',
+            'registry_host' => 'ghcr.io',
+            'image_name' => '${{ github.repository }}',
             'k_data' => '${{ env.K_DATA }}',
             'e_data' => '${{ env.E_DATA }}',
         ],
@@ -42,7 +43,9 @@ test('GHA workflow generation uses correct literal injection syntax', function (
     // Verify Literal Injections
     expect($workflowContent)->toContain('FINAL_KUBE="${{ secrets.PRODUCTION_KUBECONFIG }}"');
     expect($workflowContent)->toContain('FINAL_ENV="${{ secrets.PRODUCTION_ENV_FILE_BASE64 }}"');
+    expect($workflowContent)->toContain('REGISTRY_HOST: ghcr.io');
     expect($workflowContent)->toContain('IMAGE_NAME: ${{ github.repository }}');
+    expect($workflowContent)->toContain('REGISTRY_PROVIDER: ghcr');
     expect($workflowContent)->toContain('kubeconfig: ${{ env.K_DATA }}');
 
     // Verify no Blade '@' symbols leaked into the GitHub syntax

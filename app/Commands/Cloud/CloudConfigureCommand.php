@@ -297,6 +297,12 @@ BASH;
             mkdir(dirname($workflowPath), 0755, true);
         }
 
+        // Determine registry configuration
+        $registry = $config->getRegistry($environment);
+        $registryProvider = $registry ? $registry->provider->value : 'ghcr';
+        $registryHost = $registry ? $registry->getRegistryHost() : 'ghcr.io';
+        $imageName = $registry ? ($registry->image ?? '${{ github.repository }}') : '${{ github.repository }}';
+
         $workflowContent = view('k8s.cloud-pilot-deploy', [
             'config' => $config,
             'environment' => $environment,
@@ -316,8 +322,9 @@ BASH;
                 'actor' => '${{ github.actor }}',
                 'token' => '${{ secrets.GITHUB_TOKEN }}',
                 'sha' => '${{ github.sha }}',
-                'registry' => '${{ env.REGISTRY }}',
-                'image_name' => '${{ env.IMAGE_NAME }}',
+                'registry_provider' => $registryProvider,
+                'registry_host' => $registryHost,
+                'image_name' => $imageName,
                 'k_data' => '${{ env.K_DATA }}',
                 'e_data' => '${{ env.E_DATA }}',
             ],

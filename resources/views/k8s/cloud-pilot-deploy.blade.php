@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: {!! $gha['repository'] !!}
+  REGISTRY_HOST: {!! $gha['registry_host'] !!}
+  IMAGE_NAME: {!! $gha['image_name'] !!}
+  REGISTRY_PROVIDER: {!! $gha['registry_provider'] !!}
 
 jobs:
   deploy:
@@ -73,6 +74,20 @@ jobs:
         run: |
           echo "$E_DATA" | base64 -d > .env
 
+      - name: 🔐 Log in to Container Registry
+@if($gha['registry_provider'] === 'ghcr')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: {!! $gha['actor'] !!}
+          password: {!! $gha['token'] !!}
+@elseif($gha['registry_provider'] === 'dockerhub')
+        uses: docker/login-action@v3
+        with:
+          username: {!! '${{ secrets.DOCKERHUB_USERNAME }}' !!}
+          password: {!! '${{ secrets.DOCKERHUB_TOKEN }}' !!}
+@endif
+
       - name: 🐘 Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -100,20 +115,13 @@ jobs:
       - name: 💎 Build production assets
         run: {!! $config->getPackageManager()->buildCommand() !!}
 
-      - name: 🔐 Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: {!! $gha['actor'] !!}
-          password: {!! $gha['token'] !!}
-
       - name: 🐳 Build & Push Application Image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile.php
           push: true
-          tags: {!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:latest,{!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:{!! $gha['sha'] !!}
+          tags: {!! '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}' !!}
           target: deploy
 
       - name: 🏗 Prepare Manifests & Deploy
@@ -124,7 +132,7 @@ jobs:
 
           # 2. Deploy via Kustomize
           cd .infrastructure/k8s/overlays/{{ $environment }}
-          kubectl kustomize . | sed "s|image: {{ $appName }}:latest|image: {!! $gha['registry'] !!}/{!! $gha['image_name'] !!}:{!! $gha['sha'] !!}|g" | kubectl apply -f -
+          kubectl kustomize . | sed "s|image: {{ $appName }}:latest|image: {!! '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}' !!}|g" | kubectl apply -f -
           
           # 3. Wait for rollouts
 @foreach(['web', 'horizon', 'queues', 'reverb'] as $name)
