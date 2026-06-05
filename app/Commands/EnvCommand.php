@@ -5,7 +5,9 @@ namespace App\Commands;
 use App\Contracts\HasPromptableHosts;
 use App\Data\ConfigData;
 use App\Data\EnvironmentData;
+use App\Data\RegistryData;
 use App\Enums\IngressController;
+use App\Enums\RegistryProvider;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
@@ -173,6 +175,36 @@ class EnvCommand extends Command
                 if ($override !== '') {
                     $envData->hosts[$service] = $override;
                 }
+            }
+        }
+
+        // Container registry: optional. Only relevant for cloud environments.
+        if ($envName !== 'local') {
+            $configureRegistry = confirm(
+                label: "Configure a container registry for {$envName}?",
+                default: false,
+                hint: 'Required for GitHub Actions CI/CD (push to GHCR or Docker Hub)',
+            );
+
+            if ($configureRegistry) {
+                $provider = select(
+                    label: "Which container registry for {$envName}?",
+                    options: [
+                        RegistryProvider::GHCR->value => RegistryProvider::GHCR->label(),
+                        RegistryProvider::DOCKERHUB->value => RegistryProvider::DOCKERHUB->label(),
+                    ],
+                );
+
+                $image = text(
+                    label: "Image repository path (optional, e.g. owner/repo)",
+                    placeholder: "Leave blank for default: {$config->getName()}",
+                    required: false,
+                );
+
+                $envData->registry = new RegistryData(
+                    provider: RegistryProvider::from($provider),
+                    image: $image !== '' ? $image : null,
+                );
             }
         }
 
