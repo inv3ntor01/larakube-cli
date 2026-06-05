@@ -57,18 +57,21 @@ trait InteractsWithDocker
      */
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
     {
-        if ($type === 'node') {
-            return "docker run --rm --init -v $path:/usr/src/app -w /usr/src/app --user root $envs -e npm_config_cache=/tmp/.npm node:22-alpine ";
-        }
-
         $appName = basename($path);
         $localImage = "$appName:latest";
 
-        // Check if we have a local image, otherwise fallback to base
+        // Resolve the image: try the local project image first, then fall back to the base PHP image.
+        // We use the project's PHP-based image for BOTH php and node tasks because Laravel
+        // frontend builds (Vite) often require PHP to be present (e.g. for generating types).
         $imageExists = shell_exec("docker images -q {$localImage} 2>/dev/null");
         $image = $imageExists ? $localImage : $this->getProjectConfig($path)->getPhpImage(true);
 
-        $baseEnvs = '-e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1';
+        $baseEnvs = '';
+        if ($type === 'php') {
+            $baseEnvs = '-e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1';
+        } elseif ($type === 'node') {
+            $baseEnvs = '-e npm_config_cache=/tmp/.npm';
+        }
 
         return "docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root $baseEnvs $envs {$image} ";
     }

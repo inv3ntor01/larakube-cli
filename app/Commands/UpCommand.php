@@ -359,15 +359,11 @@ class UpCommand extends Command
                     }
                 }
 
-                // 1. Create Public ConfigMap
-                if (! empty($publicLiterals)) {
-                    exec("kubectl create configmap laravel-config -n $namespace $publicLiterals --dry-run=client -o yaml | kubectl apply -f -");
-                }
+                // 1. Create Public ConfigMap (Always ensure it exists)
+                exec("kubectl create configmap laravel-config -n $namespace $publicLiterals --dry-run=client -o yaml | kubectl apply -f -");
 
-                // 2. Create Sensitive Secret
-                if (! empty($secretLiterals)) {
-                    exec("kubectl create secret generic laravel-secrets -n $namespace $secretLiterals --dry-run=client -o yaml | kubectl apply -f -");
-                }
+                // 2. Create Sensitive Secret (Always ensure it exists)
+                exec("kubectl create secret generic laravel-secrets -n $namespace $secretLiterals --dry-run=client -o yaml | kubectl apply -f -");
 
                 // Persist locally and sync blueprint to cluster for resilience
                 $this->saveProjectConfig($projectPath, $config, $environment);
