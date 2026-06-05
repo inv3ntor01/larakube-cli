@@ -3,21 +3,26 @@
 namespace App\Commands\Cloud;
 
 use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithRemoteSsh;
+use App\Traits\InteractsWithServerHardening;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
 
 class CloudProvisionCommand extends Command
 {
-    use InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithProjectConfig, InteractsWithRemoteSsh, InteractsWithServerHardening, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'cloud:provision';
+    protected $signature = 'cloud:provision
+        {target? : What to provision — "vps" (default) or "doks". Omit to be asked.}
+        {--context= : (DOKS only) target a specific kube-context}';
 
     /**
      * The console command description.
@@ -30,6 +35,30 @@ class CloudProvisionCommand extends Command
     public function handle(): int
     {
         $this->renderHeader();
+
+        // Which target? Explicit arg ("vps"/"doks") wins; otherwise ask.
+        $target = $this->argument('target') ?: select(
+            label: 'What are you provisioning?',
+            options: [
+                'vps' => 'VPS / bare server (SSH + k3s, single-node)',
+                'doks' => 'DigitalOcean Kubernetes (managed, multi-node)',
+            ],
+            default: 'vps',
+        );
+
+        // DOKS is a separate flow — delegate to its dedicated command.
+        if ($target === 'doks') {
+            return (int) $this->call('cloud:provision:doks', array_filter([
+                '--context' => $this->option('context'),
+            ]));
+        }
+
+        if ($target !== 'vps') {
+            $this->laraKubeError("Unknown provisioning target: '{$target}'. Use 'vps' or 'doks'.");
+
+            return 1;
+        }
+
         $this->laraKubeInfo('LaraKube Cloud Pilot: VPS Provisioner');
         $this->laraKubeWarn('Recommended: 1GB RAM minimum for stable K3s deployments.');
         $this->newLine();
@@ -98,13 +127,27 @@ class CloudProvisionCommand extends Command
             }
         }
 
-        // 3. Sync Kubeconfig
+        // 3. Harden the server (firewall + fail2ban + auto-updates + key-only SSH)
+        if (confirm('Harden the server now (UFW firewall, fail2ban, auto-updates, key-only SSH)?', true)) {
+            $this->hardenServer($user, $ip, (int) $port, $keyPath);
+        }
+
+        // 4. Optionally close remote root login (only once "larakube" is a working
+        // sudo login, so we never strand the box). If we do close it, every step
+        // after this must connect as "larakube" — root SSH no longer works.
+        if ($user === 'root' && confirm('Disable remote root SSH login? ("larakube" becomes your login — recommended)', true)) {
+            if ($this->lockDownRootLogin($user, $ip, (int) $port, $keyPath)) {
+                $user = 'larakube';
+            }
+        }
+
+        // 5. Sync Kubeconfig (as $user — now "larakube" if root login was closed)
         $contextName = "larakube-{$ip}";
         if (confirm('Sync remote Kubeconfig to your local machine?', true)) {
             $this->syncKubeconfig($user, $ip, $port, $keyPath, $contextName);
         }
 
-        // 4. Deploy Traefik
+        // 6. Deploy Traefik
         if (confirm('Deploy Traefik (Single-Node Hero)?', true)) {
             $this->deployTraefik($contextName);
         }
@@ -113,17 +156,6 @@ class CloudProvisionCommand extends Command
         $this->info('Your VPS is now a LaraKube-hardened K3s node.');
 
         return 0;
-    }
-
-    /**
-     * Test the SSH connection.
-     */
-    protected function testSsh($user, $ip, $port, $keyPath): bool
-    {
-        $command = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no -i {$keyPath} -p {$port} {$user}@{$ip} 'echo success' 2>&1";
-        $output = shell_exec($command);
-
-        return trim($output ?? '') === 'success';
     }
 
     /**
@@ -190,6 +222,52 @@ BASH;
 
         $this->runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand);
         $this->laraKubeInfo('User "larakube" created and configured.');
+    }
+
+    /**
+     * Harden the freshly provisioned node: UFW (SSH/HTTP/HTTPS/k3s-API + cluster
+     * CIDRs), fail2ban, and key-only SSH. The script (built by
+     * InteractsWithServerHardening) allows the SSH port before enabling UFW, so
+     * this never strands the in-flight connection.
+     */
+    protected function hardenServer($user, $ip, int $port, $keyPath): void
+    {
+        $this->laraKubeInfo('Hardening server (firewall, fail2ban, SSH)...');
+
+        $this->runRemoteCommand($user, $ip, $port, $keyPath, $this->hardenServerScript($port));
+
+        $this->laraKubeInfo('✅ Hardened: UFW (SSH/80/443/6443 + pod & service CIDRs), fail2ban, auto-updates, key-only SSH.');
+        $this->info('   Note: k3s API (6443) is open to the internet — restricting it to your IP is a recommended follow-up.');
+    }
+
+    /**
+     * Close remote root SSH login — but ONLY after proving the "larakube" user
+     * can both log in (same key) and run sudo, so we never cut the last remote
+     * admin path. If either check fails, we leave root login enabled and warn.
+     */
+    protected function lockDownRootLogin($user, $ip, int $port, $keyPath): bool
+    {
+        $this->laraKubeInfo('Verifying the "larakube" login works before disabling root...');
+
+        if (! $this->testSsh('larakube', $ip, $port, $keyPath)) {
+            $this->laraKubeWarn('Could not SSH as "larakube" — leaving root login ENABLED to avoid lockout.');
+            $this->info('   (Did you create the larakube user, and does your key have a .pub sibling?)');
+
+            return false;
+        }
+
+        if (! $this->canSudo('larakube', $ip, $port, $keyPath)) {
+            $this->laraKubeWarn('"larakube" cannot passwordless-sudo — leaving root login ENABLED to avoid lockout.');
+
+            return false;
+        }
+
+        // Safe: we're still connected as root here, so this only affects FUTURE logins.
+        $this->runRemoteCommand($user, $ip, $port, $keyPath, $this->disableRootLoginScript());
+
+        $this->laraKubeInfo('✅ Remote root login disabled. Using the "larakube" user from now on.');
+
+        return true;
     }
 
     /**
@@ -298,16 +376,5 @@ BASH;
         @unlink($tmpDevPem);
         @unlink($tmpDevKeyPem);
         @unlink($tmpInstall);
-    }
-
-    /**
-     * Run a command on the remote server via SSH.
-     */
-    protected function runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand): void
-    {
-        $sudo = $user !== 'root' ? 'sudo ' : '';
-        $fullCommand = $sudo.'bash -c '.escapeshellarg($remoteCommand);
-        $sshCommand = "ssh -i {$keyPath} -p {$port} {$user}@{$ip} ".escapeshellarg($fullCommand);
-        passthru($sshCommand);
     }
 }

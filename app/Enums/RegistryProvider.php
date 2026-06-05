@@ -4,9 +4,6 @@ namespace App\Enums;
 
 enum RegistryProvider: string
 {
-    case GHCR = 'ghcr';
-    case DOCKERHUB = 'dockerhub';
-
     public function label(): string
     {
         return match ($this) {
@@ -30,4 +27,6 @@ enum RegistryProvider: string
             self::DOCKERHUB => $githubRepo,  // docker.io/{owner}/{repo}
         };
     }
+    case GHCR = 'ghcr';
+    case DOCKERHUB = 'dockerhub';
 }

@@ -84,9 +84,22 @@ class CloudNukeCommand extends Command
         // Delegate the teardown to `down`, which auto-targets the environment's own
         // context (no switching) and removes the namespace + project PVs. --force
         // because we've already confirmed above — one teardown path for both.
-        return (int) $this->call('down', [
+        $result = (int) $this->call('down', [
             'environment' => $environment,
             '--force' => true,
         ]);
+
+        // Offer to also drop the local kube-context. We ASK rather than auto-remove
+        // because a nuke wipes the app's resources but leaves the droplet/cluster
+        // RUNNING — you only want the context gone if you're deleting the server too.
+        // Skipped under --force so scripted nukes never silently drop a context.
+        if ($result === 0 && $context && ! $this->option('force')) {
+            $this->newLine();
+            if (confirm("Also remove the local kube-context '{$context}'? (only if you're deleting the droplet/cluster itself — nuke leaves it running)", false)) {
+                $this->call('context:remove', ['name' => $context, '--force' => true]);
+            }
+        }
+
+        return $result;
     }
 }

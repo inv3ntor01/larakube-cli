@@ -107,14 +107,14 @@ class EnvCommand extends Command
         );
 
         if ($configureCicd) {
-            $this->call('cloud:configure', ['action' => 'gha']);
+            $this->call('cloud:configure:gha', ['environment' => $envName]);
 
             return;
         }
 
         $this->line('  <fg=gray>Next steps:</>');
         $this->line("  1. Preview the merged manifests:  <fg=yellow>larakube kustomize {$envName}</>");
-        $this->line("  2. Set up CI/CD (per-env workflow + branch):  <fg=yellow>larakube cloud:configure gha</> (choose '{$envName}')");
+        $this->line("  2. Set up CI/CD (per-env workflow + branch):  <fg=yellow>larakube cloud:configure:gha {$envName}</>");
         $this->line("  3. Or deploy manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
     }
 
@@ -196,7 +196,7 @@ class EnvCommand extends Command
                 );
 
                 $image = text(
-                    label: "Image repository path (optional, e.g. owner/repo)",
+                    label: 'Image repository path (optional, e.g. owner/repo)',
                     placeholder: "Leave blank for default: {$config->getName()}",
                     required: false,
                 );

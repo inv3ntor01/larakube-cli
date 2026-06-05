@@ -8,13 +8,13 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
-class CloudConfigureRegistryCommand extends Command
+class CloudConfigureUsersCommand extends Command
 {
     use ConfiguresCloudEnvironment, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
 
-    protected $signature = 'cloud:configure:registry {environment? : The environment to configure}';
+    protected $signature = 'cloud:configure:users {environment? : The environment to sync teammates to}';
 
-    protected $description = 'Choose the container registry (GHCR / Docker Hub) for an environment';
+    protected $description = 'Add/sync SSH teammates for an environment\'s server';
 
     public function handle(): int
     {
@@ -24,6 +24,6 @@ class CloudConfigureRegistryCommand extends Command
             return 1;
         }
 
-        return $this->configureRegistry($this->argument('environment'));
+        return $this->configureUsers($this->argument('environment'));
     }
 }

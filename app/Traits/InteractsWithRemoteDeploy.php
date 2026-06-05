@@ -65,6 +65,38 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
+     * Same kustomize|sed|apply, but driven by a standalone (scoped) kubeconfig
+     * file instead of a named admin context — used for the dogfooded deploy where
+     * the namespace-locked `deployer` token does the apply. Pure.
+     */
+    public function applyWithImageRewriteUsingKubeconfig(string $kubeconfigPath, string $overlayPath, string $fromImage, string $toImage): string
+    {
+        $kc = 'KUBECONFIG='.escapeshellarg($kubeconfigPath).' kubectl';
+
+        return $kc.' kustomize '.escapeshellarg($overlayPath)
+            .' | sed '.escapeshellarg('s|image: '.$fromImage.'|image: '.$toImage.'|g')
+            .' | '.$this->dropNamespaceDocCommand()
+            .' | '.$kc.' apply -f -';
+    }
+
+    /**
+     * An awk filter that drops any `kind: Namespace` document from a multi-doc
+     * YAML stream. The cluster-scoped Namespace is created by admin before the
+     * scoped apply; the namespaced `deployer` Role can't get/apply it, so it must
+     * not reach the scoped `kubectl apply`. Everything else in the overlay is
+     * namespaced and applies fine. Pure.
+     */
+    public function dropNamespaceDocCommand(): string
+    {
+        return 'awk '.escapeshellarg(
+            'function flush(){if(!drop&&doc!=""){printf "%s",doc} doc="";drop=0}'
+            .' /^---[ \t\r]*$/{flush();print;next}'
+            .' {doc=doc $0 "\n"; if($0 ~ /^kind:[ \t]+Namespace[ \t\r]*$/)drop=1}'
+            .' END{flush()}',
+        );
+    }
+
+    /**
      * A unique, rollout-triggering image tag — the git short SHA, else a
      * timestamped fallback. (A fixed ':latest' wouldn't change the Deployment
      * spec, so k8s wouldn't roll out the new image.) Pure.
@@ -120,22 +152,6 @@ trait InteractsWithRemoteDeploy
         return ['public' => $public, 'secret' => $secret];
     }
 
-    /** Resolve the rollout-triggering image tag for a project. */
-    protected function resolveImageTag(string $path): string
-    {
-        $sha = trim((string) shell_exec('git -C '.escapeshellarg($path).' rev-parse --short HEAD 2>/dev/null'));
-
-        return $this->formatImageTag($sha !== '' ? $sha : null, time());
-    }
-
-    /** Is the env's context present and reachable (without touching the global one)? */
-    protected function remoteContextReachable(string $context): bool
-    {
-        exec('kubectl --context '.escapeshellarg($context).' cluster-info --request-timeout=5s 2>&1', $out, $code);
-
-        return $code === 0;
-    }
-
     /**
      * Build a registry image reference command (build + push). Pure.
      * Uses docker buildx to cross-compile for linux/amd64, then pushes to registry.
@@ -151,6 +167,22 @@ trait InteractsWithRemoteDeploy
     public function dockerLoginCommand(string $registryHost, string $username, string $password): string
     {
         return 'echo '.escapeshellarg($password).' | docker login -u '.escapeshellarg($username).' --password-stdin '.escapeshellarg($registryHost);
+    }
+
+    /** Resolve the rollout-triggering image tag for a project. */
+    protected function resolveImageTag(string $path): string
+    {
+        $sha = trim((string) shell_exec('git -C '.escapeshellarg($path).' rev-parse --short HEAD 2>/dev/null'));
+
+        return $this->formatImageTag($sha !== '' ? $sha : null, time());
+    }
+
+    /** Is the env's context present and reachable (without touching the global one)? */
+    protected function remoteContextReachable(string $context): bool
+    {
+        exec('kubectl --context '.escapeshellarg($context).' cluster-info --request-timeout=5s 2>&1', $out, $code);
+
+        return $code === 0;
     }
 
     /**
@@ -203,28 +235,13 @@ trait InteractsWithRemoteDeploy
             return 1;
         }
 
-        // 3. Namespace + env (ConfigMap/Secret) on the env's context.
+        // 3. Namespace — ADMIN only (cluster-scoped; the scoped SA can't create it).
         $ctx = escapeshellarg($context);
         $ns = escapeshellarg($namespace);
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
-        $this->syncRemoteEnv($config, $environment, $context, $namespace);
 
-        // 4. Apply manifests, rewriting the local :latest ref to the sideloaded tag.
-        $overlay = $config->getK8sPath().'/overlays/'.$environment;
-        $this->laraKubeInfo('Applying Kubernetes manifests...');
-        passthru($this->applyWithImageRewriteCommand($context, $overlay, "{$name}:latest", $image), $code);
-        if ($code !== 0) {
-            $this->laraKubeError('kubectl apply failed.');
-
-            return 1;
-        }
-
-        // 5. Wait for the web rollout.
-        passthru("kubectl --context {$ctx} rollout status deploy/web -n {$ns} --timeout=180s");
-
-        $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' ({$context}).");
-
-        return 0;
+        // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $image);
     }
 
     /**
@@ -251,7 +268,7 @@ trait InteractsWithRemoteDeploy
         $registryImage = $registry->getFullImageReference($tag);
 
         $this->line("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
-        $this->line("  <fg=gray>Registry:</> <fg=cyan>".$registry->getRegistryHost().'</>');
+        $this->line('  <fg=gray>Registry:</> <fg=cyan>'.$registry->getRegistryHost().'</>');
 
         if (! $this->remoteContextReachable($context)) {
             $this->laraKubeError("Context '{$context}' is missing or unreachable.");
@@ -264,7 +281,7 @@ trait InteractsWithRemoteDeploy
         // 1. Verify Docker login to registry.
         // For now, assume credentials are in environment or docker config.
         // In future, we could prompt for credentials.
-        $this->laraKubeInfo("Verifying registry credentials...");
+        $this->laraKubeInfo('Verifying registry credentials...');
         // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
 
         // 2. Build and push the production image to registry.
@@ -276,35 +293,20 @@ trait InteractsWithRemoteDeploy
             return 1;
         }
 
-        // 3. Namespace + env (ConfigMap/Secret) on the env's context.
+        // 3. Namespace — ADMIN only (cluster-scoped; the scoped SA can't create it).
         $ctx = escapeshellarg($context);
         $ns = escapeshellarg($namespace);
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
-        $this->syncRemoteEnv($config, $environment, $context, $namespace);
 
-        // 4. Apply manifests, rewriting the local :latest ref to the registry image.
-        $overlay = $config->getK8sPath().'/overlays/'.$environment;
-        $this->laraKubeInfo('Applying Kubernetes manifests...');
-        passthru($this->applyWithImageRewriteCommand($context, $overlay, "{$name}:latest", $registryImage), $code);
-        if ($code !== 0) {
-            $this->laraKubeError('kubectl apply failed.');
-
-            return 1;
-        }
-
-        // 5. Wait for the web rollout.
-        passthru("kubectl --context {$ctx} rollout status deploy/web -n {$ns} --timeout=180s");
-
-        $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' via registry ({$context}).");
-
-        return 0;
+        // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $registryImage);
     }
 
     /**
      * Create/refresh the laravel-config ConfigMap + laravel-secrets Secret from
      * .env.{env}, on the env's context.
      */
-    protected function syncRemoteEnv(ConfigData $config, string $environment, string $context, string $namespace): void
+    protected function syncRemoteEnv(ConfigData $config, string $environment, ?string $context, string $namespace, ?string $kubeconfigPath = null): void
     {
         $envPath = $config->getPath().'/.env.'.$environment;
 
@@ -318,14 +320,112 @@ trait InteractsWithRemoteDeploy
         $knownSecrets = array_keys($config->getAllSecretEnvironmentVariables($environment));
         ['public' => $public, 'secret' => $secret] = $this->splitEnvForK8s($lines, $knownSecrets);
 
-        $ctx = escapeshellarg($context);
+        // Drive kubectl either via the scoped kubeconfig (dogfood) or, as a
+        // fallback, a named admin context.
+        $kube = $kubeconfigPath !== null
+            ? 'KUBECONFIG='.escapeshellarg($kubeconfigPath).' kubectl'
+            : 'kubectl --context '.escapeshellarg((string) $context);
         $ns = escapeshellarg($namespace);
 
         if ($public !== '') {
-            shell_exec("kubectl --context {$ctx} create configmap laravel-config -n {$ns} {$public} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
+            shell_exec("{$kube} create configmap laravel-config -n {$ns} {$public} --dry-run=client -o yaml | {$kube} apply -f -");
         }
         if ($secret !== '') {
-            shell_exec("kubectl --context {$ctx} create secret generic laravel-secrets -n {$ns} {$secret} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
+            shell_exec("{$kube} create secret generic laravel-secrets -n {$ns} {$secret} --dry-run=client -o yaml | {$kube} apply -f -");
         }
+    }
+
+    /**
+     * The shared "scoped tail" for both deploy paths: with the image already in
+     * place (sideloaded or pushed), use the LOCAL ADMIN context to bootstrap the
+     * namespace-scoped `deployer` SA/Role/RoleBinding and mint a short token, then
+     * run env-sync + manifest apply + rollout THROUGH that token. Dogfooding the
+     * scoped credential means any RBAC gap surfaces here, where we still hold admin
+     * to widen the Role — and guarantees the same creds will work in CI.
+     *
+     * Namespace creation stays with the caller (admin) — it's cluster-scoped and
+     * the scoped SA deliberately can't create namespaces.
+     */
+    protected function applyScopedDeploy(
+        ConfigData $config,
+        string $environment,
+        string $adminContext,
+        string $namespace,
+        string $fromImage,
+        string $toImage,
+    ): int {
+        $name = $config->getName();
+
+        // 1. Bootstrap SA + namespaced Role + RoleBinding with ADMIN (idempotent).
+        $this->laraKubeInfo('Granting namespace-scoped deploy credentials...');
+        if (! $this->ensureScopedRbac($adminContext, $namespace, $name, $environment)) {
+            $this->laraKubeError('Failed to grant scoped RBAC (kubectl apply of the SA/Role/RoleBinding failed).');
+
+            return 1;
+        }
+
+        // 2. Mint a short-lived token (admin) for the dogfooded apply.
+        $token = trim((string) shell_exec($this->createTokenCommand($adminContext, $namespace, null, 1800).' 2>/dev/null'));
+        if ($token === '') {
+            $this->laraKubeError('Failed to mint a scoped token — needs kubectl >= 1.24 on a cluster >= 1.24.');
+
+            return 1;
+        }
+
+        // 3. Read server + CA from the admin context to assemble a standalone kubeconfig.
+        $server = trim((string) shell_exec($this->clusterServerCommand($adminContext).' 2>/dev/null'));
+        $caData = trim((string) shell_exec($this->clusterCaDataCommand($adminContext).' 2>/dev/null'));
+        if ($server === '' || $caData === '') {
+            $this->laraKubeError('Could not read cluster server/CA from the admin context.');
+
+            return 1;
+        }
+
+        // 4. Write the namespace-locked kubeconfig to a 0600 temp file.
+        $kubeconfig = $this->assembleScopedKubeconfig($adminContext, $server, $caData, $namespace, $token);
+        $kubeconfigPath = tempnam(sys_get_temp_dir(), 'lk_kubeconfig_');
+        file_put_contents($kubeconfigPath, $kubeconfig);
+        @chmod($kubeconfigPath, 0600);
+
+        try {
+            $this->line('  <fg=gray>Deploying as</> <fg=cyan>deployer</> <fg=gray>— namespace-locked to</> <fg=cyan>'.$namespace.'</>');
+
+            // 5. env ConfigMap/Secret — THROUGH the scoped credential.
+            $this->syncRemoteEnv($config, $environment, null, $namespace, $kubeconfigPath);
+
+            // 6. Apply the overlay via the scoped credential, retrying briefly for
+            //    RBAC propagation lag right after the RoleBinding was created.
+            $overlay = $config->getK8sPath().'/overlays/'.$environment;
+            $applyCmd = $this->applyWithImageRewriteUsingKubeconfig($kubeconfigPath, $overlay, $fromImage, $toImage);
+            $this->laraKubeInfo('Applying Kubernetes manifests...');
+
+            $code = 1;
+            $applyOut = [];
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                $applyOut = [];
+                exec($applyCmd.' 2>&1', $applyOut, $code);
+                if ($code === 0) {
+                    break;
+                }
+                if ($attempt < 3) {
+                    $this->line('  <fg=gray>RBAC not effective yet — retrying ('.$attempt.'/2)...</>');
+                    sleep(2);
+                }
+            }
+            if ($code !== 0) {
+                $this->laraKubeError("kubectl apply failed under the scoped credential:\n".implode("\n", $applyOut));
+
+                return 1;
+            }
+
+            // 7. Wait for the web rollout (scoped).
+            passthru('KUBECONFIG='.escapeshellarg($kubeconfigPath).' kubectl rollout status deploy/web -n '.escapeshellarg($namespace).' --timeout=180s');
+        } finally {
+            @unlink($kubeconfigPath);
+        }
+
+        $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' (namespace-scoped, ns: {$namespace}).");
+
+        return 0;
     }
 }

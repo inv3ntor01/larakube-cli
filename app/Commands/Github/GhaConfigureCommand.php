@@ -2,15 +2,18 @@
 
 namespace App\Commands\Github;
 
+use App\Data\ConfigData;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithGlobalConfig;
 use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithScopedRbac;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesEnvironmentContext;
 use LaravelZero\Framework\Commands\Command;
 
 class GhaConfigureCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithScopedRbac, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'gha:configure {environment? : The environment to configure (production, staging, etc.)}';
 
@@ -70,48 +73,73 @@ class GhaConfigureCommand extends Command
 
         $this->setGithubSecret($gh, "{$upperEnv}_ENV_FILE_BASE64", $base64Env, $repoFlag);
 
-        // 4. Upload KUBECONFIG (Surgical Extraction)
-        $this->laraKubeInfo("Setting KUBECONFIG secret for {$environment}...");
+        // 4. Mint + upload a NAMESPACE-SCOPED kubeconfig (never the admin cert).
+        //    The runner becomes a pure consumer of a credential locked to this
+        //    env's namespace — a leaked secret can't touch anything else.
+        $this->laraKubeInfo("Minting a namespace-scoped KUBECONFIG for {$environment}...");
 
         $config = $this->getProjectConfigObject($projectPath);
-        $ip = $config->getCloudIp($environment);
 
-        if (! $ip) {
-            $this->laraKubeError("Could not find IP for environment '{$environment}' in cloud configuration.");
-            $this->line('  Please run <fg=yellow;options=bold>larakube cloud:configure</> first.');
-
-            return 1;
-        }
-
-        $contextName = "larakube-{$ip}";
-        $this->info("  🎯 Extracting cluster context: {$contextName}");
-
-        // Use the current environment's KUBECONFIG if set, otherwise default to home
-        $localKubeConfig = getenv('KUBECONFIG') ?: $_SERVER['HOME'].'/.kube/config';
-
-        // Use kubectl to extract a standalone, minified config for JUST this context
-        // We pass the KUBECONFIG env to ensure all local files are searched
-        $kubeConfigContent = shell_exec('KUBECONFIG='.escapeshellarg($localKubeConfig).' kubectl config view --context='.escapeshellarg($contextName).' --minify --flatten 2>/dev/null');
-
-        if (empty(trim($kubeConfigContent ?? ''))) {
-            $this->laraKubeError("Context '{$contextName}' not found in your local kubeconfig.");
-            $this->line('  Please run <fg=yellow;options=bold>larakube cloud:provision</> first to sync your credentials.');
+        // Use the env's OWN context to bootstrap (VPS larakube-<ip>, or managed context).
+        $adminContext = $this->environmentContextOrCurrent($config, $environment);
+        if (! $adminContext) {
+            $this->laraKubeError("No cluster target for '{$environment}'.");
+            $this->line('  Run <fg=yellow;options=bold>larakube cloud:configure:base '.$environment.'</> (or cloud:provision) first.');
 
             return 1;
         }
 
+        if (! $this->kubectlSupportsTokens()) {
+            $this->laraKubeError('kubectl >= 1.24 is required to mint a scoped token. Please upgrade kubectl.');
+
+            return 1;
+        }
+
+        $namespace = $config->getName().'-'.$environment;
+        $ctx = escapeshellarg($adminContext);
+        $ns = escapeshellarg($namespace);
+
+        // a. Namespace — admin (cluster-scoped). Pre-creating it means the runner
+        //    (scoped) only ever applies namespaced resources.
+        shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
+
+        // b. SA + namespaced Role + RoleBinding (admin, idempotent).
+        if (! $this->ensureScopedRbac($adminContext, $namespace, $config->getName(), $environment)) {
+            $this->laraKubeError('Failed to create the namespace-scoped ServiceAccount/Role in the cluster.');
+
+            return 1;
+        }
+
+        // c. Long-lived Secret-bound token → standalone scoped kubeconfig.
+        $kubeConfigContent = $this->mintScopedKubeconfig($adminContext, $namespace);
+        if ($kubeConfigContent === null) {
+            $this->laraKubeError('Failed to mint the scoped token (the bound-token Secret was never populated).');
+
+            return 1;
+        }
+
+        $this->info('  🔒 Scoped to namespace: <fg=cyan>'.$namespace.'</> (a leaked secret can touch nothing else)');
         $this->info('  📦 Kubeconfig size: '.strlen($kubeConfigContent).' bytes');
-
-        // Visual Verification (Redacted)
         if (preg_match('/server: (https:\/\/.*)/', $kubeConfigContent, $matches)) {
-            $this->info("  🔗 Verified Server Target: <fg=cyan>{$matches[1]}</>");
+            $this->info("  🔗 Server Target: <fg=cyan>{$matches[1]}</>");
         }
 
         $this->setGithubSecret($gh, "{$upperEnv}_KUBECONFIG", $kubeConfigContent, $repoFlag);
 
-        $this->laraKubeInfo("GitHub Secrets configured successfully for '{$environment}'!");
+        // d. Stamp when we minted it (lets us warn on stale tokens later).
+        $this->stampRbacGranted($projectPath, $config, $environment);
+
+        $this->laraKubeInfo("GitHub Secrets configured successfully for '{$environment}' (namespace-scoped).");
 
         return 0;
+    }
+
+    /** Record the mint time of the scoped CI credential in the blueprint. */
+    protected function stampRbacGranted(string $projectPath, ConfigData $config, string $environment): void
+    {
+        $data = $config->toArray();
+        $data['environments'][$environment]['cloud']['rbacGrantedAt'] = gmdate('c');
+        ConfigData::from($data)->saveToFile($projectPath);
     }
 
     protected function ensureEnvironmentExists(string $gh, string $environment, string $repoFlag): void

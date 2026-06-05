@@ -12,6 +12,7 @@ use App\Traits\LaraKubeOutput;
 use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\multiselect;
 
 use LaravelZero\Framework\Commands\Command;
 
@@ -82,13 +83,24 @@ class PlexJoinCommand extends Command
         }
 
         $this->line("  <fg=gray>Tenant:</> <fg=cyan>{$tenant}</>  <fg=gray>env:</> <fg=cyan>{$env}</>  <fg=gray>context:</> <fg=cyan>{$context}</>");
-        $this->line('  <fg=gray>Services:</> '.implode(', ', $services));
         $this->laraKubeNewLine();
 
-        if (! $this->option('yes') && ! confirm("Join '{$tenant}' to the Commons?", true)) {
-            $this->laraKubeInfo('Aborted.');
+        // Pick which eligible services to share on the Commons — you can join a
+        // SUBSET (e.g. Redis but keep MySQL self-hosted). Everything downstream
+        // (bootstrap, allocation, .env) is driven by this list. --yes joins all.
+        if (! $this->option('yes')) {
+            $services = multiselect(
+                label: "Which services should '{$tenant}' join on the Commons?",
+                options: array_combine($services, $services),
+                default: $services,
+                hint: 'Space to toggle · deselect any you want to keep self-hosted.',
+            );
 
-            return 0;
+            if (empty($services)) {
+                $this->laraKubeInfo('No services selected — nothing to join.');
+
+                return 0;
+            }
         }
 
         // 3. Existing-data guard: never silently strand a self-hosted DB.

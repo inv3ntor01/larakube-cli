@@ -53,6 +53,28 @@ test('apply rewrites the local :latest tag to the sideloaded tag, on the env con
         ->toContain("kubectl --context 'larakube-159.223.43.95' apply -f -");
 });
 
+test('the scoped apply drives kubectl via the scoped kubeconfig, not a named context', function () {
+    $cmd = remoteDeploy()->applyWithImageRewriteUsingKubeconfig(
+        '/tmp/lk_kubeconfig_x', '/proj/.infrastructure/k8s/overlays/production', 'app-one:latest', 'app-one:abc123',
+    );
+
+    expect($cmd)
+        ->toContain("KUBECONFIG='/tmp/lk_kubeconfig_x' kubectl kustomize")
+        ->toContain('s|image: app-one:latest|image: app-one:abc123|g')
+        ->toContain("KUBECONFIG='/tmp/lk_kubeconfig_x' kubectl apply -f -")
+        ->not->toContain('--context')      // never falls back to the admin context
+        ->toContain('awk');                // strips the cluster-scoped Namespace doc
+});
+
+test('the scoped apply strips the cluster-scoped Namespace doc (deployer cannot apply it)', function () {
+    $cmd = remoteDeploy()->dropNamespaceDocCommand();
+
+    expect($cmd)
+        ->toContain('awk')
+        ->toContain('kind:[ \t]+Namespace')   // the doc it drops
+        ->toContain('drop=1');
+});
+
 test('the image tag uses the git sha when present, else a timestamped fallback', function () {
     $r = remoteDeploy();
 

@@ -84,8 +84,8 @@ jobs:
 @elseif($gha['registry_provider'] === 'dockerhub')
         uses: docker/login-action@v3
         with:
-          username: {!! '${{ secrets.DOCKERHUB_USERNAME }}' !!}
-          password: {!! '${{ secrets.DOCKERHUB_TOKEN }}' !!}
+          username: {!! $gha['dockerhub_user'] !!}
+          password: {!! $gha['dockerhub_token'] !!}
 @endif
 
       - name: 🐘 Setup PHP
@@ -121,7 +121,7 @@ jobs:
           context: .
           file: Dockerfile.php
           push: true
-          tags: {!! '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}' !!}
+          tags: {!! $gha['image_latest'] !!},{!! $gha['image_sha'] !!}
           target: deploy
 
       - name: 🏗 Prepare Manifests & Deploy
@@ -130,9 +130,12 @@ jobs:
           kubectl create configmap laravel-config -n {{ $namespace }} --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic laravel-secrets -n {{ $namespace }} --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
 
-          # 2. Deploy via Kustomize
+          # 2. Deploy via Kustomize. The namespace already exists (created at
+          #    `gha:configure` time), and this runner uses a NAMESPACE-SCOPED
+          #    credential — so strip the cluster-scoped Namespace doc, which the
+          #    scoped ServiceAccount can't apply.
           cd .infrastructure/k8s/overlays/{{ $environment }}
-          kubectl kustomize . | sed "s|image: {{ $appName }}:latest|image: {!! '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}' !!}|g" | kubectl apply -f -
+          kubectl kustomize . | sed "s|image: {{ $appName }}:latest|image: {!! $gha['image_sha'] !!}|g" | awk 'function flush(){if(!drop&&doc!=""){printf "%s",doc} doc="";drop=0} /^---[ \t\r]*$/{flush();print;next} {doc=doc $0 "\n"; if($0 ~ /^kind:[ \t]+Namespace[ \t\r]*$/)drop=1} END{flush()}' | kubectl apply -f -
           
           # 3. Wait for rollouts
 @foreach(['web', 'horizon', 'queues', 'reverb'] as $name)

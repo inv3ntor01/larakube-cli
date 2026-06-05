@@ -14,7 +14,7 @@ class CloudProvisionDoksCommand extends Command
 {
     use InteractsWithClusterContext, LaraKubeOutput;
 
-    protected $signature = 'cloud:provision doks {--context= : Target a specific kube-context}';
+    protected $signature = 'cloud:provision:doks {--context= : Target a specific kube-context}';
 
     protected $description = 'Provision a DigitalOcean Kubernetes (DOKS) cluster with Traefik and Let\'s Encrypt';
 
@@ -89,9 +89,9 @@ class CloudProvisionDoksCommand extends Command
     {
         // Check if Traefik is already installed
         exec(
-            "kubectl --context ".escapeshellarg($context)." get deployment -n traefik traefik 2>/dev/null",
+            'kubectl --context '.escapeshellarg($context).' get deployment -n traefik traefik 2>/dev/null',
             $out,
-            $code
+            $code,
         );
 
         if ($code === 0) {
@@ -133,9 +133,9 @@ class CloudProvisionDoksCommand extends Command
 
         while ($attempt < $maxAttempts) {
             exec(
-                "kubectl --context ".escapeshellarg($context)
+                'kubectl --context '.escapeshellarg($context)
                 .' get svc -n traefik traefik -o jsonpath=\'{.status.loadBalancer.ingress[0].ip}\' 2>/dev/null',
-                $out
+                $out,
             );
 
             $ip = trim($out[0] ?? '');
@@ -167,7 +167,7 @@ YAML;
 
         $tmpFile = sys_get_temp_dir().'/traefik-ingressclass.yaml';
         file_put_contents($tmpFile, $ingressClass);
-        exec("kubectl --context ".escapeshellarg($context)." apply -f {$tmpFile}", $out, $code);
+        exec('kubectl --context '.escapeshellarg($context)." apply -f {$tmpFile}", $out, $code);
         unlink($tmpFile);
 
         if ($code !== 0) {

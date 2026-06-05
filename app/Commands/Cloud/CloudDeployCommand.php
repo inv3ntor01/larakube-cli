@@ -6,6 +6,7 @@ use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
+use App\Traits\InteractsWithScopedRbac;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ResolvesEnvironmentContext;
 
@@ -15,7 +16,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudDeployCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, ResolvesEnvironmentContext;
+    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, InteractsWithScopedRbac, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'cloud:deploy {environment? : The environment to deploy to}';
 

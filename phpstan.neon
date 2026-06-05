@@ -17,7 +17,6 @@ parameters:
         # runtime. Task #78 will replace this with targeted @mixin annotations to
         # restore method-level detection.
         - identifier: method.notFound
-        - identifier: method.void
         # env() outside config — a Laravel best-practice nag, fine for this CLI.
         - identifier: larastan.noEnvCallsOutsideOfConfig
         # Command options added dynamically at runtime; PHPStan can't see them.
