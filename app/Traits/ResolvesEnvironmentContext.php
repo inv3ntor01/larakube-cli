@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Data\ConfigData;
+use App\Enums\ManagedProvider;
 
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
@@ -162,8 +163,23 @@ trait ResolvesEnvironmentContext
                 'key' => $key,
             ];
         } else {
-            // Managed cluster — identified by the context name; no SSH.
-            $data['environments'][$environment]['cloud'] = ['context' => $context];
+            // Managed cluster — identified by the context name; no SSH. Capture the
+            // provider too, and default the env's storageClass from it.
+            $provider = select(
+                label: 'Which managed Kubernetes provider is this?',
+                options: collect(ManagedProvider::cases())
+                    ->mapWithKeys(fn (ManagedProvider $p) => [$p->value => $p->label()])
+                    ->all(),
+                default: ManagedProvider::DOKS->value,
+            );
+
+            $data['environments'][$environment]['cloud'] = ['context' => $context, 'provider' => $provider];
+
+            $storageClass = ManagedProvider::from($provider)->defaultStorageClass();
+            if ($storageClass !== null && empty($data['environments'][$environment]['storageClass'] ?? null)) {
+                $data['environments'][$environment]['storageClass'] = $storageClass;
+                $this->laraKubeInfo("Defaulted storageClass to '{$storageClass}' for {$provider}.");
+            }
         }
 
         ConfigData::from($data)->saveToFile($projectPath);

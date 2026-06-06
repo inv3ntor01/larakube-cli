@@ -4,7 +4,6 @@ namespace App\Traits;
 
 use App\Contracts\PlexProvisionable;
 use App\Data\RegistryData;
-use App\Enums\DeploymentStrategy;
 use App\Enums\RegistryProvider;
 
 use function Laravel\Prompts\confirm;
@@ -230,14 +229,13 @@ trait ConfiguresCloudEnvironment
             return 1;
         }
 
-        // 2. Setup GHCR Pull Secret on the VPS (if Single-Node)
-        $config = $this->getProjectConfigObject(getcwd());
-        if ($config->getStrategy() === DeploymentStrategy::SINGLE_NODE) {
-            $this->laraKubeInfo('Step 2: Securing VPS access to Private Registry (GHCR)...');
-            $this->setupGhcrSecret($environment);
-        }
+        // 2. Pull secret for a private GHCR registry — created via the cluster
+        //    API (works on VPS and managed clusters; self-skips for non-GHCR).
+        $this->laraKubeInfo('Step 2: Ensuring private-registry pull access...');
+        $this->setupGhcrSecret($environment);
 
         // 3. Generate Workflow
+        $config = $this->getProjectConfigObject(getcwd());
         $this->laraKubeInfo('Step 3: Generating Cloud Pilot workflow...');
 
         $branch = text(
@@ -306,57 +304,55 @@ trait ConfiguresCloudEnvironment
 
     protected function setupGhcrSecret(string $environment): void
     {
-        $projectPath = getcwd();
-        $config = $this->getProjectConfigObject($projectPath);
-        $cloud = $config->getCloudConfig($environment);
+        $config = $this->getProjectConfigObject(getcwd());
 
-        if (empty($cloud)) {
-            $this->laraKubeWarn("Cloud config not found for {$environment}. Skipping registry secret setup.");
+        // Only a private GHCR registry needs this pull secret. Docker Hub / public
+        // images don't use it (a Docker Hub pull secret is a separate follow-up).
+        $registry = $config->getRegistry($environment);
+        if (! $registry || $registry->provider !== RegistryProvider::GHCR) {
+            return;
+        }
+
+        // Create it through the env's cluster CONTEXT (VPS larakube-<ip> OR a
+        // managed context) via the API — no SSH, so it works on DOKS/EKS/… too.
+        $cloud = $config->getCloud($environment);
+        $context = $cloud?->context ?? ($cloud?->ip ? 'larakube-'.$cloud->ip : '');
+        if ($context === '') {
+            $this->laraKubeWarn("No cluster context for '{$environment}' — skipping GHCR pull-secret setup.");
 
             return;
         }
 
         $gh = $this->getGhCommand();
-
-        // 1. Attempt to auto-detect username
         $username = trim(shell_exec("{$gh} api user -q .login 2>/dev/null") ?? '');
-
-        // 2. Attempt to auto-detect token
         $token = trim(shell_exec("{$gh} auth token 2>/dev/null") ?? '');
 
         if (! $username) {
-            $username = text(
-                label: 'GitHub Username',
-                required: true,
-            );
+            $username = text(label: 'GitHub Username', required: true);
         } else {
             $this->info("  👤 Using detected GitHub user: {$username}");
         }
 
         if (! $token) {
-            $token = password(
-                label: 'GitHub Personal Access Token (PAT) with read:packages scope',
-                required: true,
-            );
+            $token = password(label: 'GitHub Personal Access Token (PAT) with read:packages scope', required: true);
         } else {
             $this->info('  🔑 Using existing GitHub authentication token.');
         }
 
-        $config = $this->getProjectConfigObject(getcwd());
         $namespace = $config->getName().'-'.$environment;
+        $ctx = '--context '.escapeshellarg($context);
+        $ns = escapeshellarg($namespace);
 
-        $remoteCommand = <<<BASH
-kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret docker-registry ghcr-login \
-  --namespace={$namespace} \
-  --docker-server=https://ghcr.io \
-  --docker-username={$username} \
-  --docker-password={$token} \
-  --dry-run=client -o yaml | kubectl apply -f -
-BASH;
+        shell_exec("kubectl {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl {$ctx} apply -f -");
+        shell_exec(
+            "kubectl {$ctx} create secret docker-registry ghcr-login -n {$ns}"
+            .' --docker-server=https://ghcr.io'
+            .' --docker-username='.escapeshellarg($username)
+            .' --docker-password='.escapeshellarg($token)
+            ." --dry-run=client -o yaml | kubectl {$ctx} apply -f -",
+        );
 
-        $this->runRemoteCommand($cloud, $remoteCommand);
-        $this->laraKubeInfo("✅ GHCR pull secret created on VPS in namespace: {$namespace}");
+        $this->laraKubeInfo("✅ GHCR pull secret created in '{$namespace}' (context: {$context}).");
     }
 
     protected function runRemoteCommand(array $cloud, string $remoteCommand): int

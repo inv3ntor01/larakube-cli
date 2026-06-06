@@ -16,7 +16,7 @@ class CloudProvisionDoksCommand extends Command
 
     protected $signature = 'cloud:provision:doks {--context= : Target a specific kube-context}';
 
-    protected $description = 'Provision a DigitalOcean Kubernetes (DOKS) cluster with Traefik and Let\'s Encrypt';
+    protected $description = 'Provision a DigitalOcean Kubernetes (DOKS) cluster with Traefik and Let\'s Encrypt TLS';
 
     public function handle(): int
     {
@@ -24,7 +24,6 @@ class CloudProvisionDoksCommand extends Command
         $this->laraKubeInfo('Provision DigitalOcean Kubernetes (DOKS)');
         $this->newLine();
 
-        // Resolve context
         $context = $this->option('context') ?: $this->askForClusterContext();
         if (! $context) {
             $this->laraKubeError('No Kubernetes context selected.');
@@ -35,100 +34,78 @@ class CloudProvisionDoksCommand extends Command
         $this->line("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
         $this->newLine();
 
-        if (! confirm('Proceed with Traefik + Let\'s Encrypt installation?', true)) {
+        // Collected up front — the ACME resolver is configured at install time.
+        $email = text(
+            label: 'Email for Let\'s Encrypt certificate notices',
+            placeholder: 'you@example.com',
+            required: true,
+            validate: fn (string $v) => filter_var($v, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
+        );
+
+        if (! confirm('Install Traefik + Let\'s Encrypt (HTTP-01) on this cluster?', true)) {
             $this->laraKubeInfo('Cancelled.');
 
             return 0;
         }
 
         $this->newLine();
-
-        // 1. Install Traefik via Helm
-        $this->laraKubeInfo('Installing Traefik ingress controller...');
-        if ($this->installTraefik($context) !== 0) {
+        $this->laraKubeInfo('Installing Traefik with a Let\'s Encrypt (ACME) resolver...');
+        if ($this->installTraefik($context, $email) !== 0) {
             $this->laraKubeError('Traefik installation failed.');
 
             return 1;
         }
 
-        // 2. Wait for LoadBalancer IP
-        $this->laraKubeInfo('Waiting for LoadBalancer IP assignment...');
+        $this->laraKubeInfo('Waiting for the LoadBalancer IP...');
         $ip = $this->waitForLoadBalancerIp($context);
         if (! $ip) {
-            $this->laraKubeError('LoadBalancer IP not assigned within timeout (120s). Check cluster resources.');
+            $this->laraKubeError('LoadBalancer IP not assigned within 120s. Check cluster resources, then retry.');
 
             return 1;
         }
 
-        $this->laraKubeInfo("✅ LoadBalancer IP assigned: <fg=cyan>{$ip}</>");
+        $this->laraKubeInfo("✅ LoadBalancer IP: <fg=cyan>{$ip}</>");
         $this->newLine();
-
-        // 3. Configure Let's Encrypt
-        $email = text(
-            label: 'Enter your email for Let\'s Encrypt certificate notifications',
-            placeholder: 'your-email@example.com',
-            required: true,
-        );
-
-        $this->laraKubeInfo('Configuring Let\'s Encrypt ACME resolver...');
-        if ($this->configureAcme($context, $email) !== 0) {
-            $this->laraKubeWarn('ACME configuration had issues. You may need to configure manually.');
-        } else {
-            $this->laraKubeInfo('✅ Let\'s Encrypt configured.');
-        }
-
-        $this->newLine();
-
-        // 4. Provide next steps
         $this->displayNextSteps($ip);
 
         return 0;
     }
 
-    private function installTraefik(string $context): int
+    /** Install Traefik with a persistent ACME (Let's Encrypt, HTTP-01) resolver. */
+    private function installTraefik(string $context, string $email): int
     {
-        // Check if Traefik is already installed
-        exec(
-            'kubectl --context '.escapeshellarg($context).' get deployment -n traefik traefik 2>/dev/null',
-            $out,
-            $code,
-        );
-
+        exec('kubectl --context '.escapeshellarg($context).' get deployment -n traefik traefik 2>/dev/null', $out, $code);
         if ($code === 0) {
-            $this->laraKubeInfo('ℹ️  Traefik is already installed.');
+            $this->laraKubeInfo('ℹ️  Traefik is already installed — skipping. (Re-install to change ACME settings.)');
 
             return 0;
         }
 
-        // Install Traefik via Helm
-        $commands = [
-            'helm repo add traefik https://traefik.github.io/charts',
-            'helm repo update',
-            'helm install traefik traefik/traefik '
-                .'--namespace traefik --create-namespace '
-                .'--set service.type=LoadBalancer '
-                .'--set ingressClass.enabled=true '
-                .'--set ingressClass.isDefaultClass=true',
-        ];
+        exec('helm repo add traefik https://traefik.github.io/charts 2>/dev/null');
+        exec('helm repo update 2>/dev/null');
 
-        foreach ($commands as $cmd) {
-            if (strpos($cmd, 'helm install') !== false) {
-                passthru($cmd, $code);
-            } else {
-                exec($cmd, $out, $code);
-            }
+        // persistence → a PVC (on DOKS\'s default do-block-storage) holds acme.json
+        // across restarts/nodes; certResolver "letsencrypt" issues per-router certs.
+        $install = 'helm install traefik traefik/traefik '
+            .'--namespace traefik --create-namespace '
+            .'--set service.type=LoadBalancer '
+            .'--set ingressClass.enabled=true '
+            .'--set ingressClass.isDefaultClass=true '
+            .'--set persistence.enabled=true '
+            .'--set persistence.size=128Mi '
+            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.email='.$email).' '
+            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.storage=/data/acme.json').' '
+            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web').' '
+            .'--set '.escapeshellarg('ports.websecure.tls.certResolver=letsencrypt');
 
-            if ($code !== 0) {
-                return 1;
-            }
-        }
+        passthru($install, $code);
 
-        return 0;
+        return $code === 0 ? 0 : 1;
     }
 
     private function waitForLoadBalancerIp(string $context): ?string
     {
-        $maxAttempts = 60; // 120 seconds with 2s sleep
+        $maxAttempts = 60; // 120s at 2s/attempt
         $attempt = 0;
 
         while ($attempt < $maxAttempts) {
@@ -153,60 +130,27 @@ class CloudProvisionDoksCommand extends Command
         return null;
     }
 
-    private function configureAcme(string $context, string $email): int
-    {
-        // Create IngressClass for Traefik (if not already present)
-        $ingressClass = <<<'YAML'
-apiVersion: networking.k8s.io/v1
-kind: IngressClass
-metadata:
-  name: traefik
-spec:
-  controller: traefik.io/ingress-controller
-YAML;
-
-        $tmpFile = sys_get_temp_dir().'/traefik-ingressclass.yaml';
-        file_put_contents($tmpFile, $ingressClass);
-        exec('kubectl --context '.escapeshellarg($context)." apply -f {$tmpFile}", $out, $code);
-        unlink($tmpFile);
-
-        if ($code !== 0) {
-            return 1;
-        }
-
-        // Traefik's ACME is configured via the Traefik resource (CRD or values).
-        // For now, document that users need to configure cert generation via
-        // Traefik's configuration (usually via values or middleware).
-        // This is beyond the scope of this command for MVP.
-
-        return 0;
-    }
-
     private function displayNextSteps(string $ip): void
     {
+        $this->line('  <fg=green>Next steps:</>');
         $this->newLine();
-        $this->line('  <fg=green>Next steps:</> ');
+        $this->line('  1️⃣  <fg=yellow>Point your domain at the LoadBalancer IP</> (A record):');
+        $this->line("       <fg=cyan>app.example.com  A  {$ip}</>");
         $this->newLine();
-        $this->line('  1️⃣  <fg=yellow>Point your domain to the LoadBalancer IP:</>');
-        $this->line('     Create an A record in your DNS provider:');
-        $this->line("       <fg=cyan>app.example.com A {$ip}</>");
-        $this->newLine();
-        $this->line('  2️⃣  <fg=yellow>Configure your LaraKube project for DOKS:</>');
-        $this->line('     Edit .larakube.json environment:');
-        $this->line('       {');
-        $this->line('         "environments": {');
-        $this->line('           "production": {');
-        $this->line('             "ingress": "traefik",');
-        $this->line('             "strategy": "multi-node-ha",');
-        $this->line('             "hosts": { "web": "app.example.com" },');
-        $this->line('             "storageClass": "do-block-storage",');
-        $this->line('             "registry": { "provider": "ghcr" }');
-        $this->line('           }');
-        $this->line('         }');
+        $this->line('  2️⃣  <fg=yellow>Configure your env for DOKS</> in <fg=cyan>.larakube.json</>:');
+        $this->line('       "ingress": "traefik",');
+        $this->line('       "strategy": "multi-node-ha",');
+        $this->line('       "hosts": { "web": "app.example.com" },');
+        $this->line('       "storageClass": "do-block-storage",');
+        $this->line('       "registry": { "provider": "ghcr" },');
+        $this->line('       "ingressAnnotations": {');
+        $this->line('         "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",');
+        $this->line('         "traefik.ingress.kubernetes.io/router.tls.certresolver": "letsencrypt"');
         $this->line('       }');
+        $this->line('     <fg=gray>(the last block tells Traefik to fetch a Let\'s Encrypt cert for this app)</>');
         $this->newLine();
-        $this->line('  3️⃣  <fg=yellow>Deploy your app:</>');
-        $this->line('     larakube cloud:deploy production');
+        $this->line('  3️⃣  <fg=yellow>Deploy</> once DNS resolves:');
+        $this->line('       larakube cloud:deploy production');
         $this->newLine();
     }
 }

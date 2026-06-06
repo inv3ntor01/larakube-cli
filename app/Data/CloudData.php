@@ -34,6 +34,12 @@ class CloudData extends Data
          */
         public ?string $context = null,
         /**
+         * The managed Kubernetes provider for a $context-based env (doks / eks /
+         * gke / aks / civo / lke / custom). Drives sensible defaults like the
+         * env's storageClass. Null for VPS environments.
+         */
+        public ?string $provider = null,
+        /**
          * When the CI deploy credential (the namespace-scoped Secret-bound token
          * uploaded as {ENV}_KUBECONFIG by `gha:configure`) was last minted —
          * ISO-8601. Null = no scoped CI credential has been issued yet. Presence

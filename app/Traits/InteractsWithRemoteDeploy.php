@@ -257,9 +257,13 @@ trait InteractsWithRemoteDeploy
             return 1;
         }
 
-        $context = $config->getEnvironments()[$environment]->cloud?->ip
-            ? $this->remoteContextName($config->getEnvironments()[$environment]->cloud->ip)
-            : 'default';
+        // VPS (larakube-<ip>) OR managed (cloud.context) — resolved one way.
+        $context = $this->environmentContextOrCurrent($config, $environment);
+        if (! $context) {
+            $this->laraKubeError("No cluster context for '{$environment}'. Run `cloud:configure:base` or `cloud:provision` first.");
+
+            return 1;
+        }
 
         $name = $config->getName();
         $path = $config->getPath();
