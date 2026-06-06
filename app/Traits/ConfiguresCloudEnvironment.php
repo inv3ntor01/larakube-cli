@@ -199,7 +199,7 @@ trait ConfiguresCloudEnvironment
         }
     }
 
-    protected function configureGha(?string $environment = null): int
+    protected function configureGha(?string $environment = null, bool $rotate = false): int
     {
         $environment ??= $this->askForCloudEnvironment(
             label: 'Which environment are you configuring for GitHub Actions?',
@@ -220,7 +220,11 @@ trait ConfiguresCloudEnvironment
         // 1. Configure Secrets (scoped kubeconfig + env). Abort if this fails —
         //    there's no point generating a workflow with no/broken credentials.
         $this->laraKubeInfo("Step 1: Configuring GitHub Secrets for '{$environment}' environment...");
-        if ($this->call('gha:configure', ['environment' => $environment]) !== 0) {
+        $ghaArgs = ['environment' => $environment];
+        if ($rotate) {
+            $ghaArgs['--rotate'] = true;
+        }
+        if ($this->call('gha:configure', $ghaArgs) !== 0) {
             $this->laraKubeError('GitHub secret configuration failed — aborting before generating the workflow.');
 
             return 1;

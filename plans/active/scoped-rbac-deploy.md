@@ -170,35 +170,31 @@ re-run `gha:configure` (or a future `cluster:grant` refresh — task #7 family).
   the token state — so the detail view doubles as a "is this credential wired up
   and what can it touch" audit.
 
-## 🧪 Build order
+## 🧪 Build order — ✅ ALL SHIPPED (v0.14.0 + follow-up batch)
 
-1. `InteractsWithScopedRbac` trait — **pure** builders (SA/Role/RoleBinding YAML,
-   token mint cmd, kubeconfig assembly from server URL + CA + token + namespace).
-   Unit-testable, no I/O.
-2. Wire into `cloud:deploy` (Option A) — bootstrap, then scoped apply.
-3. **Test on the new Droplet** — close the VPS gap.
-4. `gha:configure` — Secret-bound token + scoped kubeconfig upload; stamp marker.
-5. `cluster:users` — list (Prompt Table) + scope detail (live-Role Prompt Table).
-6. `rbacGrantedAt` on `CloudData`.
-7. Docs page.
+1. [x] `InteractsWithScopedRbac` trait — pure builders + orchestration (ensureScopedRbac, mintScopedKubeconfig, kubectlSupportsTokens).
+2. [x] Wire into `cloud:deploy` (Option A) — bootstrap, then scoped apply (strips the cluster-scoped Namespace doc).
+3. [x] Tested on the Droplet — VPS gap closed (manual + GitHub Actions).
+4. [x] `gha:configure` — Secret-bound token + scoped kubeconfig upload; stamps `rbacGrantedAt`; workflow strips the Namespace.
+5. [x] `cluster:users` — list (Prompt Table) + live-Role scope detail.
+6. [x] `rbacGrantedAt` on `CloudData`.
+7. [x] Docs — `security/` section (overview, server-hardening, surgical-credentials, rotating-credentials).
 
-## 🔎 Gaps found on review (record now, mostly follow-ups)
+## 🔎 Gaps found on review — status
 
-1. **DOKS context resolution** — `cloud:deploy` is VPS-centric (`cloud.ip` →
-   `larakube-{ip}`). DOKS contexts are doctl-named with no `cloud.ip`. The scoped
-   flow pulls **server URL + CA** from the admin context, so add a `--context`
-   override + env→context resolution. VPS works now; DOKS is a follow-up.
-2. **Token Secret is async** — after creating the SA-token `Secret` (CI), poll
-   until `.data.token` is populated before reading it.
-3. **RBAC propagation lag** — Option A applies with the fresh token immediately;
-   the `RoleBinding` may take a sub-second to take effect → small retry/backoff on
-   the first scoped call.
-4. **kubectl ≥ 1.24 preflight** — `create token` requires it; fail clearly if older.
-5. **Offboarding/rotation** — `cluster:revoke {app} {env}` (delete SA/Role/Binding)
-   + `--rotate` (replace the token Secret) to kill/rotate a leaked CI cred.
-   Security-critical follow-up.
-6. **Naming overlap** — `cloud:configure users` (SSH teammates) vs `cluster:users`
-   (K8s SA). Different namespaces; document the distinction.
+1. [ ] **DOKS context resolution** — managed identity now exists (`cloud.context`,
+   `getContext()`/`environmentContextOrCurrent` are managed-aware); end-to-end DOKS
+   deploy validation still pending. *(Partially done.)*
+2. [x] **Token Secret is async** — `mintScopedKubeconfig` polls until populated.
+3. [x] **RBAC propagation lag** — `applyScopedDeploy` retries the first scoped apply.
+4. [x] **kubectl ≥ 1.24 preflight** — `kubectlSupportsTokens()` guards `gha:configure`.
+5. [x] **Offboarding/rotation** — `cluster:revoke {namespace}` (+ `--with-secret`,
+   `--force`) and `cloud:configure:gha {env} --rotate`. Documented in
+   `security/rotating-credentials.md`.
+6. [x] **Naming overlap** — `cloud:configure:users` (SSH teammates) vs `cluster:users`
+   (K8s deploy SAs) — documented. NOTE: the SSH-teammates approach is itself under
+   review (see the RBAC-teammate plan); per-person scoped kubeconfigs should replace
+   SSH logins for cluster access.
 
 ## ❓ Open for red-line
 

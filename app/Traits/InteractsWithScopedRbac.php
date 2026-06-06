@@ -273,6 +273,38 @@ YAML;
         return $this->assembleScopedKubeconfig($adminContext, $server, $caData, $namespace, $token);
     }
 
+    /**
+     * Poll a bound-token Secret until k8s populates `.data.token` (it's async),
+     * returning the decoded token or null on timeout. The Secret must already be
+     * applied and reference an existing ServiceAccount.
+     */
+    public function pollSecretToken(string $adminContext, string $namespace, string $secretName): ?string
+    {
+        $base = 'kubectl --context '.escapeshellarg($adminContext).' -n '.escapeshellarg($namespace)
+            .' get secret '.escapeshellarg($secretName).' -o jsonpath=';
+
+        for ($i = 0; $i < 15; $i++) {
+            $b64 = trim((string) shell_exec($base.escapeshellarg('{.data.token}').' 2>/dev/null'));
+            if ($b64 !== '') {
+                return (string) base64_decode($b64);
+            }
+            sleep(1);
+        }
+
+        return null;
+    }
+
+    /** The CA (base64) from a bound-token Secret, falling back to the admin context's CA. */
+    public function readSecretCaData(string $adminContext, string $namespace, string $secretName): string
+    {
+        $ca = trim((string) shell_exec(
+            'kubectl --context '.escapeshellarg($adminContext).' -n '.escapeshellarg($namespace)
+            .' get secret '.escapeshellarg($secretName).' -o jsonpath='.escapeshellarg('{.data.ca\.crt}').' 2>/dev/null',
+        ));
+
+        return $ca !== '' ? $ca : trim((string) shell_exec($this->clusterCaDataCommand($adminContext).' 2>/dev/null'));
+    }
+
     /** kubectl client >= 1.24 — needed for bound-token Secrets / `create token`. */
     public function kubectlSupportsTokens(): bool
     {

@@ -15,7 +15,9 @@ class GhaConfigureCommand extends Command
 {
     use InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithScopedRbac, LaraKubeOutput, ResolvesEnvironmentContext;
 
-    protected $signature = 'gha:configure {environment? : The environment to configure (production, staging, etc.)}';
+    protected $signature = 'gha:configure
+        {environment? : The environment to configure (production, staging, etc.)}
+        {--rotate : Revoke the current deploy token and mint a fresh one (use after a leak)}';
 
     protected $description = 'Configure GitHub Actions secrets using the native GitHub CLI container';
 
@@ -108,6 +110,14 @@ class GhaConfigureCommand extends Command
             $this->laraKubeError('Failed to create the namespace-scoped ServiceAccount/Role in the cluster.');
 
             return 1;
+        }
+
+        // b½. Rotate: drop the current bound-token Secret so a FRESH token is
+        //     minted below. The old token dies instantly — anything still holding
+        //     it (a leaked copy) stops working; CI keeps deploying with the new one.
+        if ($this->option('rotate')) {
+            $this->laraKubeInfo('Rotating: revoking the current deploy token before minting a fresh one...');
+            shell_exec("kubectl --context {$ctx} -n {$ns} delete secret ".escapeshellarg($this->deployerName().'-token').' --ignore-not-found 2>/dev/null');
         }
 
         // c. Long-lived Secret-bound token → standalone scoped kubeconfig.

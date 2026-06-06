@@ -2,117 +2,151 @@
 
 ## 🎯 Objective
 
-Give each teammate their own **scoped** access to a LaraKube cluster — read-only,
-single-namespace, or full — via the Kubernetes-native mechanism (a per-person
-**kubeconfig** + **RBAC** `Role`/`ClusterRole` bound to them). This works
-identically on single-node and multi-node clusters and on managed services
-(EKS/GKE/AKS), unlike the current SSH/OS-user `teammates`.
+Give each teammate their own **scoped** kube access — read-only, operate-one-app,
+or namespace-admin — via a per-person **kubeconfig** + Kubernetes **RBAC**, with
+**no SSH and no OS user on the box**. Works identically on single-node, multi-node,
+and managed clusters. Replaces the SSH/OS-user `cloud:configure:users` for cluster
+access entirely.
 
-## 🔍 Why the current `teammates` isn't enough
+## 🔍 Why the current SSH `teammates` must go
 
-Today `cloud:configure users` SSHes into the single `cloud.ip` host and runs
-`useradd` + `usermod -aG sudo` + writes `authorized_keys` + grants
-`NOPASSWD:ALL`. That means:
+`cloud:configure:users` SSHes into `cloud.ip` and runs `useradd` +
+`usermod -aG sudo` + `NOPASSWD:ALL`. That's **passwordless full root on the box**
+— and since the admin kubeconfig lives there, effectively cluster-admin — just to
+let someone help with one app. No read-only, no per-app scoping, single SSH-able
+node only. Cluster access is an RBAC problem, not an OS-user one.
 
-- **One box only.** It provisions an OS user on the entry node. Other nodes in a
-  multi-node cluster never get it, and managed clusters often can't be SSH'd
-  into at all (managed control plane, disposable nodes).
-- **All-or-nothing.** A sudo login on the box where the kubeconfig lives is
-  effectively full cluster-admin. There's no "read-only" or "only the
-  `acme-app-production` namespace."
+## 🧱 Design — the model
 
-It's the right tool for the **Single-Node Hero / VPS** tier ("give my friend a
-login on my server") and nothing more. Cluster access is a different problem,
-and the K8s answer is RBAC, not OS users.
+**One identity per person, many namespaces, one kubeconfig.**
 
-## 🧱 Design
+Each teammate is a single **ServiceAccount** in a central `larakube-access`
+namespace, with one **bound-token Secret → one kubeconfig**. Access to an app is a
+**RoleBinding in that app's namespace** pointing at their SA and a built-in
+ClusterRole:
 
-### Identity (how a teammate authenticates to the API)
+```
+larakube-access/lloyd  (ServiceAccount + token)        ← his ONE identity / kubeconfig
+   ├─ RoleBinding in blue-production    → edit  (built-in)
+   └─ RoleBinding in orange-production  → edit  (added later, same identity)
+```
 
-Pick one for the MVP (decide during design):
+**Isolation is automatic.** Access is per-namespace and server-side, so before a
+binding exists `kubectl -n orange-production …` → `403`. We never grant
+`list namespaces` (cluster-scoped), so a teammate can't even enumerate other apps
+— they only know the namespaces you told them about.
 
-- **ServiceAccount token** — simplest: create a SA, mint a (bounded) token,
-  emit a kubeconfig. Easy to revoke (delete the SA / token). Token rotation is
-  the main wrinkle.
-- **Client certificate (CSR API)** — `CertificateSigningRequest` → approve →
-  signed cert → kubeconfig. Feels like "real" user auth, but certs can't be
-  revoked without rotating the CA; use short expiries.
-- **OIDC** — the production-grade answer (no per-user secrets in-cluster), but
-  needs an external IdP. **Out of scope for MVP**; note as the graduation path.
+**Adding an app never touches their kubeconfig.** Granting `orange` just adds a
+RoleBinding; lloyd's token/context is unchanged — he immediately works with
+`-n orange-production`. No new file, no re-onboarding, no second context.
 
-Lean toward **ServiceAccount tokens** for the MVP (revocable, no CA surgery),
-with client-cert as a documented alternative.
+### Presets → built-in ClusterRoles (no custom roles to maintain)
 
-### Permission presets (what they can do)
+Bound **namespaced** via RoleBinding:
 
-Ship a small set of `ClusterRole`s, applied via `RoleBinding` (namespace-scoped)
-or `ClusterRoleBinding` (cluster-wide):
+- `--read` → **`view`**: get/list/watch; **no** secrets, **no** exec. (Interns.)
+- `--edit` → **`edit`** *(DEFAULT)*: full app operation — `pods/exec` (artisan),
+  `pods/log`, delete pods, deployments, configmaps; **cannot** manage RBAC or add
+  other users. (The typical trusted teammate.)
+- `--admin` → **`admin`**: `edit` + manage RBAC *within that namespace* (can grant
+  others access to that app). (A co-owner of the app.)
 
-- **`admin`** — full access (parity with today's sudo teammate).
-- **`read-only`** — `get`/`list`/`watch` across the usual resources.
-- **`namespace`** — scoped to the project's `{name}-{env}` namespace(s) only
-  (the common "let a contractor touch staging, not production" case).
+### Upgrade / downgrade = re-grant (upsert)
 
-### Issuance flow
+A RoleBinding's `roleRef` is **immutable**, so changing a role means delete +
+recreate the binding. `cluster:grant` therefore behaves as an **upsert**:
 
-A command (e.g. `larakube cluster:access add|list|revoke`, or an RBAC mode on
-`cloud:configure users`) that:
+- New person → create SA + token + kubeconfig, then the RoleBinding.
+- Existing person, new namespace → just add the RoleBinding.
+- Existing person, **same** namespace, different role flag → **replace** the
+  binding (delete old, create new) → that *is* the upgrade/downgrade.
 
-1. Creates the identity (SA/token or CSR cert).
-2. Binds the chosen preset (Role/ClusterRole + binding) in the target
-   namespace(s).
-3. Emits a ready-to-use kubeconfig for the teammate to drop in `~/.kube/`.
-4. `revoke` tears down the binding + identity.
+The token/kubeconfig never changes on a role change — access level flips instantly,
+no re-onboarding. Re-running `grant` also re-writes the kubeconfig file (covers a
+lost file).
 
-### Schema
+## 🛠 Commands
 
-Open question — where RBAC teammates are declared:
+### Owner (admin context)
+```bash
+larakube cluster:grant  --name lloyd blue-production            # default: edit
+larakube cluster:grant  --name lloyd orange-production          # + orange, same identity
+larakube cluster:grant  --name lloyd blue-production --admin    # upgrade lloyd on blue
+larakube cluster:grant  --name alex  blue-production --read     # intern, read-only
+larakube cluster:users                                          # who has what, where (+ role)
+larakube cluster:revoke --name lloyd orange-production          # drop just orange (delete binding)
+larakube cluster:revoke --name lloyd                            # off-board entirely (SA+token+all bindings)
+```
+- `cluster:grant {namespace} {--name=} {--read|--edit|--admin} {--context=}` — upsert
+  identity + binding; writes `./<name>.kubeconfig` for hand-off.
+- Extend **`cluster:users`** to list human identities (per person: namespaces +
+  role), not just the `deployer` deploy SA.
+- Extend **`cluster:revoke`** with `--name` (a person) and an optional namespace
+  (one app) vs none (full off-board). Label our RoleBindings
+  (`larakube.dev/access-user: <name>`) so off-board can find them cluster-wide.
 
-- extend each `environments[env].cloud.teammates` entry with an `access`/`role`
-  field (`admin` | `read-only` | `namespace`), reusing the existing list; **or**
-- a separate `access` block keyed by env, leaving `cloud.teammates` as the
-  SSH-only concept.
+### Teammate (their laptop)
+```bash
+larakube context:import ./lloyd.kubeconfig    # merge into ~/.kube/config + switch to it
+larakube context                               # switch between clusters
+larakube context:remove                        # clean up when off-boarded
+```
+`context:import` belongs in the **context:*** family (managing *your* local
+contexts), NOT cluster:* (operating *on* a cluster) — and reuses the safe
+KUBECONFIG-merge logic already in `cloud:provision`'s `syncKubeconfig`.
 
-Decide based on whether RBAC **supersedes** SSH teammates for clusters or
-**complements** them (single-node could still want OS logins for `larakube`
-proxy commands run on the box).
+## ♻️ Reuse (most of this is already built)
+
+- `InteractsWithScopedRbac` — SA + bound-token Secret + `mintScopedKubeconfig` +
+  `assembleScopedKubeconfig`. The per-person SA is the same machinery as `deployer`,
+  just named per-person and in `larakube-access`.
+- Presets are **built-in** ClusterRoles — we only generate RoleBindings.
+- `cluster:users` / `cluster:revoke` already exist; they grow a `--name` notion.
+- Kubeconfig merge for `context:import` already exists in `syncKubeconfig`.
 
 ## 🔗 Relationship to SSH `teammates`
 
-- **Single-node VPS:** SSH teammates stays valid (OS login to run `larakube`/
-  `kubectl` on the box). RBAC access is an optional upgrade.
-- **Multi-node / managed:** RBAC is the only sane path; SSH teammates is
-  inapplicable. Docs should steer cluster users to RBAC.
-- The generated **GHA deploy** is a separate machine identity (its own
-  kubeconfig secret) — unaffected by this; don't conflate human access with CI.
+SSH `cloud:configure:users` is **deprecated** for cluster access. SSH remains only
+for **you** administering the box (`cloud:provision` / `cloud:harden`). Teammate
+deploys are registry-based (no SSH sideload), so a *deploy-capable* teammate needs
+a registry-configured env. The CI `deployer` identity is separate machine access —
+unaffected; don't conflate human and CI access.
 
 ## 🚦 Phases
 
-1. **Presets** — the three `ClusterRole`s + binding generation (namespace vs
-   cluster). No identity issuance yet; validate with an existing kubeconfig.
-2. **Identity** — per-teammate kubeconfig via ServiceAccount token; `add`/`revoke`.
-3. **Command UX + schema** — `cluster:access` (or RBAC mode on `cloud:configure
-   users`), and the blueprint field for declaring RBAC teammates.
-4. **Namespace presets + docs** — the scoped preset, the graduation note to
-   OIDC, and updating Blueprint Anatomy to present RBAC as the multi-node
-   access story (replacing the current single-node caveat).
+1. [x] **Grant + presets** — `larakube-access` namespace, per-person SA + token,
+   RoleBinding generation for `view`/`edit`/`admin`. `cluster:grant` upsert
+   (`InteractsWithTeammateRbac`).
+2. [x] **Kubeconfig + onboarding** — emits `<name>.kubeconfig`; `context:import` merges.
+3. [x] **List + revoke** — `cluster:users` shows a Teammates table; `cluster:revoke
+   --name` does per-namespace removal or full off-board.
+4. [ ] **Docs + deprecation** — Security docs page for teammate access; deprecate SSH
+   `cloud:configure:users` for cluster access; update Blueprint Anatomy.
 
-## ✅ Verification
+## ✅ Verification (the blue/orange/lloyd/alex story)
 
-- Issue a `read-only` kubeconfig; confirm `kubectl get pods` works but
-  `kubectl delete` is denied.
-- Issue a `namespace`-scoped kubeconfig; confirm it can act in
-  `{name}-staging` but is denied in `{name}-production`.
-- `revoke` removes access immediately (binding gone → API calls 403).
-- Works unchanged on a multi-node cluster (RBAC is cluster-level, node-agnostic).
+- `cluster:grant --name lloyd blue-production` → lloyd can exec/log/delete in
+  `blue-production`, but `kubectl -n orange-production get pods` → `403`, and
+  `kubectl get namespaces` → `403` (can't even see orange exists).
+- `cluster:grant --name lloyd orange-production` → same kubeconfig now works in
+  orange; **no new file**.
+- `cluster:grant --name lloyd blue-production --admin` then `--read` → role flips
+  on blue with no re-onboarding.
+- `cluster:grant --name alex blue-production --read` → alex sees logs/pods but
+  `kubectl delete pod` and reading secrets are denied.
+- `cluster:revoke --name lloyd orange-production` → blue still works, orange `403`.
+- `cluster:revoke --name lloyd` → all access gone; his kubeconfig is inert.
 
 ## ⚠️ Risks / open questions
 
-- **Token/cert lifecycle.** Expiry + rotation + revocation story must be
-  explicit (SA tokens revocable; client certs are not without CA rotation).
-- **Schema placement.** Reuse `cloud.teammates` vs a dedicated block (above).
-- **Don't reinvent OIDC.** For orgs that need real SSO, point at OIDC rather
-  than growing an in-cluster user system.
-- **kubeconfig distribution.** Emitting a kubeconfig containing a token/cert is
-  a secret hand-off — guide users to deliver it securely (not committed, not
+- **Token lifecycle** — bound-token Secrets are long-lived + revocable (delete SA).
+  Document rotation (`cluster:revoke --name X` + re-`grant`); client-cert noted as
+  an alternative; OIDC as the graduation path for real SSO.
+- **`edit` can read secrets** — built-in `edit` allows secret read/write in the
+  namespace (fine for "operate the app"); `--read` (`view`) excludes secrets. Call
+  this out so people don't give an intern `--edit`.
+- **No blueprint schema** — the cluster is the source of truth; `cluster:users`
+  reads it live. (Deliberately NOT storing teammates in `.larakube.json` — avoids
+  drift. Supersedes the old "schema placement" question.)
+- **kubeconfig hand-off is a secret** — guide secure delivery (not committed, not
   pasted in chat).

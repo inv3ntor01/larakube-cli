@@ -1,0 +1,150 @@
+<?php
+
+namespace App\Traits;
+
+/**
+ * Pure builders for per-person, RBAC-scoped teammate access. Each teammate is one
+ * ServiceAccount in a central `larakube-access` namespace (one token → one
+ * kubeconfig); access to an app is a RoleBinding in that app's namespace pointing
+ * at a built-in ClusterRole (view/edit/admin). Adding an app = one more binding,
+ * the identity/kubeconfig never changes.
+ *
+ * See plans/active/rbac-teammate-access.md. Pure (no I/O) → unit-testable.
+ */
+trait InteractsWithTeammateRbac
+{
+    /** Central namespace that holds human ServiceAccount identities. */
+    public function accessNamespace(): string
+    {
+        return 'larakube-access';
+    }
+
+    /** A k8s-safe ServiceAccount name derived from a person's name. */
+    public function teammateSaName(string $name): string
+    {
+        return trim((string) preg_replace('/[^a-z0-9-]+/', '-', strtolower($name)), '-');
+    }
+
+    /** The labeled RoleBinding name for a person in an app namespace. */
+    public function teammateBindingName(string $sa): string
+    {
+        return 'larakube-user-'.$sa;
+    }
+
+    /**
+     * Preset flags → a built-in ClusterRole. Default is `edit` (operate the app,
+     * but can't manage RBAC). `--read` = `view` (no exec, no secrets), `--admin` =
+     * `admin` (edit + manage access within the namespace).
+     */
+    public function presetClusterRole(bool $read, bool $edit, bool $admin): string
+    {
+        return match (true) {
+            $admin => 'admin',
+            $read => 'view',
+            default => 'edit',
+        };
+    }
+
+    /**
+     * Deterministic, cross-machine-consistent context name from the API server URL
+     * (`https://1.2.3.4:6443` → `larakube-1.2.3.4`). Everyone granted the same
+     * cluster sees the same context name. Pure.
+     */
+    public function teammateContextName(string $server): string
+    {
+        return 'larakube-'.(parse_url($server, PHP_URL_HOST) ?: 'cluster');
+    }
+
+    /** Namespace + ServiceAccount + bound-token Secret for a person (central ns). Pure. */
+    public function teammateIdentityManifest(string $accessNs, string $sa, string $person): string
+    {
+        return <<<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {$accessNs}
+  labels:
+    app.kubernetes.io/managed-by: larakube
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {$sa}
+  namespace: {$accessNs}
+  labels:
+    app.kubernetes.io/managed-by: larakube
+    larakube.dev/access-user: {$sa}
+  annotations:
+    larakube.dev/person: "{$person}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {$sa}-token
+  namespace: {$accessNs}
+  labels:
+    app.kubernetes.io/managed-by: larakube
+    larakube.dev/access-user: {$sa}
+  annotations:
+    kubernetes.io/service-account.name: {$sa}
+type: kubernetes.io/service-account-token
+YAML;
+    }
+
+    /**
+     * RoleBinding in an APP namespace → a built-in ClusterRole, subject = the
+     * person's central SA. Labeled so off-boarding can find every binding for a
+     * user cluster-wide. Pure.
+     */
+    public function teammateBindingManifest(string $appNs, string $accessNs, string $sa, string $clusterRole): string
+    {
+        $binding = $this->teammateBindingName($sa);
+
+        return <<<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {$binding}
+  namespace: {$appNs}
+  labels:
+    app.kubernetes.io/managed-by: larakube
+    larakube.dev/access-user: {$sa}
+subjects:
+  - kind: ServiceAccount
+    name: {$sa}
+    namespace: {$accessNs}
+roleRef:
+  kind: ClusterRole
+  name: {$clusterRole}
+  apiGroup: rbac.authorization.k8s.io
+YAML;
+    }
+
+    /**
+     * A teammate kubeconfig whose context is named for the CLUSTER (consistent
+     * across everyone's machines), defaulting to one app namespace. Pure.
+     */
+    public function assembleTeammateKubeconfig(string $contextName, string $server, string $caData, string $defaultNamespace, string $token, string $user): string
+    {
+        return <<<YAML
+apiVersion: v1
+kind: Config
+clusters:
+  - name: {$contextName}
+    cluster:
+      server: {$server}
+      certificate-authority-data: {$caData}
+contexts:
+  - name: {$contextName}
+    context:
+      cluster: {$contextName}
+      namespace: {$defaultNamespace}
+      user: {$user}
+current-context: {$contextName}
+users:
+  - name: {$user}
+    user:
+      token: {$token}
+YAML;
+    }
+}
