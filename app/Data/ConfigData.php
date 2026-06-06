@@ -118,22 +118,18 @@ class ConfigData extends Data
         }
 
         // Legacy → per-env: an older top-level `cloud` map carried
-        // {env: {ip,user,port,key}} plus a shared `users` list. Fold each env's
-        // connection — and the shared teammates — into environments[env].cloud so
-        // cloud config lives with its environment. Only fills when env.cloud is
-        // still null, so it never clobbers new-shape data; the top-level field is
-        // cleared and dropped at rest (saveToFile).
+        // {env: {ip,user,port,key}}. Fold each env's connection into
+        // environments[env].cloud so cloud config lives with its environment.
+        // Only fills when env.cloud is still null, so it never clobbers new-shape
+        // data; the top-level field is cleared and dropped at rest (saveToFile).
         if (! empty($this->cloud)) {
-            $legacyUsers = $this->cloud['users'] ?? [];
             foreach ($this->cloud as $env => $conf) {
                 if ($env === 'users' || ! is_array($conf)) {
                     continue;
                 }
                 $this->addEnvironment($env);
                 if ($this->environments[$env]->cloud === null) {
-                    $this->environments[$env]->cloud = CloudData::from(
-                        $legacyUsers ? array_merge($conf, ['teammates' => $legacyUsers]) : $conf,
-                    );
+                    $this->environments[$env]->cloud = CloudData::from($conf);
                 }
             }
             $this->cloud = [];
@@ -1321,16 +1317,6 @@ class ConfigData extends Data
     }
 
     /**
-     * Teammate SSH-key descriptors granted access to this env's host.
-     *
-     * @return array<int, array>
-     */
-    public function getTeammates(string $environment = 'production'): array
-    {
-        return $this->getCloud($environment)?->teammates ?? [];
-    }
-
-    /**
      * Set an environment's cloud connection config. Creates the env if it
      * doesn't exist yet. Accepts a CloudData or a raw array.
      */
@@ -1340,20 +1326,6 @@ class ConfigData extends Data
         $this->environments[$environment]->cloud = $cloud instanceof CloudData
             ? $cloud
             : CloudData::from($cloud);
-
-        return $this;
-    }
-
-    /**
-     * Append a teammate SSH-key descriptor to an environment's cloud access
-     * list. Creates the env (and an empty CloudData) if needed.
-     */
-    public function addTeammate(string $environment, array $teammate): self
-    {
-        $this->addEnvironment($environment);
-        $env = $this->environments[$environment];
-        $env->cloud ??= new CloudData;
-        $env->cloud->teammates[] = $teammate;
 
         return $this;
     }

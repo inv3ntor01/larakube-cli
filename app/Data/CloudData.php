@@ -13,8 +13,8 @@ use Spatie\LaravelData\Data;
  *   • Managed  — $context (DOKS/EKS/GKE/AKS/…). No SSH; the provider's CLI wrote
  *                a kube-context into ~/.kube/config and we target it verbatim.
  *
- * Plus the teammates granted SSH access (VPS only). Lives on
- * EnvironmentData::$cloud so cloud config stays attached to the env it describes.
+ * Lives on EnvironmentData::$cloud so cloud config stays attached to the env it
+ * describes.
  */
 class CloudData extends Data
 {
@@ -40,14 +40,6 @@ class CloudData extends Data
          * is the "scoped CI is set up" marker; lets us warn when a token is stale.
          */
         public ?string $rbacGrantedAt = null,
-        /**
-         * Teammate SSH-key descriptors granted access to this env's host.
-         * Synced by `cloud:configure users`. Per-env, so different servers
-         * can grant different people access. VPS only.
-         *
-         * @var array<int, array>
-         */
-        public array $teammates = [],
     ) {
         $this->key = $key ?? ($_SERVER['HOME'] ?? '').'/.ssh/id_rsa';
     }

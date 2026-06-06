@@ -29,29 +29,7 @@ test('getCloud helpers return sensible defaults for an env with no cloud config'
         ->and($config->getCloudIp('production'))->toBeNull()
         ->and($config->getCloudUser('production'))->toBe('larakube')
         ->and($config->getCloudPort('production'))->toBe(22)
-        ->and($config->getCloudConfig('production'))->toBe([])
-        ->and($config->getTeammates('production'))->toBe([]);
-});
-
-test('addTeammate appends to the environment cloud teammates list', function () {
-    $config = new ConfigData(name: 'team');
-
-    $config->addTeammate('production', [
-        'username' => 'alice',
-        'authorized_keys' => [['public_key' => 'ssh-ed25519 AAAA']],
-    ]);
-    $config->addTeammate('production', [
-        'username' => 'bob',
-        'authorized_keys' => [['public_key' => 'ssh-ed25519 BBBB']],
-    ]);
-
-    $teammates = $config->getTeammates('production');
-    expect($teammates)->toHaveCount(2)
-        ->and($teammates[0]['username'])->toBe('alice')
-        ->and($teammates[1]['username'])->toBe('bob');
-
-    // Per-env: staging shares nothing with production.
-    expect($config->getTeammates('staging'))->toBe([]);
+        ->and($config->getCloudConfig('production'))->toBe([]);
 });
 
 test('legacy top-level cloud map is migrated into per-env cloud on load', function () {
@@ -61,20 +39,12 @@ test('legacy top-level cloud map is migrated into per-env cloud on load', functi
         'cloud' => [
             'production' => ['ip' => '198.51.100.5', 'user' => 'larakube', 'port' => 22, 'key' => '/k'],
             'staging' => ['ip' => '198.51.100.6'],
-            'users' => [
-                ['username' => 'carol', 'authorized_keys' => [['public_key' => 'ssh-ed25519 CCCC']]],
-            ],
         ],
     ]);
 
     // Connection config landed on each environment.
     expect($config->getCloudIp('production'))->toBe('198.51.100.5')
         ->and($config->getCloudIp('staging'))->toBe('198.51.100.6');
-
-    // The shared legacy users list folded into each configured env's teammates.
-    expect($config->getTeammates('production'))->toHaveCount(1)
-        ->and($config->getTeammates('production')[0]['username'])->toBe('carol')
-        ->and($config->getTeammates('staging')[0]['username'])->toBe('carol');
 
     // Top-level legacy field is cleared.
     expect($config->cloud)->toBe([]);
