@@ -1,0 +1,74 @@
+# Plan: Multi-node / managed storage strategy (the DOKS blocker)
+
+## 🚨 The problem
+
+LaraKube's **app pods** — `web`, `horizon`, `queues`, `scheduler`, `reverb` —
+all mount the **same** app-storage PVC (Laravel `storage/`, cache, etc.). On a
+**single node** this works because every pod lands on the same node and
+`ReadWriteOnce` allows multiple pods on one node to mount the same volume.
+
+On **multi-node (DOKS/EKS/GKE)** the pods spread across nodes, so the shared
+volume needs **ReadWriteMany (RWX)** — and **DigitalOcean block storage is RWO
+only** (so are EBS gp3, GCE PD, Azure Disk). Result: the second pod to schedule
+onto a different node gets a volume it can't mount → **`Pending` forever**.
+
+This is THE blocker for a multi-node DOKS deploy, and it's architectural — not a
+storageClass tweak. Even a fully-externalized app hits it because LaraKube still
+*mounts* the shared PVC today.
+
+## ✅ The fix: externalize state, don't share a filesystem (12-factor)
+
+The cloud-native answer isn't RWX storage — it's making the app pods
+**stateless** so they share nothing on disk. Each piece of state goes to a
+backing service LaraKube already supports:
+
+| State | Single-node today | Multi-node target |
+|---|---|---|
+| Uploads (`storage/app`) | shared PVC | **Object storage (S3)** — MinIO / SeaweedFS / Garage, or a Plex Commons bucket |
+| Cache | file (shared PVC) | **Redis** |
+| Sessions | file (shared PVC) | **Redis / database** |
+| Compiled views/config/routes | shared PVC | **baked into the image** at build (`artisan optimize`) — per-pod, no sharing |
+| Logs | files | **stdout/stderr** (container logs) — per-pod |
+| Failed jobs | (already DB/Redis) | unchanged |
+
+With those externalized, **no app pod needs a shared writable PVC** — they spread
+across nodes freely. This is exactly the shape **Plex Commons** already
+provides (Redis + S3), so a Plex-on-DOKS app is the natural stateless target.
+
+## 🛠 What to build
+
+1. **Stop mounting the cross-pod app-storage PVC on multi-node / managed envs.**
+   The PVC + mounts on `web`/`horizon`/`queues`/`scheduler`/`reverb` should be
+   gated to single-node. Give each pod a per-pod `emptyDir` for any genuinely
+   per-pod scratch (e.g. local `framework/cache`, compiled views if not baked).
+2. **Require externalized backends on multi-node.** Validate/warn at generate or
+   deploy time: multi-node-ha needs **Redis** (cache+session) and **S3** (uploads,
+   `FILESYSTEM_DISK=s3`) — error clearly if the env is still on `file`/`local`,
+   since those silently won't be shared.
+3. **Service pods are fine.** `postgres`/`redis`/`minio` each own a single-pod
+   RWO PVC — one mounter, works on multi-node unchanged.
+4. **Docs:** "multi-node means stateless app pods" — make this the headline of
+   the DOKS/managed guide, with Plex as the easy way to get Redis+S3.
+
+## 🔁 Alternatives considered (and why not)
+
+- **RWX provisioner (NFS / CephFS / DO-managed NFS):** gives shared filesystem,
+  but it's extra infra to run/maintain and isn't the idiomatic answer. Keep as an
+  escape hatch, not the default.
+- **Node affinity to co-locate all app pods on one node:** defeats the point of
+  multi-node HA.
+- **Per-pod RWO PVCs:** solves per-pod scratch but NOT *shared* state (an upload
+  written by a `queues` pod must be readable by `web`) → doesn't actually help.
+
+## 🧪 Interim for the FIRST DOKS test (unblock validation now)
+
+Don't let this block proving the rest of the managed path. **Use a 1-node DOKS
+pool with `strategy: single-node`** → all pods co-locate, RWO works, and you can
+validate context resolution, registry push, scoped-RBAC apply, and Traefik TLS
+*today*. Then implement the externalization above for true multi-node-HA.
+
+## 🔗 Relation
+
+This is the real substance of "DOKS / managed multi-node" readiness on the
+roadmap — it gates the multi-node validation. [[arm-edge-deploy]] (single-board)
+is single-node, so it's unaffected.
