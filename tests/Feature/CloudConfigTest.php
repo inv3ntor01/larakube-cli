@@ -50,11 +50,10 @@ test('legacy top-level cloud map is migrated into per-env cloud on load', functi
     expect($config->cloud)->toBe([]);
 });
 
-test('cloud config round-trips through saveToFile in the new per-env shape', function () {
+test('cloud connection splits into the gitignored local file and round-trips', function () {
     $dir = sys_get_temp_dir().'/larakube-cloud-'.bin2hex(random_bytes(4));
     mkdir($dir, 0755, true);
 
-    // Build from a legacy blueprint, then persist.
     $config = ConfigData::from([
         'name' => 'roundtrip',
         'environments' => ['local' => [], 'production' => []],
@@ -64,18 +63,27 @@ test('cloud config round-trips through saveToFile in the new per-env shape', fun
     ]);
     $config->saveToFile($dir);
 
-    $raw = json_decode(file_get_contents($dir.'/'.ConfigData::CONFIG_FILE), true);
+    $committed = json_decode(file_get_contents($dir.'/'.ConfigData::CONFIG_FILE), true);
+    $localFile = $dir.'/'.ConfigData::LOCAL_CONFIG_FILE;
 
-    // No legacy top-level cloud key on disk; config lives under the environment.
-    expect($raw)->not->toHaveKey('cloud');
-    expect($raw['environments']['production']['cloud']['ip'])->toBe('203.0.113.99');
+    // The committed blueprint carries NO cloud connection (no recon exposure).
+    expect($committed)->not->toHaveKey('cloud')
+        ->and($committed['environments']['production'])->not->toHaveKey('cloud');
 
-    // Reloading yields the same resolved values.
+    // The connection lives in the gitignored local file...
+    expect(is_file($localFile))->toBeTrue();
+    $local = json_decode(file_get_contents($localFile), true);
+    expect($local['environments']['production']['cloud']['ip'])->toBe('203.0.113.99')
+        ->and(file_get_contents($dir.'/.gitignore'))->toContain('.larakube.local.json');
+
+    // Reloading merges the local file back in → same resolved values.
     $reloaded = ConfigData::loadFromFile($dir);
     expect($reloaded->getCloudIp('production'))->toBe('203.0.113.99')
         ->and($reloaded->getCloudUser('production'))->toBe('deploy');
 
     // cleanup
     @unlink($dir.'/'.ConfigData::CONFIG_FILE);
+    @unlink($localFile);
+    @unlink($dir.'/.gitignore');
     @rmdir($dir);
 });

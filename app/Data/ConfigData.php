@@ -32,6 +32,11 @@ class ConfigData extends Data
 
     const string CONFIG_FILE = '.larakube.json';
 
+    // Operator/machine-specific cloud connection details (server IP, SSH user/port,
+    // key path, managed kube-context) live here, NOT in the committed blueprint, so
+    // infra coordinates are never pushed. Gitignored; merged in at load time.
+    const string LOCAL_CONFIG_FILE = '.larakube.local.json';
+
     public function __construct(
         public string $id = '',
         public ?string $name = null,
@@ -1346,9 +1351,21 @@ class ConfigData extends Data
             throw new RuntimeException("LaraKube DNA not found at: {$path}");
         }
 
-        $json = file_get_contents($path);
+        $data = json_decode((string) file_get_contents($path), true) ?: [];
 
-        return self::from(json_decode($json, true));
+        // Merge operator-local cloud connections from the gitignored local file
+        // (it wins over anything left in the committed blueprint during migration).
+        $localPath = "$directory/".self::LOCAL_CONFIG_FILE;
+        if (file_exists($localPath)) {
+            $local = json_decode((string) file_get_contents($localPath), true) ?: [];
+            foreach (($local['environments'] ?? []) as $env => $envLocal) {
+                if (isset($envLocal['cloud'])) {
+                    $data['environments'][$env]['cloud'] = $envLocal['cloud'];
+                }
+            }
+        }
+
+        return self::from($data);
     }
 
     public function saveToFile(string $directory): void
@@ -1367,24 +1384,52 @@ class ConfigData extends Data
         $data = $this->toArray();
         unset($data['isScaffolding'], $data['path'], $data['cloud']);
 
-        // Keep each env's cloud block unambiguous in the committed file: a MANAGED
-        // target (has `context`) carries no SSH fields; a VPS (has `ip`) carries no
-        // context/provider. Cosmetic only — CloudData refills defaults in memory on
-        // load — but it stops a managed env from *looking* like a half-VPS config.
+        // Split the per-env cloud CONNECTIONS into the gitignored local file —
+        // server IP, SSH user/port, key path, managed kube-context are operator/
+        // machine-specific infra coordinates that must never be committed. The
+        // shared blueprint carries none of it.
+        $local = ['environments' => []];
         foreach (($data['environments'] ?? []) as $env => $envData) {
             $cloud = $envData['cloud'] ?? null;
-            if (! is_array($cloud)) {
+            unset($data['environments'][$env]['cloud']);   // strip from the committed blueprint
+
+            if (! is_array($cloud) || $cloud === []) {
                 continue;
             }
+
+            // Keep each block unambiguous: a MANAGED target (has `context`) carries
+            // no SSH fields; a VPS (has `ip`) carries no context/provider.
             if (! empty($cloud['context'])) {
                 unset($cloud['ip'], $cloud['user'], $cloud['port'], $cloud['key']);
             } elseif (! empty($cloud['ip'])) {
                 unset($cloud['context'], $cloud['provider']);
             }
-            $data['environments'][$env]['cloud'] = $cloud;
+
+            $local['environments'][$env] = ['cloud' => $cloud];
         }
 
         file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        // Write/refresh the local file only when there's a connection to persist,
+        // and make sure it's gitignored.
+        if ($local['environments'] !== []) {
+            file_put_contents("$directory/".self::LOCAL_CONFIG_FILE, json_encode($local, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            self::ensureGitignored($directory, self::LOCAL_CONFIG_FILE);
+        }
+    }
+
+    /** Append a pattern to the project's .gitignore if not already present. */
+    protected static function ensureGitignored(string $directory, string $pattern): void
+    {
+        $gitignore = "$directory/.gitignore";
+        $existing = is_file($gitignore) ? (string) file_get_contents($gitignore) : '';
+
+        if (preg_match('/^\s*'.preg_quote($pattern, '/').'\s*$/m', $existing)) {
+            return;
+        }
+
+        $prefix = ($existing !== '' && ! str_ends_with($existing, "\n")) ? "\n" : '';
+        file_put_contents($gitignore, $prefix.$pattern."\n", FILE_APPEND);
     }
 
     public function backupToCluster(string $namespace): bool

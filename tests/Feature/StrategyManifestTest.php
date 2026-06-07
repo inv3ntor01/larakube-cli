@@ -41,3 +41,30 @@ test('Strategy: multi-node has no shared PVC — app pods use a per-pod emptyDir
     $local = $manifests['overlays/local/app-volumes.yaml'];
     expect($local[0]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
 });
+
+test('scheduler CronJob gets a cloud wait override that excludes managed services', function () {
+    $config = ConfigData::from([
+        'name' => 'sched-test',
+        'serverVariation' => 'fpm-nginx',
+        'phpVersion' => '8.5',
+        'database' => 'postgres',
+        'features' => ['scheduler'],
+        'environments' => [
+            'local' => [],
+            'production' => [
+                'hosts' => ['web' => 'sched.example'],
+                'managed' => ['postgres'],   // externalized → the wait must not nc it
+            ],
+        ],
+    ]);
+
+    $patch = generateManifestsAsArray($config)['overlays/production/deployment-patch.yaml'];
+    $cron = collect($patch)->firstWhere('kind', 'CronJob');
+
+    expect($cron)->not->toBeNull();
+    $cmd = $cron['spec']['jobTemplate']['spec']['template']['spec']['initContainers'][0]['command'][2];
+    expect($cmd)
+        ->toContain('curl -sf http://web/up')   // waits for the web pod (migrations)
+        ->not->toContain('postgres')            // managed in this env → never waited on
+        ->not->toContain('\/');                 // unescaped slashes (kustomize-parseable)
+});

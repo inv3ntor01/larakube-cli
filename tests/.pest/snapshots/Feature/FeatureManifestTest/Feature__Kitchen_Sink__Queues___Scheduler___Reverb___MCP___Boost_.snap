@@ -902,6 +902,22 @@ spec:
           image: kitchen-sink:latest
 
           command: ["sh", "-c", "until curl -sf http://web/up; do echo 'Waiting for dependencies...'; sleep 2; done;"]
+---
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scheduler
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+            - name: ghcr-login
+          initContainers:
+            - name: wait-for-deps
+              command: ["sh", "-c", "until curl -sf http://web/up; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

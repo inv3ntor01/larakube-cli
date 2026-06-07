@@ -220,6 +220,8 @@ trait GeneratesProjectInfrastructure
             '# LaraKube Local Infrastructure (Dynamic paths)',
             '.infrastructure/k8s/overlays/local',
             '.infrastructure/volume_data',
+            '# Operator-specific cloud connection (server IP/SSH/key path) — never commit',
+            '.larakube.local.json',
         ];
 
         $toAdd = [];

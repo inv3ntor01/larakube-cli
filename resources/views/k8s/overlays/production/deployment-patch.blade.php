@@ -39,3 +39,28 @@ spec:
           ) !!}]
 @endif
 @endforeach
+@if($config->hasFeature(\App\Enums\LaravelFeature::TASK_SCHEDULING))
+{!! $first ? '' : "---\n" !!}@php($first = false)
+{{-- Scheduler is a CronJob (different pod path) — same per-env override so its
+     wait isn't computed for local, plus the image-pull secret it needs to pull a
+     private image on a managed cluster. --}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scheduler
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+@if($serviceAccount = $config->getServiceAccount($environment))
+          serviceAccountName: {{ $serviceAccount }}
+@endif
+@if($pullSecret = $config->getImagePullSecret($environment))
+          imagePullSecrets:
+            - name: {{ $pullSecret }}
+@endif
+          initContainers:
+            - name: wait-for-deps
+              command: ["sh", "-c", {!! json_encode($config->buildWaitForCommand(\App\Enums\LaravelFeature::TASK_SCHEDULING->getDependencies($config, $environment), waitForWeb: true) ?: 'true', JSON_UNESCAPED_SLASHES) !!}]
+@endif
