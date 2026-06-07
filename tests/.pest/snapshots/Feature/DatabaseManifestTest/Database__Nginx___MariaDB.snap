@@ -551,9 +551,11 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+
       initContainers:
         - name: wait-for-deps
           image: mariadb-test:latest
+
           command: ["sh", "-c", "until nc -z -v -w 1 mariadb 3306; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 
 

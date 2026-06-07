@@ -1047,6 +1047,11 @@ class ConfigData extends Data
             }
         }
 
+        // Dedupe — a feature's own dep list can repeat a service (e.g. Horizon
+        // lists Redis on top of the core cache driver), which would emit the same
+        // nc check twice.
+        $checks = array_values(array_unique($checks));
+
         if (empty($checks)) {
             return null;
         }

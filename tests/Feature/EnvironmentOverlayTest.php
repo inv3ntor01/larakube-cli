@@ -97,9 +97,10 @@ test('per-environment strategy lets each cloud env pick its own PVC access mode'
 
     $manifests = generateManifestsAsArray($config);
 
-    // Production overrides the project default → ReadWriteMany.
-    expect($manifests['overlays/production/app-volumes.yaml'][0]['spec']['accessModes'][0])
-        ->toBe('ReadWriteMany');
+    // Production overrides the project default → multi-node: no shared PVC; app
+    // pods get a per-pod emptyDir instead.
+    expect($manifests)->not->toHaveKey('overlays/production/app-volumes.yaml')
+        ->and($manifests)->toHaveKey('overlays/production/storage-emptydir.yaml');
 
     // Staging keeps single-node → ReadWriteOnce.
     expect($manifests['overlays/staging/app-volumes.yaml'][0]['spec']['accessModes'][0])

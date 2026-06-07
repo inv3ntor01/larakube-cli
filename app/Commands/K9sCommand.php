@@ -57,15 +57,15 @@ class K9sCommand extends Command
         $namespace = $this->getNamespace($environment, $config->getName());
 
         // Browse the ENV's OWN context (never switch the global one). Local uses
-        // the current context; a cloud env targets its saved larakube-<ip>. We
-        // don't prompt here — k9s is read-only browsing — just hint if unset.
+        // the current context; a cloud env targets its saved context — a managed
+        // kube-context (DOKS/EKS/…) OR a VPS's larakube-<ip>. We don't prompt here
+        // — k9s is read-only browsing — just hint if unset.
         $contextFlag = '';
-        if ($environment !== 'local') {
-            if ($ip = $config->getCloud($environment)?->ip) {
-                $contextFlag = ' --context '.escapeshellarg($this->environmentContextName($ip));
-            } else {
-                $this->laraKubeWarn("No deploy target saved for '{$environment}' — opening k9s on your current context. Run `larakube cloud:deploy {$environment}` to record it.");
-            }
+        $context = $this->environmentContextOrCurrent($config, $environment);
+        if ($context) {
+            $contextFlag = ' --context '.escapeshellarg($context);
+        } elseif ($environment !== 'local') {
+            $this->laraKubeWarn("No deploy target saved for '{$environment}' — opening k9s on your current context. Run `larakube cloud:configure:base {$environment}` to record it.");
         }
 
         $this->laraKubeInfo("Launching K9s for project <fg=cyan;options=bold>{$config->getName()}</> in namespace: <fg=yellow;options=bold>{$namespace}</>...");

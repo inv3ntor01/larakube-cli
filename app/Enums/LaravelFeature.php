@@ -24,6 +24,7 @@ use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
 use App\Traits\ProvidesSelectOptions;
+use BackedEnum;
 
 enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents, HasCommandOptions, HasComposerDependencies, HasDependencies, HasEnvironmentVariables, HasHiddenComponents, HasHosts, HasJsDependencies, HasKubernetesFiles, HasLabel, HasLifecycleHooks, HasPodName, HasPromptableHosts, HasReloadCommand, HasSelectOptions, RequiresPhpExtensions
 {
@@ -223,15 +224,26 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
         };
     }
 
-    public function getDependencies(ConfigData $config): array
+    public function getDependencies(ConfigData $config, string $environment = 'local'): array
     {
-        return match ($this) {
-            self::HORIZON => array_merge($config->getCoreDependencies(), [$config->getServerVariation(), CacheDriver::REDIS]),
+        $deps = match ($this) {
+            self::HORIZON => array_merge($config->getCoreDependencies($environment), [$config->getServerVariation(), CacheDriver::REDIS]),
             self::OCTANE => [ServerVariation::FRANKENPHP],
-            self::QUEUES, self::TASK_SCHEDULING, self::REVERB => array_merge($config->getCoreDependencies(), [$config->getServerVariation()]),
+            self::QUEUES, self::TASK_SCHEDULING, self::REVERB => array_merge($config->getCoreDependencies($environment), [$config->getServerVariation()]),
             self::SSR => [$config->getServerVariation()],
             default => [],
         };
+
+        // Drop services external to THIS env (managed / Plex Commons) — they don't
+        // live in the app's namespace, so an in-namespace `nc <pod>` would never
+        // resolve and the init container would wait forever (the app connects to
+        // them directly on boot via .env).
+        $managed = $config->getManaged($environment);
+
+        return array_values(array_filter(
+            $deps,
+            fn ($dep) => $dep !== null && (! ($dep instanceof BackedEnum) || ! in_array($dep->value, $managed, true)),
+        ));
     }
 
     public function k8sDeploymentArgs(): string

@@ -102,15 +102,17 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
-     * A unique, rollout-triggering image tag — the git short SHA, else a
-     * timestamped fallback. (A fixed ':latest' wouldn't change the Deployment
-     * spec, so k8s wouldn't roll out the new image.) Pure.
+     * A unique, rollout-triggering image tag. ALWAYS includes the timestamp so
+     * each deploy gets a fresh tag — otherwise a manual deploy of UNCOMMITTED
+     * changes (e.g. after `larakube add horizon`) would reuse the last commit's
+     * SHA tag, and the cluster (imagePullPolicy: IfNotPresent) would run the stale
+     * cached image. The SHA is kept as a prefix for traceability. Pure.
      */
     public function formatImageTag(?string $gitSha, int $timestamp): string
     {
         $sha = $gitSha !== null ? trim($gitSha) : '';
 
-        return $sha !== '' ? $sha : 'build-'.$timestamp;
+        return $sha !== '' ? $sha.'-'.$timestamp : 'build-'.$timestamp;
     }
 
     /**

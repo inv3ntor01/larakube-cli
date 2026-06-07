@@ -6,6 +6,8 @@ use App\Contracts\HasKubernetesFiles;
 use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
 use App\Enums\Blueprint;
+use App\Enums\DeploymentStrategy;
+use App\Enums\LaravelFeature;
 use Random\RandomException;
 use Symfony\Component\Yaml\Yaml;
 
@@ -348,6 +350,10 @@ trait GeneratesProjectInfrastructure
         // their accessMode can follow that env's deployment strategy
         // (ReadWriteOnce for single-node, ReadWriteMany for multi-node-HA).
         foreach (array_merge(['local'], $cloudEnvs) as $env) {
+            // Multi-node uses a per-pod emptyDir (no shared PVC), so skip app-volumes.
+            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA) {
+                continue;
+            }
             @mkdir("$k8sPath/overlays/$env", 0755, true);
             $renderStub("overlays/$env/app-volumes.yaml", $env, $config->getNamespace($env), 'k8s.base.volumes');
         }
@@ -416,9 +422,39 @@ trait GeneratesProjectInfrastructure
             $this->appendToKustomization($k8sPath, "overlays/$env", 'ingress-patch.yaml', 'patches');
         }
 
-        // Register the per-env app storage PVCs in every overlay.
+        // Register the per-env app storage PVCs (single-node only — multi-node
+        // has no shared PVC).
         foreach (array_merge(['local'], $cloudEnvs) as $env) {
+            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA) {
+                continue;
+            }
             $this->appendToKustomization($k8sPath, "overlays/$env", 'app-volumes.yaml');
+        }
+
+        // Multi-node: app pods can't share a ReadWriteOnce volume across nodes, so
+        // swap the shared storage PVC for a per-pod emptyDir (state externalizes —
+        // see GuardsSharedStorage). Targeted by pod NAME so service pods
+        // (postgres/redis/minio) keep their own data PVCs untouched.
+        foreach ($cloudEnvs as $env) {
+            if ($config->getStrategy($env) !== DeploymentStrategy::MULTI_NODE_HA) {
+                continue;
+            }
+
+            $features = $config->getFeatures($env);
+            $deploymentPods = ['web'];
+            foreach ([[LaravelFeature::HORIZON, 'horizon'], [LaravelFeature::QUEUES, 'queues'], [LaravelFeature::REVERB, 'reverb']] as [$feature, $pod]) {
+                if (in_array($feature, $features, true)) {
+                    $deploymentPods[] = $pod;
+                }
+            }
+
+            $renderStub("overlays/$env/storage-emptydir.yaml", $env, $config->getNamespace($env), 'k8s.overlays.production.storage-emptydir');
+            $this->appendTargetedPatch($k8sPath, "overlays/$env", 'storage-emptydir.yaml', 'Deployment', '^('.implode('|', $deploymentPods).')$');
+
+            if (in_array(LaravelFeature::TASK_SCHEDULING, $features, true)) {
+                $renderStub("overlays/$env/storage-emptydir-cronjob.yaml", $env, $config->getNamespace($env), 'k8s.overlays.production.storage-emptydir-cronjob');
+                $this->appendTargetedPatch($k8sPath, "overlays/$env", 'storage-emptydir-cronjob.yaml', 'CronJob', '^scheduler$');
+            }
         }
     }
 
@@ -607,6 +643,33 @@ trait GeneratesProjectInfrastructure
                 $content = preg_replace('/patches:\s*\n/', "patches:\n  - path: $filename\n", $content, 1);
             }
         }
+
+        file_put_contents($kustomizationFile, $content);
+    }
+
+    /**
+     * Append a JSON6902 patch targeted by kind + name regex to an overlay's
+     * kustomization. Used for the multi-node storage emptyDir swap, which must hit
+     * only the named app pods — never the service pods' data volumes.
+     */
+    protected function appendTargetedPatch(string $k8sPath, string $folder, string $filename, string $kind, string $nameRegex): void
+    {
+        $kustomizationFile = "$k8sPath/$folder/kustomization.yaml";
+        if (! file_exists($kustomizationFile)) {
+            return;
+        }
+
+        $content = file_get_contents($kustomizationFile);
+        if ($content === false || str_contains($content, "path: $filename")) {
+            return;
+        }
+
+        if (! str_contains($content, 'patches:')) {
+            $content .= "\npatches:\n";
+        }
+
+        $entry = "  - path: $filename\n    target:\n      kind: $kind\n      name: \"$nameRegex\"\n";
+        $content = (string) preg_replace('/patches:\s*\n/', "patches:\n".$entry, $content, 1);
 
         file_put_contents($kustomizationFile, $content);
     }

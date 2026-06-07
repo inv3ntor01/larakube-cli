@@ -128,15 +128,10 @@ test('Server Variations: containerPort and Ingress scheme', function () {
     }
 });
 
-test('Deployment Strategies: PVC access modes', function () {
-    $strategies = [
-        ['strategy' => DeploymentStrategy::SINGLE_NODE, 'accessMode' => 'ReadWriteOnce'],
-        ['strategy' => DeploymentStrategy::MULTI_NODE_HA, 'accessMode' => 'ReadWriteMany'],
-    ];
-
-    foreach ($strategies as $meta) {
-        $strategy = $meta['strategy'];
-        $accessMode = $meta['accessMode'];
+test('Deployment Strategies: PVC layout follows the strategy', function () {
+    // Single-node: a shared ReadWriteOnce storage PVC. Multi-node: NO shared PVC —
+    // app pods use a per-pod emptyDir (block storage can't do RWX across nodes).
+    foreach ([DeploymentStrategy::SINGLE_NODE, DeploymentStrategy::MULTI_NODE_HA] as $strategy) {
         $config = new ConfigData(name: 'strategy-test-'.$strategy->value);
         $config->setServerVariation(ServerVariation::FPM_NGINX);
         $config->setPhpVersion(PhpVersion::PHP_8_5);
@@ -144,19 +139,18 @@ test('Deployment Strategies: PVC access modes', function () {
         $config->setDatabase(DatabaseDriver::SQLITE);
 
         $manifests = generateManifestsAsArray($config);
-
-        // App PVCs now live per-environment; the cloud overlay reflects the project strategy.
         expect($manifests)->not->toHaveKey('base/volumes.yaml');
-        expect($manifests)->toHaveKey('overlays/production/app-volumes.yaml');
-        $volumes = $manifests['overlays/production/app-volumes.yaml'];
 
-        // app-volumes.yaml is a multi-document YAML (laravel-storage-pvc and laravel-data-pvc)
-        expect($volumes)->toBeArray();
-        expect($volumes[0]['spec']['accessModes'][0])->toBe($accessMode);
-        expect($volumes[1]['spec']['accessModes'][0])->toBe($accessMode);
+        if ($strategy === DeploymentStrategy::MULTI_NODE_HA) {
+            expect($manifests)->not->toHaveKey('overlays/production/app-volumes.yaml')
+                ->and($manifests)->toHaveKey('overlays/production/storage-emptydir.yaml');
+        } else {
+            $volumes = $manifests['overlays/production/app-volumes.yaml'];
+            expect($volumes[0]['spec']['accessModes'][0])->toBe('ReadWriteOnce')
+                ->and($volumes[1]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
+        }
 
         // Local is always single-node, so its PVCs are always ReadWriteOnce.
-        expect($manifests)->toHaveKey('overlays/local/app-volumes.yaml');
         expect($manifests['overlays/local/app-volumes.yaml'][0]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
     }
 });

@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Data\ConfigData;
+use App\Enums\DeploymentStrategy;
 use App\Enums\ManagedProvider;
 
 use function Laravel\Prompts\select;
@@ -212,10 +213,33 @@ trait ResolvesEnvironmentContext
             $this->laraKubeInfo("Defaulted storageClass to '{$storageClass}' for {$provider->value}.");
         }
 
+        // Derive the deployment strategy from the cluster's actual node count, so
+        // multi-node manifests follow reality instead of a hand-edited guess (a
+        // single-node strategy on a 2-node cluster is the shared-storage trap). Only
+        // when the env hasn't pinned one explicitly; unreachable cluster → leave it.
+        if (empty($data['environments'][$environment]['strategy'] ?? null)) {
+            $nodes = $this->clusterNodeCount($context);
+            if ($nodes >= 1) {
+                $strategy = $nodes > 1 ? DeploymentStrategy::MULTI_NODE_HA->value : DeploymentStrategy::SINGLE_NODE->value;
+                $data['environments'][$environment]['strategy'] = $strategy;
+                $this->laraKubeInfo("Detected {$nodes} node(s) → set strategy to '{$strategy}'.");
+            }
+        }
+
         ConfigData::from($data)->saveToFile($projectPath);
         $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud).");
 
         return $this->getProjectConfig($projectPath);
+    }
+
+    /** Node count for a kube-context (0 when unreachable / unknown). */
+    protected function clusterNodeCount(string $context): int
+    {
+        $out = trim((string) shell_exec(
+            'kubectl --context '.escapeshellarg($context).' get nodes -o jsonpath='.escapeshellarg('{.items[*].metadata.name}').' 2>/dev/null',
+        ));
+
+        return $out === '' ? 0 : count(preg_split('/\s+/', $out) ?: []);
     }
 
     /**

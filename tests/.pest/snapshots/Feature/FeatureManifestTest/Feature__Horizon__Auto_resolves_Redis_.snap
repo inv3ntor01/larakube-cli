@@ -649,9 +649,11 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+
       initContainers:
         - name: wait-for-deps
           image: horizon-auto-redis:latest
+
           command: ["sh", "-c", "true"]
 ---
 apiVersion: apps/v1
@@ -667,6 +669,12 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+
+      initContainers:
+        - name: wait-for-deps
+          image: horizon-auto-redis:latest
+
+          command: ["sh", "-c", "until curl -sf http://web/up && nc -z -v -w 1 redis 6379; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

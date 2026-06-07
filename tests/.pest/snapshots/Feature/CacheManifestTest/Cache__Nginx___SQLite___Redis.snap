@@ -490,9 +490,11 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+
       initContainers:
         - name: wait-for-deps
           image: redis-test:latest
+
           command: ["sh", "-c", "until nc -z -v -w 1 redis 6379; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 
 

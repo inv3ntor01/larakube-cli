@@ -513,9 +513,11 @@ spec:
           imagePullPolicy: IfNotPresent
       imagePullSecrets:
         - name: ghcr-login
+
       initContainers:
         - name: wait-for-deps
           image: minio-test:latest
+
           command: ["sh", "-c", "true"]
 
 

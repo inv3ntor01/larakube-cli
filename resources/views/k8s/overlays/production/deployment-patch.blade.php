@@ -21,11 +21,21 @@ spec:
       imagePullSecrets:
         - name: {{ $pullSecret }}
 @endif
-@if($name === 'web')
+{{-- Override the wait-for-deps init command per-env so it's accurate for THIS
+     env's externalized services (managed/Plex). Without this, the base command —
+     computed for local — waits on in-namespace mysql/redis that don't exist on a
+     managed/Plex cluster, and the pod hangs in Init forever. Web waits on core
+     deps; workers also wait for the web pod (it runs migrations). --}}
       initContainers:
         - name: wait-for-deps
           image: {{ $config->getName() }}:latest
-          command: ["sh", "-c", {!! json_encode($config->buildWaitForCommand($config->getCoreDependencies($environment)) ?: 'true') !!}]
-@endif
+{{-- JSON_UNESCAPED_SLASHES: json_encode would emit http:\/\/, and kustomize's
+     patch parser rejects \/ ("unable to parse SM or JSON patch"). --}}
+          command: ["sh", "-c", {!! json_encode(
+              ($name === 'web'
+                  ? $config->buildWaitForCommand($config->getCoreDependencies($environment))
+                  : $config->buildWaitForCommand($feature->getDependencies($config, $environment), waitForWeb: true)
+              ) ?: 'true', JSON_UNESCAPED_SLASHES
+          ) !!}]
 @endif
 @endforeach

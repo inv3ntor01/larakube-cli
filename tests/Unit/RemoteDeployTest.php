@@ -113,7 +113,7 @@ test('the scoped apply strips the cluster-scoped Namespace doc (deployer cannot 
 test('the image tag uses the git sha when present, else a timestamped fallback', function () {
     $r = remoteDeploy();
 
-    expect($r->formatImageTag('  abc1234  ', 1000))->toBe('abc1234')   // trimmed sha wins
+    expect($r->formatImageTag('  abc1234  ', 1000))->toBe('abc1234-1000')   // sha prefix + unique timestamp
         ->and($r->formatImageTag(null, 1717286400))->toBe('build-1717286400')
         ->and($r->formatImageTag('', 1717286400))->toBe('build-1717286400');
 });
