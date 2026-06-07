@@ -16,6 +16,26 @@ This is THE blocker for a multi-node DOKS deploy, and it's architectural — not
 storageClass tweak. Even a fully-externalized app hits it because LaraKube still
 *mounts* the shared PVC today.
 
+## 🛡 NON-NEGOTIABLE: no silent gotcha on the VPS → multi-node upgrade
+
+The worst outcome is a user flipping `strategy: single-node` → `multi-node-ha`,
+redeploying, and getting `Pending` pods + a cryptic RWX volume error — with no
+idea why. **We must fail LOUD and CLEAR before that happens**, not generate
+manifests that silently break.
+
+Required guard (build this even before the full solution): a **preflight** at
+`heal` / `cloud:deploy` / strategy-switch time that fires when the env is
+`multi-node-ha` (or a managed `context`) AND the app still mounts a shared
+app-storage PVC AND state isn't externalized — and explains, in plain language:
+
+> "Multi-node spreads your pods across nodes, but your block storage is
+> ReadWriteOnce — a shared `storage/` folder won't work across nodes. Either
+> externalize state (S3 + Redis — `larakube plex:join` gives you both), or enable
+> shared storage (`--rwx` / opt-in NFS). See: <docs link>."
+
+Loud warning + explicit confirm (or hard stop) — never a surprise. This guard is
+worth shipping on its own, ahead of the full storage solution.
+
 ## ✅ The fix: externalize state, don't share a filesystem (12-factor)
 
 The cloud-native answer isn't RWX storage — it's making the app pods
