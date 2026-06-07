@@ -40,6 +40,14 @@ class CloudData extends Data
          */
         public ?string $provider = null,
         /**
+         * Target node CPU architecture override for the image build — `amd64` or
+         * `arm64`. Null = auto-detect (SSH `uname -m` for a VPS, the cluster
+         * nodes' arch for a managed $context), falling back to amd64. Set this to
+         * skip detection or to force a platform (e.g. an arm64 Pi / Graviton /
+         * Ampere node, or a heterogeneous cluster where you want to pin one).
+         */
+        public ?string $arch = null,
+        /**
          * When the CI deploy credential (the namespace-scoped Secret-bound token
          * uploaded as {ENV}_KUBECONFIG by `gha:configure`) was last minted —
          * ISO-8601. Null = no scoped CI credential has been issued yet. Presence

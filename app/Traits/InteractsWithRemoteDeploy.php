@@ -2,7 +2,9 @@
 
 namespace App\Traits;
 
+use App\Data\CloudData;
 use App\Data\ConfigData;
+use App\Enums\RegistryProvider;
 
 /**
  * Deploy a project to a remote VPS WITHOUT a container registry: build the image
@@ -31,11 +33,14 @@ trait InteractsWithRemoteDeploy
     /**
      * Build the production image for the NODE's architecture. The dev Mac is
      * often arm64 while the droplet is amd64, so we cross-build with buildx and
-     * `--load` it into the local docker so `docker save` can stream it. Pure.
+     * `--load` it into the local docker so `docker save` can stream it. The
+     * platform is resolved from the target node (see resolveDeployPlatform), so
+     * an arm64 Pi gets a native arm64 build instead of an unrunnable amd64 one.
+     * Pure.
      */
-    public function buildProductionImageCommand(string $image, string $dockerfile, string $path): string
+    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
     {
-        return 'docker buildx build --platform linux/amd64 --target deploy '
+        return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($image).' -f '.escapeshellarg($dockerfile).' '
             .escapeshellarg($path).' --load';
     }
@@ -154,13 +159,31 @@ trait InteractsWithRemoteDeploy
 
     /**
      * Build a registry image reference command (build + push). Pure.
-     * Uses docker buildx to cross-compile for linux/amd64, then pushes to registry.
+     * Cross-compiles for the resolved target platform (the cluster nodes' arch
+     * for a managed context; defaults to linux/amd64), then pushes to registry.
      */
-    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path): string
+    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
     {
-        return 'docker buildx build --platform linux/amd64 --target deploy '
+        return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($registryImage).' -f '.escapeshellarg($dockerfile).' '
             .escapeshellarg($path).' --push';
+    }
+
+    /**
+     * Map a raw architecture token — from `uname -m`, a kubectl nodeInfo
+     * architecture, or a user's `cloud.arch` override — to a docker `--platform`
+     * value. Returns null for anything unrecognised so callers can fall back.
+     * Allowlist by design: only known platforms ever reach the build command,
+     * so the resolved string is safe to interpolate unescaped. Pure.
+     */
+    public function normalizeArch(?string $raw): ?string
+    {
+        return match (strtolower(trim((string) $raw))) {
+            'amd64', 'x86_64', 'x64', 'linux/amd64' => 'linux/amd64',
+            'arm64', 'aarch64', 'linux/arm64' => 'linux/arm64',
+            'armv7l', 'armhf', 'arm', 'linux/arm/v7' => 'linux/arm/v7',
+            default => null,
+        };
     }
 
     /** Test docker login to a registry. Pure. */
@@ -183,6 +206,80 @@ trait InteractsWithRemoteDeploy
         exec('kubectl --context '.escapeshellarg($context).' cluster-info --request-timeout=5s 2>&1', $out, $code);
 
         return $code === 0;
+    }
+
+    /**
+     * Detect the target node's docker platform over SSH (`uname -m`). Used by the
+     * VPS/sideload path, where we already SSH into the single node. Returns null
+     * if SSH fails or the arch is unrecognised, so the caller can fall back.
+     */
+    protected function detectNodePlatformOverSsh(string $sshBase): ?string
+    {
+        $raw = trim((string) shell_exec($sshBase.' '.escapeshellarg('uname -m').' 2>/dev/null'));
+
+        return $this->normalizeArch($raw);
+    }
+
+    /**
+     * Detect the target platform from a managed cluster's NODES via kubectl —
+     * the registry path has no SSH. Reads each node's reported architecture and
+     * only returns a platform when they AGREE (a mixed-arch pool is ambiguous →
+     * null, so we fall back to the safe default rather than guessing). Returns
+     * null on any failure too.
+     */
+    protected function detectNodePlatformViaKubectl(string $context): ?string
+    {
+        $raw = trim((string) shell_exec(
+            'kubectl --context '.escapeshellarg($context)
+            .' get nodes -o '.escapeshellarg('jsonpath={.items[*].status.nodeInfo.architecture}')
+            .' 2>/dev/null',
+        ));
+        if ($raw === '') {
+            return null;
+        }
+
+        $platforms = array_unique(array_filter(array_map(
+            fn (string $a): ?string => $this->normalizeArch($a),
+            preg_split('/\s+/', $raw) ?: [],
+        )));
+
+        return count($platforms) === 1 ? (string) reset($platforms) : null;
+    }
+
+    /**
+     * Resolve the docker `--platform` for a deploy. Precedence:
+     *   1. an explicit `cloud.arch` override (skips detection),
+     *   2. detection — SSH `uname -m` when $sshBase is given (VPS/sideload),
+     *      else the managed cluster's node arch via kubectl,
+     *   3. linux/amd64 (the historical default) when nothing resolves.
+     * Emits one line so the chosen platform + source is never a mystery.
+     */
+    protected function resolveDeployPlatform(?CloudData $cloud, string $context, ?string $sshBase): string
+    {
+        if ($cloud && $cloud->arch) {
+            $override = $this->normalizeArch($cloud->arch);
+            if ($override !== null) {
+                $this->line("  <fg=gray>Target arch:</> <fg=cyan>{$override}</> <fg=gray>(cloud.arch override)</>");
+
+                return $override;
+            }
+            $this->laraKubeWarn("Unrecognised cloud.arch '{$cloud->arch}' — ignoring and auto-detecting.");
+        }
+
+        $detected = $sshBase !== null
+            ? $this->detectNodePlatformOverSsh($sshBase)
+            : $this->detectNodePlatformViaKubectl($context);
+
+        if ($detected !== null) {
+            $source = $sshBase !== null ? 'SSH uname' : 'cluster nodes';
+            $this->line("  <fg=gray>Target arch:</> <fg=cyan>{$detected}</> <fg=gray>(detected via {$source})</>");
+
+            return $detected;
+        }
+
+        $this->line('  <fg=gray>Target arch:</> <fg=cyan>linux/amd64</> <fg=gray>(default — detection unavailable)</>');
+
+        return 'linux/amd64';
     }
 
     /**
@@ -215,10 +312,13 @@ trait InteractsWithRemoteDeploy
         $tag = $this->resolveImageTag($path);
         $image = "{$name}:{$tag}";
         $dockerfile = "{$path}/Dockerfile.php";
+        $ssh = $this->sshBaseCommand($cloud->user, $cloud->ip, $cloud->port, $cloud->key);
 
-        // 1. Build the production image for the node's architecture (amd64).
-        $this->laraKubeInfo("Building production image '{$image}' (linux/amd64)...");
-        passthru($this->buildProductionImageCommand($image, $dockerfile, $path), $code);
+        // 1. Build the production image for the node's architecture (resolved
+        //    over SSH, so an arm64 node gets a native arm64 build).
+        $platform = $this->resolveDeployPlatform($cloud, $context, $ssh);
+        $this->laraKubeInfo("Building production image '{$image}' ({$platform})...");
+        passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform), $code);
         if ($code !== 0) {
             $this->laraKubeError('Image build failed.');
 
@@ -227,7 +327,6 @@ trait InteractsWithRemoteDeploy
 
         // 2. SSH-sideload it into the remote node's k3s containerd (no registry).
         $this->laraKubeInfo('Sideloading the image into the remote cluster...');
-        $ssh = $this->sshBaseCommand($cloud->user, $cloud->ip, $cloud->port, $cloud->key);
         passthru($this->sideloadOverSshCommand($image, $ssh), $code);
         if ($code !== 0) {
             $this->laraKubeError('Image sideload failed — check SSH access and passwordless sudo for `k3s` on the host.');
@@ -288,9 +387,11 @@ trait InteractsWithRemoteDeploy
         $this->laraKubeInfo('Verifying registry credentials...');
         // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
 
-        // 2. Build and push the production image to registry.
-        $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()}...");
-        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path), $code);
+        // 2. Build and push the production image to registry, for the cluster's
+        //    node architecture (no SSH here — read it from the nodes via kubectl).
+        $platform = $this->resolveDeployPlatform($config->getCloud($environment), $context, null);
+        $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()} ({$platform})...");
+        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform), $code);
         if ($code !== 0) {
             $this->laraKubeError('Image build/push failed. Ensure Docker credentials are configured and you have push access.');
 
@@ -302,8 +403,45 @@ trait InteractsWithRemoteDeploy
         $ns = escapeshellarg($namespace);
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
 
+        // GHCR packages are private in LaraKube, so the cluster always needs a pull
+        // secret — create it here (admin context) so manual deploys work without a
+        // separate `cloud:configure:gha` run or a public package.
+        if ($registry->provider === RegistryProvider::GHCR) {
+            $this->ensureGhcrPullSecret($context, $namespace);
+        }
+
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
         return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $registryImage);
+    }
+
+    /**
+     * Create/refresh the `ghcr-login` image-pull secret in the namespace using the
+     * GitHub CLI token (run in Docker — zero local deps). GHCR packages are private
+     * in LaraKube, so the cluster always needs this to pull. Best-effort: warns and
+     * skips if gh isn't authenticated rather than failing the deploy.
+     */
+    protected function ensureGhcrPullSecret(string $context, string $namespace): void
+    {
+        $gh = $this->getGhCommand();
+        $user = trim((string) shell_exec("{$gh} api user -q .login 2>/dev/null"));
+        $token = trim((string) shell_exec("{$gh} auth token 2>/dev/null"));
+
+        if ($user === '' || $token === '') {
+            $this->laraKubeWarn('Skipped the GHCR pull secret — run `larakube gha:login` (private images will fail to pull until then).');
+
+            return;
+        }
+
+        $ctx = escapeshellarg($context);
+        $ns = escapeshellarg($namespace);
+        shell_exec(
+            "kubectl --context {$ctx} create secret docker-registry ghcr-login -n {$ns}"
+            .' --docker-server=https://ghcr.io'
+            .' --docker-username='.escapeshellarg($user)
+            .' --docker-password='.escapeshellarg($token)
+            ." --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -",
+        );
+        $this->laraKubeInfo("Ensured GHCR pull secret (ghcr-login) in '{$namespace}'.");
     }
 
     /**

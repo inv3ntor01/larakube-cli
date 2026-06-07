@@ -11,6 +11,17 @@ promise**: the *same blueprint* deploys to a Pi, a $6 VPS, or managed Kubernetes
 
 ## 🧱 Near-term: make the deploy arch-aware (prerequisite)
 
+> **Status (2026-06-07): Phase 1 BUILT (unbuilt binary — user rebuilds).** Both
+> deploy paths now resolve the platform instead of hardcoding amd64:
+> `resolveDeployPlatform()` in `InteractsWithRemoteDeploy` picks
+> `cloud.arch` override → SSH `uname -m` (sideload path) → kubectl node-arch
+> (registry/managed path, e.g. DOKS) → `linux/amd64` fallback. New nullable
+> `CloudData::$arch`. Command-builders take a `$platform` param (default amd64,
+> so snapshots/old tests are unchanged). Mixed-arch managed pools resolve to
+> null → safe amd64 default. Unit tests added in `RemoteDeployTest`. Testable on
+> the existing **VPS staging** (SSH path) now; DOKS exercises the kubectl path
+> (resolves amd64). Remaining: Phase 2 (Pi docs) + Phase 3 (tunnel).
+
 The single blocker today is architecture. `cloud:deploy` hardcodes
 `docker buildx build --platform linux/amd64` (assumes a DO droplet). A Pi is
 **arm64** → the amd64 image gives `exec format error`, pod never starts.

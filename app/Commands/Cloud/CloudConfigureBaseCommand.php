@@ -14,7 +14,7 @@ class CloudConfigureBaseCommand extends Command
 
     protected $signature = 'cloud:configure:base {environment? : The environment to configure}';
 
-    protected $description = 'Set the server connection + web host for an environment';
+    protected $description = 'Set the deploy target (managed cluster or VPS) + web host for an environment';
 
     public function handle(): int
     {

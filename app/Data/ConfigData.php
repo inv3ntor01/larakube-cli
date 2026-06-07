@@ -1362,6 +1362,23 @@ class ConfigData extends Data
         $data = $this->toArray();
         unset($data['isScaffolding'], $data['path'], $data['cloud']);
 
+        // Keep each env's cloud block unambiguous in the committed file: a MANAGED
+        // target (has `context`) carries no SSH fields; a VPS (has `ip`) carries no
+        // context/provider. Cosmetic only — CloudData refills defaults in memory on
+        // load — but it stops a managed env from *looking* like a half-VPS config.
+        foreach (($data['environments'] ?? []) as $env => $envData) {
+            $cloud = $envData['cloud'] ?? null;
+            if (! is_array($cloud)) {
+                continue;
+            }
+            if (! empty($cloud['context'])) {
+                unset($cloud['ip'], $cloud['user'], $cloud['port'], $cloud['key']);
+            } elseif (! empty($cloud['ip'])) {
+                unset($cloud['context'], $cloud['provider']);
+            }
+            $data['environments'][$env]['cloud'] = $cloud;
+        }
+
         file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 

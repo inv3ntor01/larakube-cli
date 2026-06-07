@@ -30,6 +30,14 @@ spec:
       labels:
         app: web
     spec:
+      # The app runs as www-data; mounted PVCs (storage/, bootstrap/cache) come up
+      # root-owned on real block storage (e.g. DOKS do-block-storage), so without
+      # this they'd be read-only to the app. fsGroup makes the kubelet chown the
+      # volume to this GID and add it to the container's supplementary groups, so
+      # www-data can write. Harmless on k3s local-path (VPS), so it's identical
+      # across VPS and managed clusters.
+      securityContext:
+        fsGroup: 33
       initContainers:
         - name: wait-for-deps
           image: postgres-test:latest

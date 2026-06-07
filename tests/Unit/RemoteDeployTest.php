@@ -31,6 +31,41 @@ test('the production build cross-compiles for the amd64 node and targets the dep
         ->toContain("-t 'app-one:abc123'");
 });
 
+test('normalizeArch maps uname / kubectl / override tokens to a docker platform', function () {
+    $r = remoteDeploy();
+
+    // amd64 family
+    expect($r->normalizeArch('x86_64'))->toBe('linux/amd64')   // uname -m on a droplet
+        ->and($r->normalizeArch('amd64'))->toBe('linux/amd64')  // kubectl nodeInfo / override
+        // arm64 family
+        ->and($r->normalizeArch('aarch64'))->toBe('linux/arm64') // uname -m on a Pi
+        ->and($r->normalizeArch('arm64'))->toBe('linux/arm64')   // kubectl nodeInfo / override
+        // 32-bit arm
+        ->and($r->normalizeArch('armv7l'))->toBe('linux/arm/v7')
+        // unknown / empty -> null so callers fall back
+        ->and($r->normalizeArch('s390x'))->toBeNull()
+        ->and($r->normalizeArch(''))->toBeNull()
+        ->and($r->normalizeArch(null))->toBeNull();
+});
+
+test('the production build honours the resolved platform (native arm64 for a Pi)', function () {
+    $cmd = remoteDeploy()->buildProductionImageCommand('app-one:abc123', '/proj/Dockerfile.php', '/proj', 'linux/arm64');
+
+    expect($cmd)
+        ->toContain('--platform linux/arm64')
+        ->not->toContain('linux/amd64');
+});
+
+test('the registry build honours the resolved platform and defaults to amd64', function () {
+    $r = remoteDeploy();
+
+    expect($r->buildAndPushImageCommand('ghcr.io/me/app:abc', '/proj/Dockerfile.php', '/proj', 'linux/arm64'))
+        ->toContain('--platform linux/arm64')
+        ->toContain('--push')
+        ->and($r->buildAndPushImageCommand('ghcr.io/me/app:abc', '/proj/Dockerfile.php', '/proj'))
+        ->toContain('--platform linux/amd64');   // unchanged default
+});
+
 test('the sideload streams the saved image into the remote k3s containerd', function () {
     $r = remoteDeploy();
     $ssh = $r->sshBaseCommand('larakube', '159.223.43.95', 22, '/home/me/.ssh/id_rsa');

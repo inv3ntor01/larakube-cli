@@ -3,8 +3,10 @@
 namespace App\Commands\Cluster;
 
 use App\Traits\InteractsWithGlobalConfig;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithTeammateRbac;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesNamespaceArg;
 
 use function Laravel\Prompts\confirm;
 
@@ -12,13 +14,13 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterRevokeCommand extends Command
 {
-    use InteractsWithGlobalConfig, InteractsWithTeammateRbac, LaraKubeOutput;
+    use InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesNamespaceArg;
 
     protected $signature = 'cluster:revoke
         {namespace? : The namespace — a deploy credential, or one app to drop a teammate from}
         {--name= : Revoke a TEAMMATE (omit the namespace to off-board them entirely)}
         {--context= : Target a specific kube-context}
-        {--with-secret : Also delete the GitHub {ENV}_KUBECONFIG secret (deploy revoke only; best-effort)}
+        {--with-secret : Also delete the GitHub <ENV>_KUBECONFIG secret (deploy revoke only; best-effort)}
         {--force : Skip the confirmation prompt}';
 
     protected $description = 'Revoke a deploy credential or a teammate\'s access — the kill-switch for offboarding or a leak';
@@ -42,6 +44,7 @@ class ClusterRevokeCommand extends Command
 
             return 1;
         }
+        $namespace = $this->resolveNamespaceArg($namespace);   // accept an env name in-project
         $ns = escapeshellarg($namespace);
 
         $this->laraKubeWarn("This removes deploy access to '{$namespace}' — the '{$this->sa}' ServiceAccount, Role, RoleBinding, and token.");
@@ -85,6 +88,9 @@ class ClusterRevokeCommand extends Command
         }
 
         $namespace = (string) $this->argument('namespace');
+        if ($namespace !== '') {
+            $namespace = $this->resolveNamespaceArg($namespace);   // accept an env name in-project
+        }
 
         // Remove from a single app — drop just that RoleBinding.
         if ($namespace !== '') {

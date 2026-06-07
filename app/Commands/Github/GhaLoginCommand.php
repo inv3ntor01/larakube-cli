@@ -20,8 +20,12 @@ class GhaLoginCommand extends Command
 
         $this->laraKubeInfo('Launching GitHub CLI authentication wizard...');
 
+        // Request write:packages up front so the same login can PUSH images to
+        // GHCR (cloud:deploy) — not just manage Actions secrets. write:packages
+        // also grants pull, so the GHCR pull secret works too. Zero local deps:
+        // getGhCommand runs the official CLI in Docker when gh isn't installed.
         $gh = $this->getGhCommand(interactive: true);
-        passthru("{$gh} auth login");
+        passthru("{$gh} auth login --scopes write:packages");
 
         return 0;
     }

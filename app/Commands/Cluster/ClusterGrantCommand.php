@@ -2,20 +2,23 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithScopedRbac;
 use App\Traits\InteractsWithTeammateRbac;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesNamespaceArg;
 
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
 
 class ClusterGrantCommand extends Command
 {
-    use InteractsWithScopedRbac, InteractsWithTeammateRbac, LaraKubeOutput;
+    use InteractsWithProjectConfig, InteractsWithScopedRbac, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesNamespaceArg;
 
     protected $signature = 'cluster:grant
-        {namespace : The {app}-{env} namespace to grant access to}
+        {namespace : The <app>-<env> namespace (or an env name in-project) to grant access to}
         {--name= : The teammate (their identity — reused across apps)}
         {--read : Read-only (view): logs + status, no exec/secrets}
         {--edit : Operate the app (edit) — the DEFAULT}
@@ -28,7 +31,7 @@ class ClusterGrantCommand extends Command
     {
         $this->renderHeader();
 
-        $appNs = (string) $this->argument('namespace');
+        $appNs = $this->resolveNamespaceArg((string) $this->argument('namespace'));
         $name = (string) ($this->option('name') ?: text(label: 'Teammate name', placeholder: 'lloyd', required: true));
         $sa = $this->teammateSaName($name);
 
@@ -51,7 +54,7 @@ class ClusterGrantCommand extends Command
             return 1;
         }
 
-        $role = $this->presetClusterRole((bool) $this->option('read'), (bool) $this->option('edit'), (bool) $this->option('admin'));
+        $role = $this->resolveAccessRole();
         $accessNs = $this->accessNamespace();
         $ctx = escapeshellarg($adminContext);
 
@@ -102,6 +105,32 @@ class ClusterGrantCommand extends Command
         $this->line("  <fg=gray>To add another app later:</> <fg=yellow>larakube cluster:grant <other-ns> --name {$name}</> <fg=gray>(same identity — no new file).</>");
 
         return 0;
+    }
+
+    /**
+     * Resolve the access level. An explicit --read/--edit/--admin flag always
+     * wins. Otherwise ask (rather than silently granting write access) — falling
+     * back to the documented `edit` default when non-interactive (e.g. CI).
+     */
+    protected function resolveAccessRole(): string
+    {
+        if ($this->option('read') || $this->option('edit') || $this->option('admin')) {
+            return $this->presetClusterRole((bool) $this->option('read'), (bool) $this->option('edit'), (bool) $this->option('admin'));
+        }
+
+        if ($this->option('no-interaction')) {
+            return 'edit';
+        }
+
+        return select(
+            label: 'Access level',
+            options: [
+                'view' => 'Read-only — logs + status (no exec, no secrets)',
+                'edit' => 'Operate the app — edit (default)',
+                'admin' => 'Namespace-admin — edit + manage access within the namespace',
+            ],
+            default: 'edit',
+        );
     }
 
     protected function applyManifest(string $adminContext, string $manifest): bool

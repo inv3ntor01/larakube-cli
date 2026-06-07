@@ -12,6 +12,10 @@ spec:
       labels:
         app: {{ $feature->getPodName($config) }}
     spec:
+      # fsGroup so www-data can write the mounted PVC on block storage (DOKS etc.);
+      # harmless on k3s local-path. See base/deployment.blade.php for the rationale.
+      securityContext:
+        fsGroup: 33
 @if($config->isSystem())
       serviceAccountName: larakube-dashboard
 @endif

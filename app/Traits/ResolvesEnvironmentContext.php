@@ -100,6 +100,19 @@ trait ResolvesEnvironmentContext
     {
         $this->laraKubeInfo("No deploy target saved for '{$environment}' yet — let's record it once.");
 
+        return $this->promptCloudTarget($config, $environment, $projectPath);
+    }
+
+    /**
+     * Prompt for + persist an environment's deploy target, OVERWRITING any
+     * existing one. Pick an existing kube-context (a managed cluster, or a
+     * provisioned `larakube-<ip>` VPS) or enter a new VPS by IP — so a managed
+     * target can be recorded without hand-editing .larakube.json. Returns the
+     * reloaded config. Used by both first-use auto-capture (captureCloudConnection)
+     * and explicit reconfiguration (`cloud:configure:base`).
+     */
+    protected function promptCloudTarget(ConfigData $config, string $environment, string $projectPath): ConfigData
+    {
         // Prefer picking an existing kube-context — that's the only way to record a
         // MANAGED cluster (DOKS/EKS/…, no IP), and it saves re-typing the IP of a
         // VPS you've already provisioned (its larakube-<ip> context is in kubeconfig).
@@ -149,22 +162,9 @@ trait ResolvesEnvironmentContext
     {
         $data = $config->toArray();
 
-        if (preg_match('/^larakube-(.+)$/', $context, $m)) {
-            $this->laraKubeInfo("Detected a LaraKube VPS context ({$m[1]}). Confirm its SSH details:");
-            $user = text(label: 'SSH user', default: 'larakube', required: true);
-            $port = (int) text(label: 'SSH port', default: '22', required: true);
-            $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-            $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
-
-            $data['environments'][$environment]['cloud'] = [
-                'ip' => $m[1],
-                'user' => trim($user),
-                'port' => $port,
-                'key' => $key,
-            ];
-        } else {
-            // Managed cluster — identified by the context name; no SSH. Capture the
-            // provider too, and default the env's storageClass from it.
+        if (! preg_match('/^larakube-(.+)$/', $context, $m)) {
+            // Managed cluster — identified by the context name; no SSH. Ask which
+            // provider, then delegate to the shared managed writer.
             $provider = select(
                 label: 'Which managed Kubernetes provider is this?',
                 options: collect(ManagedProvider::cases())
@@ -173,17 +173,47 @@ trait ResolvesEnvironmentContext
                 default: ManagedProvider::DOKS->value,
             );
 
-            $data['environments'][$environment]['cloud'] = ['context' => $context, 'provider' => $provider];
-
-            $storageClass = ManagedProvider::from($provider)->defaultStorageClass();
-            if ($storageClass !== null && empty($data['environments'][$environment]['storageClass'] ?? null)) {
-                $data['environments'][$environment]['storageClass'] = $storageClass;
-                $this->laraKubeInfo("Defaulted storageClass to '{$storageClass}' for {$provider}.");
-            }
+            return $this->recordManagedTarget($config, $environment, $projectPath, $context, ManagedProvider::from($provider));
         }
+
+        // A LaraKube VPS context — derive the ip and capture SSH so sideload deploys work.
+        $this->laraKubeInfo("Detected a LaraKube VPS context ({$m[1]}). Confirm its SSH details:");
+        $user = text(label: 'SSH user', default: 'larakube', required: true);
+        $port = (int) text(label: 'SSH port', default: '22', required: true);
+        $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
+        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+
+        $data['environments'][$environment]['cloud'] = [
+            'ip' => $m[1],
+            'user' => trim($user),
+            'port' => $port,
+            'key' => $key,
+        ];
 
         ConfigData::from($data)->saveToFile($projectPath);
         $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future commands won't ask again.");
+
+        return $this->getProjectConfig($projectPath);
+    }
+
+    /**
+     * Persist a MANAGED deploy target ({context, provider}) for an environment and
+     * default its storageClass from the provider — no provider prompt, for callers
+     * that already know it (e.g. `cloud:provision:doks`). Returns the reloaded config.
+     */
+    protected function recordManagedTarget(ConfigData $config, string $environment, string $projectPath, string $context, ManagedProvider $provider): ConfigData
+    {
+        $data = $config->toArray();
+        $data['environments'][$environment]['cloud'] = ['context' => $context, 'provider' => $provider->value];
+
+        $storageClass = $provider->defaultStorageClass();
+        if ($storageClass !== null && empty($data['environments'][$environment]['storageClass'] ?? null)) {
+            $data['environments'][$environment]['storageClass'] = $storageClass;
+            $this->laraKubeInfo("Defaulted storageClass to '{$storageClass}' for {$provider->value}.");
+        }
+
+        ConfigData::from($data)->saveToFile($projectPath);
+        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud).");
 
         return $this->getProjectConfig($projectPath);
     }

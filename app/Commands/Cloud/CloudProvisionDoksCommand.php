@@ -2,8 +2,15 @@
 
 namespace App\Commands\Cloud;
 
+use App\Data\ConfigData;
+use App\Enums\ManagedProvider;
 use App\Traits\InteractsWithClusterContext;
+use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithGlobalConfig;
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PromotesIngressDns;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
@@ -12,7 +19,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudProvisionDoksCommand extends Command
 {
-    use InteractsWithClusterContext, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput, PromotesIngressDns, ResolvesEnvironmentContext;
 
     protected $signature = 'cloud:provision:doks {--context= : Target a specific kube-context}';
 
@@ -34,13 +41,44 @@ class CloudProvisionDoksCommand extends Command
         $this->line("  <fg=gray>Target context:</> <fg=cyan>{$context}</>");
         $this->newLine();
 
+        // Load the project config once (null when run outside a project) — drives
+        // both the email prefill and the optional auto-configure offer below.
+        $projectConfig = $this->getProjectConfig(getcwd());
+
+        // Idempotent rerun: if Traefik is already installed, don't re-prompt for an
+        // email or reinstall — just re-surface the IP (and still offer to wire up
+        // the project). Guards against the common "ran it twice" case.
+        if ($this->traefikInstalled($context)) {
+            $this->laraKubeInfo('ℹ️  Traefik is already installed on this cluster — skipping install.');
+
+            return $this->reportIpAndOffer($context, $this->waitForLoadBalancerIp($context), $projectConfig);
+        }
+
         // Collected up front — the ACME resolver is configured at install time.
+        // Prefill from the project's .larakube.json email, else the global config
+        // email, so the common case is just Enter.
+        $projectEmail = $projectConfig?->email;
+        $globalEmail = $this->getEmail();
+
         $email = text(
             label: 'Email for Let\'s Encrypt certificate notices',
             placeholder: 'you@example.com',
+            default: $projectEmail ?: ($globalEmail ?? ''),
             required: true,
             validate: fn (string $v) => filter_var($v, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
         );
+
+        // Remember the email wherever it wasn't set yet, so future runs prefill it
+        // (when both were empty, this backfills both project + global).
+        if ($projectConfig && ! $projectEmail) {
+            $projectConfig->setEmail($email);
+            $this->saveProjectConfig(getcwd(), $projectConfig);
+            $this->laraKubeInfo('Saved email to .larakube.json.');
+        }
+        if (! $globalEmail) {
+            $this->setEmail($email);
+            $this->laraKubeInfo('Saved email to your global LaraKube config.');
+        }
 
         if (! confirm('Install Traefik + Let\'s Encrypt (HTTP-01) on this cluster?', true)) {
             $this->laraKubeInfo('Cancelled.');
@@ -57,48 +95,122 @@ class CloudProvisionDoksCommand extends Command
         }
 
         $this->laraKubeInfo('Waiting for the LoadBalancer IP...');
-        $ip = $this->waitForLoadBalancerIp($context);
-        if (! $ip) {
-            $this->laraKubeError('LoadBalancer IP not assigned within 120s. Check cluster resources, then retry.');
 
-            return 1;
+        return $this->reportIpAndOffer($context, $this->waitForLoadBalancerIp($context), $projectConfig);
+    }
+
+    /**
+     * Report the LoadBalancer IP and, when run inside a project, offer to wire an
+     * environment to this cluster (managed target + web host) — no hand-editing.
+     * Otherwise print the manual next steps.
+     */
+    private function reportIpAndOffer(string $context, ?string $ip, ?ConfigData $projectConfig): int
+    {
+        if (! $ip) {
+            $this->laraKubeWarn('No LoadBalancer IP assigned yet — DigitalOcean may still be provisioning it. Re-run this command in a minute (or check the `traefik` service in the `traefik` namespace).');
+
+            return 0;
         }
 
         $this->laraKubeInfo("✅ LoadBalancer IP: <fg=cyan>{$ip}</>");
         $this->newLine();
-        $this->displayNextSteps($ip);
+
+        if ($projectConfig && confirm('Configure an environment in this project to use this cluster now?', true)) {
+            $this->configureProjectEnvForCluster($projectConfig, $context, $ip);
+        } else {
+            $this->displayNextSteps($ip);
+        }
 
         return 0;
     }
 
-    /** Install Traefik with a persistent ACME (Let's Encrypt, HTTP-01) resolver. */
-    private function installTraefik(string $context, string $email): int
+    /**
+     * Record THIS project's chosen env to deploy to the just-provisioned DOKS
+     * cluster — managed target (context + DOKS provider) + default storageClass +
+     * web host — reusing the shared recorder so there's one source of truth.
+     */
+    private function configureProjectEnvForCluster(ConfigData $config, string $context, string $ip): void
+    {
+        $projectPath = getcwd();
+        $environment = $this->askForCloudEnvironment(label: 'Which environment runs on this DOKS cluster?');
+
+        // Managed target + storageClass — no provider prompt, we know it's DOKS.
+        $config = $this->recordManagedTarget($config, $environment, $projectPath, $context, ManagedProvider::DOKS);
+
+        // Web domain — skip the {name}.com placeholder and any local .dev.test host.
+        $currentHost = $config->getHost($environment, 'web');
+        $isPlaceholder = ! $currentHost
+            || $currentHost === "{$config->getName()}.com"
+            || str_contains((string) $currentHost, '.dev.test');
+
+        $host = text(
+            label: "Web domain for '{$environment}'",
+            placeholder: 'app.example.com',
+            default: $isPlaceholder ? '' : (string) $currentHost,
+            required: true,
+            validate: fn (string $v) => str_contains($v, '.') ? null : 'Enter a domain like app.example.com.',
+        );
+        $config->setHost($environment, 'web', $host);
+        $this->saveProjectConfig($projectPath, $config);
+
+        $this->newLine();
+        $this->laraKubeInfo("✅ '{$environment}' will deploy to this DOKS cluster.");
+        $this->printIngressDnsGuidance([$host], $ip);
+        $this->newLine();
+        $this->line('  <fg=green>Then:</>');
+        $this->line("    <fg=yellow>larakube cloud:configure:registry {$environment}</> <fg=gray># container registry (e.g. GHCR)</>");
+        $this->line("    <fg=yellow>larakube cloud:deploy {$environment}</>           <fg=gray># once DNS resolves</>");
+        $this->newLine();
+    }
+
+    /**
+     * A stable, per-cluster DO LoadBalancer name (from the context), so reinstalls
+     * reuse the same LB + IP. DO names allow lowercase alphanumerics + hyphens.
+     */
+    private function loadBalancerNameFor(string $context): string
+    {
+        $slug = trim((string) preg_replace('/[^a-z0-9-]+/', '-', strtolower($context)), '-');
+
+        return 'larakube-'.($slug !== '' ? $slug : 'traefik');
+    }
+
+    /** Is Traefik already installed on this cluster? Keeps provision reruns safe. */
+    private function traefikInstalled(string $context): bool
     {
         exec('kubectl --context '.escapeshellarg($context).' get deployment -n traefik traefik 2>/dev/null', $out, $code);
-        if ($code === 0) {
+
+        return $code === 0;
+    }
+
+    /**
+     * Install Traefik with a persistent ACME (Let's Encrypt, HTTP-01) resolver by
+     * rendering the managed-cluster manifest and `kubectl apply`-ing it — same
+     * approach as the VPS path, no Helm dependency. The manifest exposes Traefik
+     * via a cloud LoadBalancer and stores acme.json on a PVC (cluster default
+     * StorageClass, e.g. do-block-storage on DOKS).
+     */
+    private function installTraefik(string $context, string $email): int
+    {
+        // Safety net — handle() already short-circuits on an existing install, but
+        // guard here too in case this is ever called directly.
+        if ($this->traefikInstalled($context)) {
             $this->laraKubeInfo('ℹ️  Traefik is already installed — skipping. (Re-install to change ACME settings.)');
 
             return 0;
         }
 
-        exec('helm repo add traefik https://traefik.github.io/charts 2>/dev/null');
-        exec('helm repo update 2>/dev/null');
+        $manifest = view('k8s.traefik-managed', [
+            'email' => $email,
+            'loadBalancerName' => $this->loadBalancerNameFor($context),
+        ])->render();
+        $tmp = sys_get_temp_dir().'/larakube-traefik-managed.yaml';
+        file_put_contents($tmp, $manifest);
 
-        // persistence → a PVC (on DOKS\'s default do-block-storage) holds acme.json
-        // across restarts/nodes; certResolver "letsencrypt" issues per-router certs.
-        $install = 'helm install traefik traefik/traefik '
-            .'--namespace traefik --create-namespace '
-            .'--set service.type=LoadBalancer '
-            .'--set ingressClass.enabled=true '
-            .'--set ingressClass.isDefaultClass=true '
-            .'--set persistence.enabled=true '
-            .'--set persistence.size=128Mi '
-            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.email='.$email).' '
-            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.storage=/data/acme.json').' '
-            .'--set '.escapeshellarg('certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web').' '
-            .'--set '.escapeshellarg('ports.websecure.tls.certResolver=letsencrypt');
-
-        passthru($install, $code);
+        passthru(
+            'kubectl --context '.escapeshellarg($context).' apply -f '.escapeshellarg($tmp).' --request-timeout=60s',
+            $code,
+        );
+        @unlink($tmp);
 
         return $code === 0 ? 0 : 1;
     }
@@ -137,20 +249,16 @@ class CloudProvisionDoksCommand extends Command
         $this->line('  1️⃣  <fg=yellow>Point your domain at the LoadBalancer IP</> (A record):');
         $this->line("       <fg=cyan>app.example.com  A  {$ip}</>");
         $this->newLine();
-        $this->line('  2️⃣  <fg=yellow>Configure your env for DOKS</> in <fg=cyan>.larakube.json</>:');
-        $this->line('       "ingress": "traefik",');
-        $this->line('       "strategy": "multi-node-ha",');
-        $this->line('       "hosts": { "web": "app.example.com" },');
-        $this->line('       "storageClass": "do-block-storage",');
-        $this->line('       "registry": { "provider": "ghcr" },');
-        $this->line('       "ingressAnnotations": {');
-        $this->line('         "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",');
-        $this->line('         "traefik.ingress.kubernetes.io/router.tls.certresolver": "letsencrypt"');
-        $this->line('       }');
-        $this->line('     <fg=gray>(the last block tells Traefik to fetch a Let\'s Encrypt cert for this app)</>');
+        $this->line('  2️⃣  <fg=yellow>From your project</>, record this cluster + a registry (no hand-editing):');
+        $this->line('       <fg=yellow>larakube cloud:configure:base <env></>      <fg=gray># pick this DOKS context as the target</>');
+        $this->line('       <fg=yellow>larakube cloud:configure:registry <env></>  <fg=gray># container registry (e.g. GHCR)</>');
         $this->newLine();
         $this->line('  3️⃣  <fg=yellow>Deploy</> once DNS resolves:');
-        $this->line('       larakube cloud:deploy production');
+        $this->line('       <fg=yellow>larakube cloud:deploy <env></>');
+        $this->newLine();
+        $this->line('  <fg=gray>HTTPS later: add to the env\'s ingressAnnotations —</>');
+        $this->line('  <fg=gray>  traefik.ingress.kubernetes.io/router.entrypoints: websecure</>');
+        $this->line('  <fg=gray>  traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt</>');
         $this->newLine();
     }
 }

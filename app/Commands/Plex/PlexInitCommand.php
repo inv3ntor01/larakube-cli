@@ -7,6 +7,7 @@ use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PromotesIngressDns;
 
 use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\text;
@@ -15,7 +16,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class PlexInitCommand extends Command
 {
-    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, PromotesIngressDns;
 
     protected $signature = 'plex:init
         {--services= : Comma-separated services to provision non-interactively, e.g. postgres,redis,meilisearch (no prompt; nothing assumed)}
@@ -356,6 +357,7 @@ class PlexInitCommand extends Command
         $this->laraKubeInfo('✅ Commons is ready.');
         $this->line('  Tenants reach these in-cluster hosts:');
 
+        $publicHosts = [];
         foreach ($spec['services'] ?? [] as $service => $cfg) {
             if (! ($cfg['enabled'] ?? false)) {
                 continue;
@@ -363,7 +365,14 @@ class PlexInitCommand extends Command
             $this->line("    <fg=cyan>{$service}.{$ns}.svc.cluster.local:".($cfg['port'] ?? '').'</>');
             if (! empty($cfg['host'])) {
                 $this->line("      <fg=gray>public:</> <fg=cyan>https://{$cfg['host']}</>");
+                $publicHosts[] = (string) $cfg['host'];
             }
+        }
+
+        // A Commons is multi-tenant by design — every app that joins adds another
+        // host on this same ingress IP, so promote the CNAME-anchor pattern.
+        if ($publicHosts !== []) {
+            $this->printIngressDnsGuidance($publicHosts, $this->traefikLoadBalancerIp($this->plexContext));
         }
 
         $this->newLine();

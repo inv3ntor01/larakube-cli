@@ -2,12 +2,16 @@
 
 namespace App\Commands\Cloud;
 
+use App\Data\RegistryData;
+use App\Enums\RegistryProvider;
 use App\Traits\GeneratesProjectInfrastructure;
+use App\Traits\GuardsSharedStorage;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\InteractsWithScopedRbac;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PromotesIngressDns;
 use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
@@ -16,9 +20,12 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudDeployCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, InteractsWithScopedRbac, LaraKubeOutput, ResolvesEnvironmentContext;
+    // getGhCommand() comes via LaraKubeOutput → InteractsWithGlobalConfig.
+    use GeneratesProjectInfrastructure, GuardsSharedStorage, InteractsWithEnvironments, InteractsWithProjectConfig, InteractsWithRemoteDeploy, InteractsWithScopedRbac, LaraKubeOutput, PromotesIngressDns, ResolvesEnvironmentContext;
 
-    protected $signature = 'cloud:deploy {environment? : The environment to deploy to}';
+    protected $signature = 'cloud:deploy
+        {environment? : The environment to deploy to}
+        {--force : Skip the multi-node shared-storage safety check}';
 
     protected $description = 'Build and deploy the application to a remote environment';
 
@@ -109,19 +116,38 @@ class CloudDeployCommand extends Command
         // the target is in the blueprint and future deploys are zero-prompt. The
         // env's OWN kube-context is derived from it (larakube-<ip>), never the
         // global current-context, so local dev pointed elsewhere is undisturbed.
+        // A target is "saved" if it has a VPS ip OR a managed kube-context.
         $cloud = $config->getCloud($environment);
-        if (! $cloud || ! $cloud->ip) {
+        if (! $cloud || (! $cloud->ip && ! $cloud->context)) {
             $config = $this->captureCloudConnection($config, $environment, $projectPath);
             $cloud = $config->getCloud($environment);
         }
 
-        // Check if environment has registry configured
+        // Resolve the env's own context (managed → its kube-context; VPS →
+        // larakube-<ip>), never the global current-context.
+        $context = $this->environmentContextOrCurrent($config, $environment);
+
+        // A managed cluster (context, no IP) can't be SSH-sideloaded, so it needs
+        // a registry to push to. Fail clearly instead of falling into the SSH path.
         $registry = $config->getRegistry($environment);
+        if ($cloud && $cloud->isManaged() && ! $registry) {
+            $this->laraKubeError("'{$environment}' targets a managed cluster ('{$cloud->context}') but has no registry configured.");
+            $this->line("   <fg=gray>Managed clusters can't be SSH-sideloaded. Run</> <fg=yellow>larakube cloud:configure:registry {$environment}</> <fg=gray>first.</>");
+
+            return 1;
+        }
+
+        // Preflight: block the silent multi-node shared-storage trap before the
+        // (slow) build — fires on a multi-node cluster with SQLite or worker pods
+        // that share the RWO app-storage PVC.
+        if (! $this->guardSharedStorage($config, $environment, $context)) {
+            return 1;
+        }
+
+        $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '{$context}'.");
         if ($registry) {
-            $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
             $this->line('   <fg=gray>Builds locally, pushes to '.$registry->getRegistryHost().', applies manifests.</>');
         } else {
-            $this->laraKubeInfo("Deploying '{$appName}' to '{$environment}' on context '".$this->remoteContextName($cloud->ip)."'.");
             $this->line('   <fg=gray>Builds locally, sideloads the image into the remote node (no registry), applies manifests.</>');
         }
         $this->newLine();
@@ -132,6 +158,71 @@ class CloudDeployCommand extends Command
             return 0;
         }
 
-        return $registry ? $this->deployViaRegistry($config, $environment) : $this->deployViaSshSideload($config, $environment);
+        // Authenticate to the registry BEFORE the (slow) build, so a missing login
+        // fails fast with a fix instead of a cryptic "denied" after the build.
+        if ($registry && ! $this->ensureRegistryLogin($registry)) {
+            return 1;
+        }
+
+        $result = $registry
+            ? $this->deployViaRegistry($config, $environment)
+            : $this->deployViaSshSideload($config, $environment);
+
+        // After a successful MANAGED deploy, remind where to point DNS — every host
+        // on the cluster shares the ingress LoadBalancer IP, so promote CNAMEs.
+        if ($result === 0 && $cloud && $cloud->isManaged()) {
+            $hosts = array_values(array_filter([$config->getHost($environment, 'web')]));
+            if ($hosts !== []) {
+                $this->printIngressDnsGuidance($hosts, $this->traefikLoadBalancerIp($context));
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Make sure docker can push to the env's registry before we build. For GHCR we
+     * can log in with the GitHub CLI token; otherwise (or if that token lacks the
+     * write:packages scope) we stop with a copy-pasteable fix rather than letting
+     * the push fail with a cryptic "denied" after a long build.
+     */
+    private function ensureRegistryLogin(RegistryData $registry): bool
+    {
+        $host = $registry->getRegistryHost();
+
+        if ($registry->provider === RegistryProvider::GHCR) {
+            $gh = $this->getGhCommand();
+            $user = trim((string) shell_exec("{$gh} api user -q .login 2>/dev/null"));
+            $token = trim((string) shell_exec("{$gh} auth token 2>/dev/null"));
+
+            if ($user !== '' && $token !== '') {
+                $this->laraKubeInfo("Logging in to {$host} as {$user} (via GitHub CLI)...");
+                exec($this->dockerLoginCommand($host, $user, $token).' 2>/dev/null', $out, $code);
+                if ($code === 0) {
+                    return true;
+                }
+                $this->laraKubeWarn('Logged in, but the token lacks the write:packages scope GHCR push needs.');
+            }
+
+            // Stay zero-dependency: everything goes through `larakube gha:login`,
+            // which runs gh in Docker and (now) requests write:packages. No raw
+            // `gh`/`docker login` for the user to type.
+            $this->laraKubeError("Not authenticated to push to {$host}.");
+            $this->line('   <fg=gray>Run</> <fg=yellow>larakube gha:login</> <fg=gray>(grants the write:packages scope), then re-run the deploy.</>');
+            $this->line('   <fg=gray>(The private-image pull secret is created automatically during deploy.)</>');
+
+            return false;
+        }
+
+        // Docker Hub / others: we can't mint a token — just verify a session exists.
+        exec('docker login '.escapeshellarg($host).' </dev/null 2>/dev/null', $out, $code);
+        if ($code !== 0) {
+            $this->laraKubeError("Not authenticated to {$host}.");
+            $this->line("   <fg=gray>Run</> <fg=yellow>docker login {$host}</> <fg=gray>then re-run the deploy.</>");
+
+            return false;
+        }
+
+        return true;
     }
 }

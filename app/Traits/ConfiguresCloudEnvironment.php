@@ -22,6 +22,10 @@ use function Laravel\Prompts\text;
  */
 trait ConfiguresCloudEnvironment
 {
+    // The deploy-target picker (managed kube-context or VPS) lives here, so
+    // configureBase can record a managed cluster without hand-edited config.
+    use ResolvesEnvironmentContext;
+
     /**
      * The full guided setup: pick the environment once, then run every step in
      * the right order — server + web host (base), an optional Commons join, and
@@ -54,38 +58,14 @@ trait ConfiguresCloudEnvironment
 
         $projectPath = getcwd();
         $config = $this->getProjectConfigObject($projectPath);
-        $cloud = $config->getCloudConfig($environment);
 
-        $this->laraKubeInfo("Configuring cloud infrastructure for '{$environment}'...");
+        $this->laraKubeInfo("Configuring the deploy target for '{$environment}'...");
 
-        $ip = text(
-            label: 'Server IP address',
-            default: $cloud['ip'] ?? '',
-            required: true,
-        );
-
-        $user = text(
-            label: 'SSH User',
-            default: $cloud['user'] ?? 'larakube',
-            required: true,
-        );
-
-        $port = text(
-            label: 'SSH Port',
-            default: $cloud['port'] ?? '22',
-        );
-
-        $key = text(
-            label: 'Path to SSH Private Key',
-            default: $cloud['key'] ?? $_SERVER['HOME'].'/.ssh/id_rsa',
-        );
-
-        $config->setCloud($environment, [
-            'ip' => $ip,
-            'user' => $user,
-            'port' => (int) $port,
-            'key' => $key,
-        ]);
+        // Pick a managed kube-context (DOKS/EKS/…) OR a VPS, and OVERWRITE any
+        // existing cloud config — no hand-editing of .larakube.json required. The
+        // picker records {context, provider} for a managed cluster (and defaults
+        // its storageClass) or {ip, user, port, key} for a VPS.
+        $config = $this->promptCloudTarget($config, $environment, $projectPath);
 
         // 🌐 Ensure Web Domain is set for this env (fires for any non-local env).
         // Re-prompt when the host is missing, the {name}.com placeholder, OR a
@@ -141,15 +121,34 @@ trait ConfiguresCloudEnvironment
             ],
         );
 
+        $registryProvider = RegistryProvider::from($provider);
+
+        // The image path MUST include the owner (ghcr.io/<owner>/<repo>,
+        // docker.io/<owner>/<repo>) — a bare name pushes to a namespace you can't
+        // write to ("denied"). Best default: the GitHub repo (owner/repo) parsed
+        // straight from the git remote; fall back to the gh-detected owner + app.
+        $default = $this->guessImageFromGitRemote($projectPath);
+        if ($default === '' && $registryProvider === RegistryProvider::GHCR) {
+            $owner = trim((string) shell_exec($this->getGhCommand().' api user -q .login 2>/dev/null'));
+            if ($owner !== '') {
+                $default = $owner.'/'.$config->getName();
+            }
+        }
+
         $image = text(
-            label: 'Image repository path (optional, e.g. owner/repo)',
-            placeholder: "Leave blank for default: {$config->getName()}",
-            required: false,
+            label: 'Image repository path (owner/repo)',
+            placeholder: $default !== '' ? $default : 'your-username/'.$config->getName(),
+            default: $default,
+            required: true,
+            hint: 'Must include the owner — e.g. '.($default !== '' ? $default : 'acme/'.$config->getName()),
+            validate: fn (string $v) => str_contains(trim($v), '/')
+                ? null
+                : 'Include the owner: owner/repo (e.g. your-username/'.$config->getName().').',
         );
 
         $registry = new RegistryData(
-            provider: RegistryProvider::from($provider),
-            image: $image !== '' ? $image : null,
+            provider: $registryProvider,
+            image: trim($image),
         );
 
         $config->environments[$environment]->registry = $registry;
@@ -162,6 +161,27 @@ trait ConfiguresCloudEnvironment
         $this->info("Image: {$imageLabel}");
 
         return 0;
+    }
+
+    /**
+     * Parse `owner/repo` from the project's git `origin` remote — works for both
+     * SSH (`git@github.com:owner/repo.git`) and HTTPS
+     * (`https://github.com/owner/repo`) forms by taking the last two path
+     * segments. Returns '' when there's no remote.
+     */
+    protected function guessImageFromGitRemote(string $projectPath): string
+    {
+        $remote = trim((string) shell_exec('git -C '.escapeshellarg($projectPath).' remote get-url origin 2>/dev/null'));
+        if ($remote === '') {
+            return '';
+        }
+
+        $remote = (string) preg_replace('/\.git$/', '', $remote);
+        $parts = array_values(array_filter(preg_split('#[/:]#', $remote) ?: []));
+
+        return count($parts) >= 2
+            ? $parts[count($parts) - 2].'/'.$parts[count($parts) - 1]
+            : '';
     }
 
     /**

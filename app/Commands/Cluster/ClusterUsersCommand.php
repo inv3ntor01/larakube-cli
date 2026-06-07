@@ -2,7 +2,9 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ResolvesNamespaceArg;
 
 use function Laravel\Prompts\table;
 
@@ -10,7 +12,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterUsersCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithProjectConfig, LaraKubeOutput, ResolvesNamespaceArg;
 
     protected $signature = 'cluster:users
         {namespace? : Audit one namespace\'s live deployer scope (omit to list every LaraKube deploy SA)}
@@ -32,6 +34,10 @@ class ClusterUsersCommand extends Command
         $kubectl = 'kubectl'.($this->option('context') ? ' --context '.escapeshellarg((string) $this->option('context')) : '');
 
         $namespace = $this->argument('namespace');
+        // Accept an environment name ("production") in-project → {name}-{env}.
+        if ($namespace !== null && $namespace !== '') {
+            $namespace = $this->resolveNamespaceArg((string) $namespace);
+        }
 
         return $namespace ? $this->showScope($kubectl, $namespace) : $this->listUsers($kubectl);
     }
@@ -105,7 +111,7 @@ class ClusterUsersCommand extends Command
 
         if (! is_array($role) || ($role['kind'] ?? '') !== 'Role') {
             $this->laraKubeError("No '{$this->sa}' Role in namespace '{$namespace}'.");
-            $this->line('  Run `larakube cluster:users` to see which namespaces have one.');
+            $this->line('  Run `larakube cluster:users` (no arguments) to list namespaces that have one.');
 
             return 1;
         }
