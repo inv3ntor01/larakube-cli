@@ -352,8 +352,10 @@ trait GeneratesProjectInfrastructure
         // their accessMode can follow that env's deployment strategy
         // (ReadWriteOnce for single-node, ReadWriteMany for multi-node-HA).
         foreach (array_merge(['local'], $cloudEnvs) as $env) {
-            // Multi-node uses a per-pod emptyDir (no shared PVC), so skip app-volumes.
-            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA) {
+            // Multi-node WITHOUT sharedStorage uses a per-pod emptyDir (no shared
+            // PVC), so skip app-volumes there. Single-node, or multi-node+shared
+            // (RWX on NFS), still gets the PVC.
+            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA && ! $config->usesSharedStorage($env)) {
                 continue;
             }
             @mkdir("$k8sPath/overlays/$env", 0755, true);
@@ -424,10 +426,10 @@ trait GeneratesProjectInfrastructure
             $this->appendToKustomization($k8sPath, "overlays/$env", 'ingress-patch.yaml', 'patches');
         }
 
-        // Register the per-env app storage PVCs (single-node only — multi-node
-        // has no shared PVC).
+        // Register the per-env app storage PVCs (single-node, or multi-node+shared;
+        // multi-node default has no shared PVC).
         foreach (array_merge(['local'], $cloudEnvs) as $env) {
-            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA) {
+            if ($config->getStrategy($env) === DeploymentStrategy::MULTI_NODE_HA && ! $config->usesSharedStorage($env)) {
                 continue;
             }
             $this->appendToKustomization($k8sPath, "overlays/$env", 'app-volumes.yaml');
@@ -438,7 +440,9 @@ trait GeneratesProjectInfrastructure
         // see GuardsSharedStorage). Targeted by pod NAME so service pods
         // (postgres/redis/minio) keep their own data PVCs untouched.
         foreach ($cloudEnvs as $env) {
-            if ($config->getStrategy($env) !== DeploymentStrategy::MULTI_NODE_HA) {
+            // Only the default multi-node path (no sharedStorage) swaps to emptyDir;
+            // sharedStorage envs keep the shared RWX PVC instead.
+            if ($config->getStrategy($env) !== DeploymentStrategy::MULTI_NODE_HA || $config->usesSharedStorage($env)) {
                 continue;
             }
 

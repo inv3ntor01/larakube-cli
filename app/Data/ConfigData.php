@@ -37,6 +37,10 @@ class ConfigData extends Data
     // infra coordinates are never pushed. Gitignored; merged in at load time.
     const string LOCAL_CONFIG_FILE = '.larakube.local.json';
 
+    // The RWX StorageClass that `cloud:provision:nfs` installs (in-cluster NFS),
+    // used by envs that opt into shared cross-node storage (sharedStorage).
+    const string NFS_STORAGE_CLASS = 'larakube-nfs';
+
     public function __construct(
         public string $id = '',
         public ?string $name = null,
@@ -604,6 +608,12 @@ class ConfigData extends Data
         }
 
         return $this->strategy;
+    }
+
+    /** Does this env opt into shared (RWX) cross-node storage? (Only meaningful on multi-node.) */
+    public function usesSharedStorage(string $environment): bool
+    {
+        return $this->getEnvironment($environment)?->sharedStorage ?? false;
     }
 
     public function getPackageManager(): PackageManager
@@ -1418,20 +1428,6 @@ class ConfigData extends Data
         }
     }
 
-    /** Append a pattern to the project's .gitignore if not already present. */
-    protected static function ensureGitignored(string $directory, string $pattern): void
-    {
-        $gitignore = "$directory/.gitignore";
-        $existing = is_file($gitignore) ? (string) file_get_contents($gitignore) : '';
-
-        if (preg_match('/^\s*'.preg_quote($pattern, '/').'\s*$/m', $existing)) {
-            return;
-        }
-
-        $prefix = ($existing !== '' && ! str_ends_with($existing, "\n")) ? "\n" : '';
-        file_put_contents($gitignore, $prefix.$pattern."\n", FILE_APPEND);
-    }
-
     public function backupToCluster(string $namespace): bool
     {
         $json = $this->toJson(JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
@@ -1457,6 +1453,20 @@ class ConfigData extends Data
         }
 
         return self::from(json_decode(base64_decode($encoded), true));
+    }
+
+    /** Append a pattern to the project's .gitignore if not already present. */
+    protected static function ensureGitignored(string $directory, string $pattern): void
+    {
+        $gitignore = "$directory/.gitignore";
+        $existing = is_file($gitignore) ? (string) file_get_contents($gitignore) : '';
+
+        if (preg_match('/^\s*'.preg_quote($pattern, '/').'\s*$/m', $existing)) {
+            return;
+        }
+
+        $prefix = ($existing !== '' && ! str_ends_with($existing, "\n")) ? "\n" : '';
+        file_put_contents($gitignore, $prefix.$pattern."\n", FILE_APPEND);
     }
 
     /**

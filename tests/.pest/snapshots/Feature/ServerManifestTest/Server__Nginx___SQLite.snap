@@ -151,6 +151,7 @@ spec:
     requests:
       storage: 1Gi
 ---
+
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -344,6 +345,7 @@ spec:
     requests:
       storage: 1Gi
 ---
+
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

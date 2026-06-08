@@ -49,6 +49,21 @@ trait GuardsSharedStorage
             return $this->allowStorageOverride();
         }
 
+        // Opted into shared (RWX) storage → state is shared across nodes, so no
+        // per-pod data-loss concern. Just make sure the NFS provisioner is there.
+        if ($config->usesSharedStorage($environment)) {
+            if ($context !== null && $context !== '' && ! $this->nfsStorageClassPresent($context)) {
+                $this->laraKubeWarn("⚠ '{$environment}' uses shared storage, but the NFS provisioner isn't installed.");
+                $this->line('  The shared ReadWriteMany PVC will stay Pending until you run');
+                $this->line('  <fg=yellow>larakube cloud:provision:nfs</> on this cluster.');
+                $this->newLine();
+
+                return $this->allowStorageOverride();
+            }
+
+            return true;
+        }
+
         // Anything still on local storage is per-pod ephemeral on multi-node.
         $risky = $this->localStateDrivers($config, $environment);
         if ($risky === []) {
@@ -117,6 +132,14 @@ trait GuardsSharedStorage
         }
 
         return $risky;
+    }
+
+    /** Is the larakube-nfs StorageClass (cloud:provision:nfs) installed on this cluster? */
+    protected function nfsStorageClassPresent(string $context): bool
+    {
+        exec('kubectl --context '.escapeshellarg($context).' get storageclass '.escapeshellarg(ConfigData::NFS_STORAGE_CLASS).' -o name 2>/dev/null', $out, $code);
+
+        return $code === 0;
     }
 
     /**

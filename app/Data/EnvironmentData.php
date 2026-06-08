@@ -149,5 +149,14 @@ class EnvironmentData extends Data
          * Example: {"provider": "ghcr"} or {"provider": "dockerhub", "image": "owner/repo"}
          */
         public ?RegistryData $registry = null,
+        /**
+         * Opt-in shared (ReadWriteMany) storage for THIS env on multi-node. Default
+         * false → multi-node app pods are stateless (per-pod emptyDir) and state is
+         * externalized. Set true for apps that genuinely need a shared cross-node
+         * folder (e.g. a sitemap written by a worker and served by web): LaraKube
+         * points the shared PVC at the in-cluster NFS StorageClass (RWX) instead of
+         * an emptyDir. Requires the NFS provisioner — `larakube cloud:provision:nfs`.
+         */
+        public bool $sharedStorage = false,
     ) {}
 }

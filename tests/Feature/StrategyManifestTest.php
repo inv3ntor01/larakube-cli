@@ -42,6 +42,58 @@ test('Strategy: multi-node has no shared PVC — app pods use a per-pod emptyDir
     expect($local[0]['spec']['accessModes'][0])->toBe('ReadWriteOnce');
 });
 
+test('multi-node + sharedStorage keeps a shared RWX PVC on the NFS class (no emptyDir)', function () {
+    $config = ConfigData::from([
+        'name' => 'shared-test',
+        'serverVariation' => 'fpm-nginx',
+        'phpVersion' => '8.5',
+        'database' => 'postgres',
+        'environments' => [
+            'local' => [],
+            'production' => [
+                'strategy' => 'multi-node-ha',
+                'sharedStorage' => true,
+                'hosts' => ['web' => 'shared.example'],
+            ],
+        ],
+    ]);
+
+    $manifests = generateManifestsAsArray($config);
+
+    // The shared PVC exists, ReadWriteMany, on the in-cluster NFS class…
+    $vols = $manifests['overlays/production/app-volumes.yaml'];
+    $storage = collect($vols)->first(fn ($d) => str_ends_with($d['metadata']['name'] ?? '', 'laravel-storage-pvc'));
+    expect($storage['spec']['accessModes'][0])->toBe('ReadWriteMany')
+        ->and($storage['spec']['storageClassName'])->toBe('larakube-nfs');
+
+    // …and NO emptyDir swap patch — the pods share the PVC.
+    expect($manifests)->not->toHaveKey('overlays/production/storage-emptydir.yaml');
+});
+
+test('the NFS server manifest renders with the backing StorageClass and a readiness probe', function () {
+    $yaml = view('k8s.nfs.server', ['size' => '10Gi', 'storageClass' => 'do-block-storage'])->render();
+
+    expect($yaml)
+        ->toContain('kind: Namespace')
+        ->toContain('app: nfs-server')
+        ->toContain('storageClassName: do-block-storage')
+        ->toContain('readinessProbe');
+});
+
+test('the NFS provisioner manifest renders with the larakube-nfs StorageClass and data-safety options', function () {
+    $yaml = view('k8s.nfs.provisioner', ['archiveOnDelete' => 'true', 'reclaimPolicy' => 'Retain'])->render();
+
+    expect($yaml)
+        ->toContain('name: larakube-nfs')
+        ->toContain('provisioner: larakube.io/nfs')
+        ->toContain('kind: StorageClass')
+        ->toContain('kind: PersistentVolume')
+        ->toContain('nfs-server.nfs.svc.cluster.local')
+        ->toContain('archiveOnDelete: "true"')
+        ->toContain('reclaimPolicy: Retain')
+        ->toContain('nfsvers=4.1');
+});
+
 test('scheduler CronJob gets a cloud wait override that excludes managed services', function () {
     $config = ConfigData::from([
         'name' => 'sched-test',
