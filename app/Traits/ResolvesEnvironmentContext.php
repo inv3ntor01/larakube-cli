@@ -232,6 +232,132 @@ trait ResolvesEnvironmentContext
         return $this->getProjectConfig($projectPath);
     }
 
+    /**
+     * Let the user choose one of the project's cloud environments (production,
+     * staging, …) by name — the env-first DX the cluster:* commands share so
+     * nobody has to memorize namespaces or contexts. Auto-selects a lone env;
+     * null when the project has none.
+     */
+    protected function pickEnvironment(ConfigData $config): ?string
+    {
+        $envs = $config->getCloudEnvironments();
+        if (empty($envs)) {
+            return null;
+        }
+        if (count($envs) === 1) {
+            return $envs[0];
+        }
+
+        $options = [];
+        foreach ($envs as $env) {
+            $context = $this->environmentContextOrCurrent($config, $env);
+            $options[$env] = $env.'  →  '.$config->getNamespace($env).'  ('.($context ?? 'current context').')';
+        }
+
+        return select(label: 'Which environment?', options: $options);
+    }
+
+    /**
+     * Standalone (outside a project) kube-context selection — never silently
+     * default to whatever kubectl happens to point at. An explicit --context
+     * wins; otherwise let the user pick from the kubeconfig (current context
+     * pre-selected). Auto-selects a lone context; null when there are none.
+     */
+    protected function pickContext(?string $explicit = null): ?string
+    {
+        if ($explicit !== null && $explicit !== '') {
+            return $explicit;
+        }
+
+        $contexts = $this->availableKubeContexts();
+        if (empty($contexts)) {
+            return null;
+        }
+        if (count($contexts) === 1) {
+            return $contexts[0];
+        }
+
+        $current = trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+
+        return select(
+            label: 'Which cluster (kube-context)?',
+            options: array_combine($contexts, $contexts),
+            default: in_array($current, $contexts, true) ? $current : $contexts[0],
+        );
+    }
+
+    /**
+     * Resolve [namespace, context] for a cluster:* command from its target arg.
+     * In a project: environment-first (pick or name an env) → that env's namespace
+     * and its OWN context, so the command acts on the right cluster regardless of
+     * the current one. Standalone: a literal namespace + a context picker (never a
+     * silent default). Emits its own errors and returns [null, null] when it can't
+     * resolve, so callers just `if ($ns === null) return 1;`.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    protected function resolveClusterTarget(string $arg, ?string $explicitContext): array
+    {
+        $config = $this->getProjectConfig(getcwd());
+
+        // Env-first inside a project (bare → pick; a known env name → use it).
+        if ($config !== null && ($arg === '' || $config->getEnvironment($arg) !== null)) {
+            $env = $arg !== '' ? $arg : $this->pickEnvironment($config);
+            if ($env === null) {
+                $this->laraKubeError('This project has no cloud environments yet — add one with `larakube env <name>`.');
+
+                return [null, null];
+            }
+
+            $context = ($explicitContext !== null && $explicitContext !== '')
+                ? $explicitContext
+                : ($this->environmentContextOrCurrent($config, $env) ?? trim((string) shell_exec('kubectl config current-context 2>/dev/null')));
+
+            return [$config->getNamespace($env), $context !== '' ? $context : null];
+        }
+
+        // Standalone, or an explicit literal namespace.
+        if ($arg === '') {
+            $this->laraKubeError('Provide a namespace, or run inside a project to pick an environment.');
+
+            return [null, null];
+        }
+
+        $context = $this->pickContext($explicitContext);
+        if ($context === null) {
+            $this->laraKubeError('No kube-contexts found — is kubectl configured?');
+
+            return [null, null];
+        }
+
+        return [$arg, $context];
+    }
+
+    /**
+     * Resolve just a CONTEXT (no namespace) for cluster-wide actions like a full
+     * teammate off-board. Env-first in a project (pick an env → its cluster);
+     * standalone, a context picker. Null when nothing can be chosen.
+     */
+    protected function resolveClusterContext(?string $explicit): ?string
+    {
+        if ($explicit !== null && $explicit !== '') {
+            return $explicit;
+        }
+
+        $config = $this->getProjectConfig(getcwd());
+        if ($config !== null && ! empty($config->getCloudEnvironments())) {
+            $env = $this->pickEnvironment($config);
+            if ($env !== null) {
+                $context = $this->environmentContextOrCurrent($config, $env)
+                    ?? trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
+
+                return $context !== '' ? $context : null;
+            }
+        }
+
+        return $this->pickContext(null);
+    }
+
     /** Node count for a kube-context (0 when unreachable / unknown). */
     protected function clusterNodeCount(string $context): int
     {

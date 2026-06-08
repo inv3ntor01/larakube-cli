@@ -46,13 +46,15 @@ trait InteractsWithTeammateRbac
     }
 
     /**
-     * Deterministic, cross-machine-consistent context name from the API server URL
-     * (`https://1.2.3.4:6443` → `larakube-1.2.3.4`). Everyone granted the same
-     * cluster sees the same context name. Pure.
+     * The context name a teammate sees — meaningful (app+env), not the cluster's
+     * API hostname. A namespace like `react-test-production` → `larakube-react-test-production`,
+     * so it reads cleanly on managed clusters too (a DOKS host would be a 60-char
+     * UUID). Deterministic, so everyone granted the same app/env sees the same name,
+     * and re-import is idempotent. Pure.
      */
-    public function teammateContextName(string $server): string
+    public function teammateContextName(string $appNamespace): string
     {
-        return 'larakube-'.(parse_url($server, PHP_URL_HOST) ?: 'cluster');
+        return 'larakube-'.($appNamespace !== '' ? $appNamespace : 'cluster');
     }
 
     /** Namespace + ServiceAccount + bound-token Secret for a person (central ns). Pure. */
@@ -121,8 +123,9 @@ YAML;
     }
 
     /**
-     * A teammate kubeconfig whose context is named for the CLUSTER (consistent
-     * across everyone's machines), defaulting to one app namespace. Pure.
+     * A teammate kubeconfig whose context is named for the APP+ENV (so it reads
+     * cleanly and tells them what they're operating), defaulting to that namespace.
+     * Pure.
      */
     public function assembleTeammateKubeconfig(string $contextName, string $server, string $caData, string $defaultNamespace, string $token, string $user): string
     {

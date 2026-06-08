@@ -4,7 +4,7 @@ namespace App\Commands\Cluster;
 
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
-use App\Traits\ResolvesNamespaceArg;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\table;
 
@@ -12,13 +12,14 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterUsersCommand extends Command
 {
-    use InteractsWithProjectConfig, LaraKubeOutput, ResolvesNamespaceArg;
+    use InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'cluster:users
-        {namespace? : Audit one namespace\'s live deployer scope (omit to list every LaraKube deploy SA)}
-        {--context= : Target a specific kube-context (defaults to your current one)}';
+        {environment? : An environment (in-project) — lists who has access. Omit to pick from the project\'s envs}
+        {--scope : Audit the deploy SA\'s live RBAC rules instead of listing people}
+        {--context= : Standalone: target a kube-context directly (when not in a project)}';
 
-    protected $description = 'List the namespace-scoped deploy ServiceAccounts LaraKube created, or audit one\'s live RBAC scope';
+    protected $description = 'List who has access to a namespace (or every LaraKube identity cluster-wide); --scope audits the deploy SA rules';
 
     /** Deterministic name of the scoped deploy ServiceAccount/Role/RoleBinding. */
     private string $sa = 'deployer';
@@ -27,19 +28,89 @@ class ClusterUsersCommand extends Command
     {
         $this->renderHeader();
 
-        $context = $this->option('context') ?: trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
-        $this->line('  <fg=gray>Context:</> <fg=cyan>'.($context !== '' ? $context : 'current').'</>');
-        $this->laraKubeNewLine();
+        $config = $this->getProjectConfig(getcwd());
+        $arg = (string) ($this->argument('environment') ?? '');
 
-        $kubectl = 'kubectl'.($this->option('context') ? ' --context '.escapeshellarg((string) $this->option('context')) : '');
+        // Inside a project, drive everything by ENVIRONMENT — no one memorizes
+        // context or namespace names. Pick from the project's envs (or name one),
+        // and target that env's OWN cluster context automatically.
+        if ($config !== null && ($arg === '' || $config->getEnvironment($arg) !== null)) {
+            $env = $arg !== '' ? $arg : $this->pickEnvironment($config);
+            if ($env === null) {
+                $this->laraKubeWarn('This project has no cloud environments yet — add one with `larakube env <name>`.');
 
-        $namespace = $this->argument('namespace');
-        // Accept an environment name ("production") in-project → {name}-{env}.
-        if ($namespace !== null && $namespace !== '') {
-            $namespace = $this->resolveNamespaceArg((string) $namespace);
+                return 0;
+            }
+
+            $namespace = $config->getNamespace($env);
+            $context = $this->environmentContextOrCurrent($config, $env);
+            $kubectl = $this->contextKubectl($context);
+
+            $this->line('  <fg=gray>Environment:</> <fg=cyan>'.$env.'</>  <fg=gray>·</> <fg=cyan>'.$namespace.'</>  <fg=gray>·</> <fg=cyan>'.($context ?? 'current context').'</>');
+            $this->laraKubeNewLine();
+
+            return $this->option('scope') ? $this->showScope($kubectl, $namespace) : $this->showAccess($kubectl, $namespace);
         }
 
-        return $namespace ? $this->showScope($kubectl, $namespace) : $this->listUsers($kubectl);
+        // Standalone (outside a project, or an explicit literal namespace) — pick
+        // a context rather than silently defaulting to whatever kubectl points at.
+        $context = $this->pickContext($this->option('context'));
+        if ($context === null) {
+            $this->laraKubeError('No kube-contexts found — is kubectl configured?');
+
+            return 1;
+        }
+        $this->line('  <fg=gray>Context:</> <fg=cyan>'.$context.'</>');
+        $this->laraKubeNewLine();
+        $kubectl = $this->contextKubectl($context);
+
+        if ($arg === '') {
+            return $this->listUsers($kubectl);
+        }
+
+        return $this->option('scope') ? $this->showScope($kubectl, $arg) : $this->showAccess($kubectl, $arg);
+    }
+
+    /** List every identity (teammates + deploy SA) bound to one namespace. */
+    protected function showAccess(string $kubectl, string $namespace): int
+    {
+        $bindings = $this->kubectlItems($kubectl.' get rolebinding -n '.escapeshellarg($namespace).' -l app.kubernetes.io/managed-by=larakube -o json 2>/dev/null');
+
+        if (empty($bindings)) {
+            $this->laraKubeInfo("No LaraKube access grants in '{$namespace}'.");
+            $this->line('  <fg=gray>Grant a teammate:</> <fg=yellow>larakube cluster:grant '.$namespace.' --name <person></>');
+            $this->line('  <fg=gray>Audit the deploy SA rules:</> <fg=yellow>larakube cluster:users '.$namespace.' --scope</>');
+
+            return 0;
+        }
+
+        // One lookup of teammate SAs → friendly person names for the rows.
+        $people = [];
+        foreach ($this->kubectlItems($kubectl.' get sa -A -l larakube.dev/access-user -o json 2>/dev/null') as $sa) {
+            $n = $sa['metadata']['name'] ?? '';
+            $people[$n] = $sa['metadata']['annotations']['larakube.dev/person'] ?? $n;
+        }
+
+        $rows = [];
+        foreach ($bindings as $rb) {
+            $role = $rb['roleRef']['name'] ?? '?';
+            $teammate = isset($rb['metadata']['labels']['larakube.dev/access-user']);
+            foreach ($rb['subjects'] ?? [] as $s) {
+                if (($s['kind'] ?? '') !== 'ServiceAccount') {
+                    continue;
+                }
+                $saName = $s['name'] ?? '?';
+                $who = $teammate ? ($people[$saName] ?? $saName) : $saName;
+                $rows[] = [$who, $role, $teammate ? 'teammate' : 'deploy (CI)'];
+            }
+        }
+
+        $this->laraKubeInfo("Access to '{$namespace}'");
+        table(['Who', 'Role', 'Type'], $rows);
+        $this->line('  <fg=gray>Grant:</> <fg=yellow>larakube cluster:grant '.$namespace.' --name <person></>  <fg=gray>· Revoke:</> <fg=yellow>larakube cluster:revoke '.$namespace.' --name <person></>');
+        $this->line('  <fg=gray>Deploy SA rules:</> <fg=yellow>larakube cluster:users '.$namespace.' --scope</>');
+
+        return 0;
     }
 
     /** List larakube-managed deploy SAs and teammate identities across the cluster. */
@@ -75,7 +146,7 @@ class ClusterUsersCommand extends Command
             }
             $this->line('  <fg=green>Deploy credentials</>');
             table(['Namespace', 'ServiceAccount', 'App', 'Env', 'CI token'], $rows);
-            $this->line('  <fg=gray>Audit one:</> <fg=yellow>larakube cluster:users '.$rows[0][0].'</>');
+            $this->line('  <fg=gray>Who has access to one:</> <fg=yellow>larakube cluster:users '.$rows[0][0].'</>  <fg=gray>· its rules:</> <fg=yellow>… '.$rows[0][0].' --scope</>');
         }
 
         if (! empty($teammates)) {

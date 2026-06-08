@@ -20,8 +20,9 @@ test('presets map to built-in ClusterRoles, defaulting to edit', function () {
     expect($t->presetClusterRole(read: true, edit: false, admin: true))->toBe('admin');     // admin wins
 });
 
-test('the context name is derived from the cluster host (consistent across machines)', function () {
-    expect(teammateRbac()->teammateContextName('https://167.71.214.14:6443'))->toBe('larakube-167.71.214.14');
+test('the context name is meaningful (app+env namespace), not the cluster host', function () {
+    expect(teammateRbac()->teammateContextName('react-test-production'))->toBe('larakube-react-test-production');
+    expect(teammateRbac()->teammateContextName(''))->toBe('larakube-cluster');
 });
 
 test('a person name becomes a k8s-safe ServiceAccount name', function () {

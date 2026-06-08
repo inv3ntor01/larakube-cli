@@ -6,7 +6,7 @@ use App\Traits\InteractsWithGlobalConfig;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithTeammateRbac;
 use App\Traits\LaraKubeOutput;
-use App\Traits\ResolvesNamespaceArg;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\confirm;
 
@@ -14,12 +14,12 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterRevokeCommand extends Command
 {
-    use InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesNamespaceArg;
+    use InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'cluster:revoke
-        {namespace? : The namespace — a deploy credential, or one app to drop a teammate from}
-        {--name= : Revoke a TEAMMATE (omit the namespace to off-board them entirely)}
-        {--context= : Target a specific kube-context}
+        {environment? : An environment (in-project) or namespace — a deploy credential, or one app to drop a teammate from}
+        {--name= : Revoke a TEAMMATE (omit the environment to off-board them entirely)}
+        {--context= : Standalone: target a kube-context directly (when not in a project)}
         {--with-secret : Also delete the GitHub <ENV>_KUBECONFIG secret (deploy revoke only; best-effort)}
         {--force : Skip the confirmation prompt}';
 
@@ -31,21 +31,22 @@ class ClusterRevokeCommand extends Command
     {
         $this->renderHeader();
 
-        $kubectl = 'kubectl'.($this->option('context') ? ' --context '.escapeshellarg((string) $this->option('context')) : '');
+        $arg = (string) ($this->argument('environment') ?? '');
 
         // Teammate path (--name) vs deploy-credential path (the default).
         if ($this->option('name')) {
-            return $this->revokeTeammate($kubectl, (string) $this->option('name'));
+            return $this->revokeTeammate((string) $this->option('name'), $arg);
         }
 
-        $namespace = (string) $this->argument('namespace');
-        if ($namespace === '') {
-            $this->laraKubeError('Provide a namespace (deploy credential) or --name <teammate>.');
-
+        // Deploy-credential path — env-first (or a literal namespace standalone).
+        [$namespace, $context] = $this->resolveClusterTarget($arg, $this->option('context'));
+        if ($namespace === null || $context === null) {
             return 1;
         }
-        $namespace = $this->resolveNamespaceArg($namespace);   // accept an env name in-project
+        $kubectl = $this->contextKubectl($context);
         $ns = escapeshellarg($namespace);
+        $this->line('  <fg=gray>Cluster:</> <fg=cyan>'.$context.'</>');
+        $this->laraKubeNewLine();
 
         $this->laraKubeWarn("This removes deploy access to '{$namespace}' — the '{$this->sa}' ServiceAccount, Role, RoleBinding, and token.");
         $this->line('  <fg=gray>Running workloads are untouched — use `cloud:nuke` to remove the app itself.</>');
@@ -78,7 +79,7 @@ class ClusterRevokeCommand extends Command
      * given, or off-board entirely (every RoleBinding cluster-wide + the SA + token)
      * when it isn't. Their kubeconfig is unchanged but its token stops working.
      */
-    protected function revokeTeammate(string $kubectl, string $name): int
+    protected function revokeTeammate(string $name, string $arg): int
     {
         $sa = $this->teammateSaName($name);
         if ($sa === '') {
@@ -87,14 +88,15 @@ class ClusterRevokeCommand extends Command
             return 1;
         }
 
-        $namespace = (string) $this->argument('namespace');
-        if ($namespace !== '') {
-            $namespace = $this->resolveNamespaceArg($namespace);   // accept an env name in-project
-        }
+        // An env/namespace named → remove from just that one (env-first resolution).
+        if ($arg !== '') {
+            [$namespace, $context] = $this->resolveClusterTarget($arg, $this->option('context'));
+            if ($namespace === null || $context === null) {
+                return 1;
+            }
+            $kubectl = $this->contextKubectl($context);
 
-        // Remove from a single app — drop just that RoleBinding.
-        if ($namespace !== '') {
-            $this->laraKubeWarn("This removes '{$name}'s access to '{$namespace}' (their other apps, if any, keep working).");
+            $this->laraKubeWarn("This removes '{$name}'s access to '{$namespace}' on '{$context}' (their other apps, if any, keep working).");
             if (! $this->option('force') && ! confirm("Revoke {$name}'s access to '{$namespace}'?", false)) {
                 $this->laraKubeInfo('Cancelled.');
 
@@ -106,8 +108,17 @@ class ClusterRevokeCommand extends Command
             return 0;
         }
 
-        // Full off-board — every binding (by label, across namespaces) + identity.
-        $this->laraKubeWarn("This OFF-BOARDS '{$name}' entirely — all RoleBindings, the ServiceAccount, and token. Their kubeconfig becomes inert.");
+        // No env named → full off-board. Pick the cluster to off-board from.
+        $context = $this->resolveClusterContext($this->option('context'));
+        if ($context === null) {
+            $this->laraKubeError('No kube-context to off-board from — pass --context or configure kubectl.');
+
+            return 1;
+        }
+        $kubectl = $this->contextKubectl($context);
+
+        // Full off-board — every binding (by label, across namespaces) + identity on this cluster.
+        $this->laraKubeWarn("This OFF-BOARDS '{$name}' on '{$context}' — all their RoleBindings, the ServiceAccount, and token. Their kubeconfig for this cluster becomes inert.");
         if (! $this->option('force') && ! confirm("Off-board '{$name}' completely?", false)) {
             $this->laraKubeInfo('Cancelled.');
 

@@ -6,7 +6,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithScopedRbac;
 use App\Traits\InteractsWithTeammateRbac;
 use App\Traits\LaraKubeOutput;
-use App\Traits\ResolvesNamespaceArg;
+use App\Traits\ResolvesEnvironmentContext;
 
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
@@ -15,35 +15,32 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterGrantCommand extends Command
 {
-    use InteractsWithProjectConfig, InteractsWithScopedRbac, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesNamespaceArg;
+    use InteractsWithProjectConfig, InteractsWithScopedRbac, InteractsWithTeammateRbac, LaraKubeOutput, ResolvesEnvironmentContext;
 
     protected $signature = 'cluster:grant
-        {namespace : The <app>-<env> namespace (or an env name in-project) to grant access to}
+        {environment? : An environment (in-project) or a literal namespace (standalone) to grant access on}
         {--name= : The teammate (their identity — reused across apps)}
         {--read : Read-only (view): logs + status, no exec/secrets}
         {--edit : Operate the app (edit) — the DEFAULT}
         {--admin : Namespace-admin (edit + manage access within the namespace)}
-        {--context= : Target a specific kube-context (defaults to your current one)}';
+        {--context= : Standalone: target a kube-context directly (when not in a project)}';
 
-    protected $description = 'Grant a teammate scoped access to a namespace (re-run to upgrade/downgrade their role or add another app)';
+    protected $description = 'Grant a teammate scoped access to an environment (re-run to upgrade/downgrade their role or add another app)';
 
     public function handle(): int
     {
         $this->renderHeader();
 
-        $appNs = $this->resolveNamespaceArg((string) $this->argument('namespace'));
+        [$appNs, $adminContext] = $this->resolveClusterTarget((string) ($this->argument('environment') ?? ''), $this->option('context'));
+        if ($appNs === null || $adminContext === null) {
+            return 1;
+        }
+
         $name = (string) ($this->option('name') ?: text(label: 'Teammate name', placeholder: 'lloyd', required: true));
         $sa = $this->teammateSaName($name);
 
         if ($sa === '') {
             $this->laraKubeError('Could not derive a valid identity from that name.');
-
-            return 1;
-        }
-
-        $adminContext = $this->option('context') ?: trim((string) shell_exec('kubectl config current-context 2>/dev/null'));
-        if ($adminContext === '') {
-            $this->laraKubeError('No kube-context. Pass --context or set a current context.');
 
             return 1;
         }
@@ -59,6 +56,7 @@ class ClusterGrantCommand extends Command
         $ctx = escapeshellarg($adminContext);
 
         $this->laraKubeInfo("Granting '{$name}' [{$role}] on '{$appNs}'...");
+        $this->line("  <fg=gray>Cluster:</> <fg=cyan>{$adminContext}</>");
 
         // 1. Identity — namespace + SA + bound-token Secret (idempotent; an
         //    existing teammate keeps the same token).
@@ -68,12 +66,22 @@ class ClusterGrantCommand extends Command
             return 1;
         }
 
+        // The RoleBinding lives IN the app namespace, so it must exist first
+        // (admin creates it — same as cloud:deploy). A missing namespace is the
+        // usual cause of a bind failure on a fresh cluster.
+        exec("kubectl --context {$ctx} get namespace ".escapeshellarg($appNs).' 2>/dev/null', $nsOut, $nsCode);
+        if ($nsCode !== 0) {
+            $this->laraKubeInfo("Namespace '{$appNs}' doesn't exist yet — creating it.");
+            shell_exec("kubectl --context {$ctx} create namespace ".escapeshellarg($appNs).' 2>/dev/null');
+        }
+
         // 2. RoleBinding in the app namespace. roleRef is immutable, so to support
         //    upgrade/downgrade we delete any existing binding for this user first,
         //    then recreate with the chosen role.
         shell_exec("kubectl --context {$ctx} -n ".escapeshellarg($appNs).' delete rolebinding '.escapeshellarg($this->teammateBindingName($sa)).' --ignore-not-found 2>/dev/null');
-        if (! $this->applyManifest($adminContext, $this->teammateBindingManifest($appNs, $accessNs, $sa, $role))) {
-            $this->laraKubeError("Failed to bind access in '{$appNs}'.");
+        $bindOut = [];
+        if (! $this->applyManifest($adminContext, $this->teammateBindingManifest($appNs, $accessNs, $sa, $role), $bindOut)) {
+            $this->laraKubeError("Failed to bind access in '{$appNs}':\n  ".implode("\n  ", array_slice($bindOut, -3)));
 
             return 1;
         }
@@ -89,12 +97,13 @@ class ClusterGrantCommand extends Command
             return 1;
         }
 
-        $contextName = $this->teammateContextName($server);
+        $contextName = $this->teammateContextName($appNs);
         $kubeconfig = $this->assembleTeammateKubeconfig($contextName, $server, $ca, $appNs, $token, $sa);
 
         $file = getcwd().'/'.$sa.'.kubeconfig';
         file_put_contents($file, $kubeconfig);
         @chmod($file, 0600);
+        $this->ensureKubeconfigIgnored(getcwd());
 
         $this->laraKubeInfo("✅ Granted '{$name}' [{$role}] on '{$appNs}'.");
         $this->line("  <fg=gray>Identity:</> {$accessNs}/{$sa}  <fg=gray>· context they'll see:</> <fg=cyan>{$contextName}</>");
@@ -105,6 +114,31 @@ class ClusterGrantCommand extends Command
         $this->line("  <fg=gray>To add another app later:</> <fg=yellow>larakube cluster:grant <other-ns> --name {$name}</> <fg=gray>(same identity — no new file).</>");
 
         return 0;
+    }
+
+    /**
+     * Make sure the minted kubeconfig can't be committed. Appends `*.kubeconfig`
+     * to the project's .gitignore (creating it for a git repo that lacks one).
+     * Idempotent, and a no-op outside a git repo — so it never litters non-repos.
+     */
+    protected function ensureKubeconfigIgnored(string $dir): void
+    {
+        $pattern = '*.kubeconfig';
+        $gitignore = $dir.'/.gitignore';
+
+        if (! is_dir($dir.'/.git') && ! is_file($gitignore)) {
+            return;
+        }
+
+        $existing = is_file($gitignore) ? (string) file_get_contents($gitignore) : '';
+        if (in_array($pattern, array_map('trim', preg_split('/\R/', $existing) ?: []), true)) {
+            return;
+        }
+
+        $prefix = ($existing !== '' && ! str_ends_with($existing, "\n")) ? "\n" : '';
+        file_put_contents($gitignore, $prefix."\n# LaraKube teammate credentials — never commit these\n{$pattern}\n", FILE_APPEND);
+
+        $this->line('  <fg=gray>Added</> <fg=cyan>'.$pattern.'</> <fg=gray>to .gitignore so the credential is never committed.</>');
     }
 
     /**
@@ -133,11 +167,11 @@ class ClusterGrantCommand extends Command
         );
     }
 
-    protected function applyManifest(string $adminContext, string $manifest): bool
+    protected function applyManifest(string $adminContext, string $manifest, array &$output = []): bool
     {
         $file = tempnam(sys_get_temp_dir(), 'lk_grant_');
         file_put_contents($file, $manifest);
-        exec('kubectl --context '.escapeshellarg($adminContext).' apply -f '.escapeshellarg($file).' 2>&1', $out, $code);
+        exec('kubectl --context '.escapeshellarg($adminContext).' apply -f '.escapeshellarg($file).' 2>&1', $output, $code);
         @unlink($file);
 
         return $code === 0;
