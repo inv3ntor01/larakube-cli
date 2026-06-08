@@ -82,6 +82,22 @@ trait GuardsSharedStorage
         $this->line('   • sessions/cache → redis or database (not `file`)');
         $this->newLine();
 
+        // Offer to do it for them rather than just warn — the easy path becomes the
+        // right path. Skipped under --force / --no-interaction (handled below).
+        if (! $this->option('force') && ! $this->option('no-interaction')
+            && confirm('Externalize these for you now?', default: true)) {
+            $this->call('cloud:externalize', ['environment' => $environment]);
+
+            // Re-read the freshly written .env.{env}; continue if it's all externalized.
+            if ($this->localStateDrivers($config, $environment) === []) {
+                $this->laraKubeInfo('✅ Externalized — continuing the deploy.');
+
+                return true;
+            }
+            $this->laraKubeWarn('Some state is still on local storage.');
+            $this->newLine();
+        }
+
         return $this->allowStorageOverride();
     }
 
