@@ -37,8 +37,9 @@ class BundleInstallCommand extends Command
             }
         }
         if (count($missing) > 0) {
-            $this->laraKubeError('Missing required system tools: ' . implode(', ', $missing));
+            $this->laraKubeError('Missing required system tools: '.implode(', ', $missing));
             $this->line('  <fg=gray>Please ensure these basic Linux utilities are installed before running the offline installer.</>');
+
             return 1;
         }
 
@@ -177,7 +178,7 @@ class BundleInstallCommand extends Command
         $tmpTlsCrt = escapeshellarg($certs['tls_crt']);
         $tmpTlsKey = escapeshellarg($certs['tls_key']);
         shell_exec("kubectl create secret generic traefik-certificates -n traefik --from-file=local-dev.pem={$tmpTlsCrt} --from-file=local-dev-key.pem={$tmpTlsKey} --dry-run=client -o yaml | kubectl apply -f -");
-        
+
         @unlink($tmpCertsYml);
 
         // 7. Deploy Traefik
