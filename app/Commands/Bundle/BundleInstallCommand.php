@@ -109,18 +109,30 @@ class BundleInstallCommand extends Command
         foreach (glob('images/*.tar') as $tar) {
             $this->line("  <fg=gray>import</> {$tar}");
             $success = false;
-            for ($attempt = 1; $attempt <= 3; $attempt++) {
+            for ($attempt = 1; $attempt <= 10; $attempt++) {
                 passthru('k3s ctr images import '.escapeshellarg($tar), $importCode);
                 if ($importCode === 0) {
                     $success = true;
                     break;
                 }
-                $this->line("  <fg=yellow>import failed. Retrying in 3 seconds... ({$attempt}/3)</>");
-                sleep(3);
+
+                $this->line("  <fg=yellow>import failed. Waiting for containerd to recover... ({$attempt}/10)</>");
+
+                // Actively wait for the containerd socket to come back online
+                for ($wait = 0; $wait < 30; $wait++) {
+                    exec('k3s ctr version >/dev/null 2>&1', $output, $code);
+                    if ($code === 0) {
+                        break;
+                    }
+                    sleep(1);
+                }
+
+                // Give it an extra 5 seconds of breathing room after the socket responds
+                sleep(5);
             }
 
             if (! $success) {
-                $this->laraKubeError("Failed to import {$tar} after 3 attempts.");
+                $this->laraKubeError("Failed to import {$tar} after 10 attempts.");
 
                 return 1;
             }
