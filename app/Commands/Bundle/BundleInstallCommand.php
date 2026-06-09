@@ -219,6 +219,15 @@ class BundleInstallCommand extends Command
         @mkdir($certDir, 0700, true);
         $certs = $this->generateSanCertificates(array_values($hosts), $certDir);
 
+        $this->laraKubeInfo('Waiting for Kubernetes API to be ready...');
+        for ($wait = 0; $wait < 60; $wait++) {
+            exec('kubectl get nodes >/dev/null 2>&1', $output, $code);
+            if ($code === 0) {
+                break;
+            }
+            sleep(2);
+        }
+
         // Ensure namespace exists before we create secrets
         shell_exec("kubectl create namespace {$ns} --dry-run=client -o yaml | kubectl apply -f -");
 
