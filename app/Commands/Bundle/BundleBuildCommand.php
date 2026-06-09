@@ -143,19 +143,9 @@ class BundleBuildCommand extends Command
         $binArch = $arch === 'amd64' ? 'x64' : 'arm';
         $binaryName = "larakube-linux-{$binArch}";
         
-        // Smart Local Dev Override: If we are the developer and have cross-compiled locally, use that.
-        // Otherwise, download the official latest release.
-        $homeDir = $_SERVER['HOME'] ?? '';
-        $localDevPath = "{$homeDir}/Codes/Ideas/laravel-k8s/laravel-k8s-cli/builds/standalone/linux/{$binaryName}";
-        
-        if (file_exists($localDevPath)) {
-            $this->line("  <fg=gray>copy</> larakube binary (local dev build for Linux {$binArch})");
-            passthru('cp '.escapeshellarg($localDevPath).' '.escapeshellarg("$outDir/larakube"));
-        } else {
-            $this->line("  <fg=gray>download</> larakube binary (Linux {$binArch})");
-            $binaryUrl = "https://github.com/luchavez-technologies/larakube-cli/releases/latest/download/{$binaryName}";
-            passthru('curl -sL '.escapeshellarg($binaryUrl).' -o '.escapeshellarg("$outDir/larakube"));
-        }
+        $this->line("  <fg=gray>download</> larakube binary (Linux {$binArch})");
+        $binaryUrl = "https://github.com/luchavez-technologies/larakube-cli/releases/latest/download/{$binaryName}";
+        passthru('curl -sL '.escapeshellarg($binaryUrl).' -o '.escapeshellarg("$outDir/larakube"));
         
         passthru('chmod +x '.escapeshellarg("$outDir/larakube"));
 
