@@ -436,6 +436,41 @@ class ConfigData extends Data
         return $merged;
     }
 
+    public function setResources(string $environment, string $component, ?array $resources): self
+    {
+        $this->addEnvironment($environment);
+
+        if (empty($resources)) {
+            unset($this->environments[$environment]->resources[$component]);
+
+            return $this;
+        }
+
+        // Prune redundant overrides that perfectly match the inherited default
+        if ($component !== 'default') {
+            $inherited = $this->getResources($environment, 'default');
+            foreach (['requests', 'limits'] as $kind) {
+                foreach (['cpu', 'memory'] as $dim) {
+                    if (isset($resources[$kind][$dim]) && $resources[$kind][$dim] === ($inherited[$kind][$dim] ?? null)) {
+                        unset($resources[$kind][$dim]);
+                    }
+                }
+                if (isset($resources[$kind]) && empty($resources[$kind])) {
+                    unset($resources[$kind]);
+                }
+            }
+            if (empty($resources)) {
+                unset($this->environments[$environment]->resources[$component]);
+
+                return $this;
+            }
+        }
+
+        $this->environments[$environment]->resources[$component] = $resources;
+
+        return $this;
+    }
+
     /** Is $value a valid Kubernetes CPU/memory quantity (e.g. 100m, 1, 1.5, 256Mi, 1Gi)? */
     public static function isValidQuantity(string $value): bool
     {

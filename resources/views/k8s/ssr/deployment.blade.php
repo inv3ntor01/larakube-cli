@@ -36,6 +36,22 @@ spec:
           command: {!! $config->getPackageManager()->getSsrStartCommand() !!}
           ports:
             - containerPort: 13714
+@php($resources = $config->getResources($environment ?? 'local', 'ssr'))
+@if(!empty($resources['requests']) || !empty($resources['limits']))
+          resources:
+@if(!empty($resources['requests']))
+            requests:
+@foreach($resources['requests'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@if(!empty($resources['limits']))
+            limits:
+@foreach($resources['limits'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@endif
           envFrom:
             - configMapRef:
                 name: laravel-config

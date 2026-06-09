@@ -17,6 +17,22 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+@php($resources = $config->getResources($environment, $name))
+@if(!empty($resources['requests']) || !empty($resources['limits']))
+          resources:
+@if(!empty($resources['requests']))
+            requests:
+@foreach($resources['requests'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@if(!empty($resources['limits']))
+            limits:
+@foreach($resources['limits'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@endif
 @if($pullSecret = $config->getImagePullSecret($environment))
       imagePullSecrets:
         - name: {{ $pullSecret }}
@@ -63,4 +79,22 @@ spec:
           initContainers:
             - name: wait-for-deps
               command: ["sh", "-c", {!! json_encode($config->buildWaitForCommand(\App\Enums\LaravelFeature::TASK_SCHEDULING->getDependencies($config, $environment), waitForWeb: true) ?: 'true', JSON_UNESCAPED_SLASHES) !!}]
+@php($resources = $config->getResources($environment, 'scheduler'))
+@if(!empty($resources['requests']) || !empty($resources['limits']))
+          containers:
+            - name: php
+              resources:
+@if(!empty($resources['requests']))
+                requests:
+@foreach($resources['requests'] as $dim => $val)
+                  {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@if(!empty($resources['limits']))
+                limits:
+@foreach($resources['limits'] as $dim => $val)
+                  {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@endif
 @endif

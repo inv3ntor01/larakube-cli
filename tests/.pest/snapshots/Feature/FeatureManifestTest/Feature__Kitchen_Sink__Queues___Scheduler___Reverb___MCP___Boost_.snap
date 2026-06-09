@@ -52,6 +52,13 @@ spec:
               value: "true"
             - name: AUTORUN_LARAVEL_MIGRATION
               value: "true"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -171,6 +178,13 @@ spec:
           image: kitchen-sink:latest
           imagePullPolicy: IfNotPresent
           args: ["php", "artisan", "queue:work"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -254,6 +268,13 @@ spec:
           args: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8081"]
           ports:
             - containerPort: 8081
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -340,6 +361,13 @@ spec:
               image: kitchen-sink:latest
               imagePullPolicy: IfNotPresent
               args: ["php", "artisan", "schedule:run"]
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1"
+                  memory: "1Gi"
               envFrom:
                 - configMapRef:
                     name: laravel-config
@@ -856,6 +884,13 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
       imagePullSecrets:
         - name: ghcr-login
 
@@ -876,6 +911,13 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
       imagePullSecrets:
         - name: ghcr-login
 
@@ -896,6 +938,13 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
       imagePullSecrets:
         - name: ghcr-login
 
@@ -920,6 +969,15 @@ spec:
           initContainers:
             - name: wait-for-deps
               command: ["sh", "-c", "until curl -sf http://web/up; do echo 'Waiting for dependencies...'; sleep 2; done;"]
+          containers:
+            - name: php
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1"
+                  memory: "1Gi"
 
 
 --- FILE: overlays/production/ingress-patch.yaml ---

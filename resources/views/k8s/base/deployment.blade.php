@@ -48,6 +48,22 @@ spec:
             - name: LARAKUBE_HOST_WORKSPACE
               value: {{ $workspacePath }}
 @endif
+@php($resources = $config->getResources($environment ?? 'local', 'web'))
+@if(!empty($resources['requests']) || !empty($resources['limits']))
+          resources:
+@if(!empty($resources['requests']))
+            requests:
+@foreach($resources['requests'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@if(!empty($resources['limits']))
+            limits:
+@foreach($resources['limits'] as $dim => $val)
+              {{ $dim }}: "{{ $val }}"
+@endforeach
+@endif
+@endif
           envFrom:
             - configMapRef:
                 name: laravel-config

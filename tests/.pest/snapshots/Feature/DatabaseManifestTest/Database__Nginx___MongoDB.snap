@@ -55,6 +55,13 @@ spec:
               value: "true"
             - name: AUTORUN_LARAVEL_MIGRATION
               value: "true"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           envFrom:
             - configMapRef:
                 name: laravel-config
@@ -480,6 +487,13 @@ spec:
       containers:
         - name: php
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
       imagePullSecrets:
         - name: ghcr-login
 

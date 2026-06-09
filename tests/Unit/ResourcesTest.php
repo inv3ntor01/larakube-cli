@@ -42,3 +42,43 @@ test('isValidQuantity accepts k8s quantities and rejects typos', function () {
         ->and(ConfigData::isValidQuantity('abc'))->toBeFalse()
         ->and(ConfigData::isValidQuantity(''))->toBeFalse();
 });
+
+test('setResources updates config and handles unsetting', function () {
+    $config = ConfigData::from(['name' => 'test-app', 'environments' => ['local' => []]]);
+
+    $config->setResources('local', 'horizon', [
+        'limits' => ['memory' => '2Gi'],
+    ]);
+
+    expect($config->environments['local']->resources['horizon'])->toBe(['limits' => ['memory' => '2Gi']]);
+
+    $config->setResources('local', 'horizon', null);
+    expect($config->environments['local']->resources)->toBe([]);
+});
+
+test('setResources prunes redundant overrides that match inherited fallback', function () {
+    $config = ConfigData::from([
+        'name' => 'res-test',
+        'environments' => [
+            'production' => [
+                'resources' => [
+                    'default' => ['limits' => ['memory' => '1Gi']],
+                ],
+            ],
+        ],
+    ]);
+
+    // Redundant input matches inherited default exactly
+    $config->setResources('production', 'horizon', ['limits' => ['memory' => '1Gi']]);
+    expect($config->environments['production']->resources)->not->toHaveKey('horizon');
+
+    // Partial overlap: limits matches default, requests is new
+    $config->setResources('production', 'horizon', [
+        'requests' => ['memory' => '512Mi'],
+        'limits' => ['memory' => '1Gi'],
+    ]);
+    // The redundant limit is omitted, only the request remains
+    expect($config->environments['production']->resources['horizon'])->toBe([
+        'requests' => ['memory' => '512Mi'],
+    ]);
+});
