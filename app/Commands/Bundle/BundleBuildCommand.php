@@ -21,7 +21,7 @@ class BundleBuildCommand extends Command
 
     protected $signature = 'bundle:build
                             {environment=production : The environment to bundle}
-                            {--arch=amd64 : Target CPU architecture (amd64|arm64) — match the customer server, not your Mac}
+                            {--arch= : Target CPU architecture (amd64|arm64) — match the customer server, not your Mac}
                             {--dry-run : Show the plan (images, layout) without building or saving anything}';
 
     protected $description = 'Assemble a self-contained air-gapped install kit (images + manifests) for an on-prem customer';
@@ -44,9 +44,18 @@ class BundleBuildCommand extends Command
             return 1;
         }
 
-        $platform = $this->normalizeArch((string) $this->option('arch'));
+        $archOption = $this->option('arch');
+        if (! $archOption) {
+            $archOption = \Laravel\Prompts\select(
+                label: 'What is the target CPU architecture of the customer server?',
+                options: ['amd64' => 'amd64 (Intel/AMD - standard for most VPS/servers)', 'arm64' => 'arm64 (Apple Silicon / Graviton)'],
+                default: 'amd64'
+            );
+        }
+
+        $platform = $this->normalizeArch((string) $archOption);
         if ($platform === null) {
-            $this->laraKubeError("Unsupported --arch '{$this->option('arch')}' — use amd64 or arm64.");
+            $this->laraKubeError("Unsupported --arch '{$archOption}' — use amd64 or arm64.");
 
             return 1;
         }
