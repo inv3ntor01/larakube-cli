@@ -29,6 +29,19 @@ class BundleInstallCommand extends Command
     {
         $this->renderHeader();
 
+        // 0. Pre-flight checks
+        $missing = [];
+        foreach (['openssl', 'curl', 'tar'] as $tool) {
+            if (shell_exec("which {$tool} 2>/dev/null") === null) {
+                $missing[] = $tool;
+            }
+        }
+        if (count($missing) > 0) {
+            $this->laraKubeError('Missing required system tools: ' . implode(', ', $missing));
+            $this->line('  <fg=gray>Please ensure these basic Linux utilities are installed before running the offline installer.</>');
+            return 1;
+        }
+
         // 1. Verify we are inside an extracted bundle directory
         if (! file_exists('bundle.json') || ! file_exists('.larakube.json')) {
             $this->laraKubeError("This command must be run from inside an extracted air-gapped bundle directory.\nMake sure bundle.json and .larakube.json are present.");
