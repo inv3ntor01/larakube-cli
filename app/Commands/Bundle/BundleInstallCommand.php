@@ -113,7 +113,19 @@ class BundleInstallCommand extends Command
         $mergedEnv = $this->generateInstallSecrets($config, $env);
 
         $envFile = (string) $this->option('env-file');
-        if ($envFile !== '' && file_exists($envFile)) {
+        if ($envFile === '') {
+            $envFile = getcwd().'/.env';
+        }
+
+        if (! file_exists($envFile) && file_exists(getcwd().'/.env.example')) {
+            $this->newLine();
+            $this->laraKubeInfo('Almost ready to deploy! We found a .env.example file in the bundle.');
+            $this->line('  Please copy it to .env and fill in any required third-party API keys (like AIRTABLE_API_KEY).');
+
+            \Laravel\Prompts\pause('Press ENTER when you have created and saved the .env file.');
+        }
+
+        if (file_exists($envFile)) {
             $this->line('  <fg=gray>Merging customer provided env file:</> <fg=cyan>'.$envFile.'</>');
             $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
             foreach ($lines as $line) {
@@ -128,8 +140,8 @@ class BundleInstallCommand extends Command
                     $mergedEnv[$key] = trim($value);
                 }
             }
-        } elseif ($envFile !== '') {
-            $this->laraKubeError("Provided env file '{$envFile}' does not exist.");
+        } elseif ((string) $this->option('env-file') !== '') {
+            $this->laraKubeError("Provided env file '".((string) $this->option('env-file'))."' does not exist.");
 
             return 1;
         }

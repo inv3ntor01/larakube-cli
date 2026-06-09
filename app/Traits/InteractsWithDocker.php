@@ -58,7 +58,6 @@ trait InteractsWithDocker
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
     {
 
-
         $appName = basename($path);
         $localImage = "$appName:latest";
 

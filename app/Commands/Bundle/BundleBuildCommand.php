@@ -117,6 +117,9 @@ class BundleBuildCommand extends Command
             passthru('cp -R '.escapeshellarg($k8s.'/.').' '.escapeshellarg("$outDir/manifests"));
         }
         passthru('cp '.escapeshellarg($config->getPath().'/.larakube.json').' '.escapeshellarg("$outDir/.larakube.json"));
+        if (file_exists($config->getPath().'/.env.example')) {
+            passthru('cp '.escapeshellarg($config->getPath().'/.env.example').' '.escapeshellarg("$outDir/.env.example"));
+        }
 
         // 4. Offline k3s artifacts & larakube binary
         $k3sVersion = 'v1.31.0+k3s1';
