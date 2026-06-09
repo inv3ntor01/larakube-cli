@@ -7,6 +7,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
+use Phar;
 
 /**
  * Build-side: assemble a self-contained air-gapped install kit for an on-prem
@@ -49,7 +50,7 @@ class BundleBuildCommand extends Command
             $archOption = \Laravel\Prompts\select(
                 label: 'What is the target CPU architecture of the customer server?',
                 options: ['amd64' => 'amd64 (Intel/AMD - standard for most VPS/servers)', 'arm64' => 'arm64 (Apple Silicon / Graviton)'],
-                default: 'amd64'
+                default: 'amd64',
             );
         }
 
@@ -117,15 +118,41 @@ class BundleBuildCommand extends Command
         }
         passthru('cp '.escapeshellarg($config->getPath().'/.larakube.json').' '.escapeshellarg("$outDir/.larakube.json"));
 
-        // 4. bundle.json
+        // 4. Offline k3s artifacts & larakube binary
+        $k3sVersion = 'v1.31.0+k3s1';
+        $this->laraKubeInfo("Downloading k3s artifacts ({$k3sVersion}) for offline install...");
+
+        $k3sBinaryUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s".($arch === 'arm64' ? '-arm64' : '');
+        $k3sImagesUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s-airgap-images-{$arch}.tar";
+        $k3sInstallUrl = 'https://get.k3s.io';
+
+        $this->line('  <fg=gray>download</> k3s binary');
+        passthru('curl -sL '.escapeshellarg($k3sBinaryUrl).' -o '.escapeshellarg("$outDir/k3s"));
+        passthru('chmod +x '.escapeshellarg("$outDir/k3s"));
+
+        $this->line('  <fg=gray>download</> k3s-airgap-images');
+        passthru('curl -sL '.escapeshellarg($k3sImagesUrl).' -o '.escapeshellarg("$outDir/k3s-airgap-images.tar"));
+
+        $this->line('  <fg=gray>download</> k3s-install.sh');
+        passthru('curl -sL '.escapeshellarg($k3sInstallUrl).' -o '.escapeshellarg("$outDir/k3s-install.sh"));
+        passthru('chmod +x '.escapeshellarg("$outDir/k3s-install.sh"));
+
+        $this->line('  <fg=gray>copy</> larakube binary');
+        $larakubeBinary = Phar::running(false) ?: realpath($_SERVER['argv'][0]);
+        passthru('cp '.escapeshellarg($larakubeBinary).' '.escapeshellarg("$outDir/larakube"));
+        passthru('chmod +x '.escapeshellarg("$outDir/larakube"));
+
+        // 5. bundle.json
+        $manifestData = $this->bundleManifest($config, $env, $arch, $allImages);
+        $manifestData['k3sVersion'] = $k3sVersion;
         file_put_contents(
             "$outDir/bundle.json",
-            json_encode($this->bundleManifest($config, $env, $arch, $allImages), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n",
+            json_encode($manifestData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n",
         );
 
         $this->newLine();
         $this->laraKubeInfo('✅ Bundle assembled: '.$outDir);
-        $this->laraKubeWarn('Next: k3s artifacts + the larakube binary + install.sh aren\'t bundled yet — see bundle:install.');
+        $this->laraKubeInfo('Next step: copy the directory to the target server and run `sudo ./larakube bundle:install`.');
 
         return 0;
     }

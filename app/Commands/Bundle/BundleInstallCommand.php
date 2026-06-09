@@ -55,11 +55,43 @@ class BundleInstallCommand extends Command
 
         $this->laraKubeInfo("Installing air-gapped bundle — {$name} · {$env}");
 
-        // TODO: 2. Detect/install k3s (INSTALL_K3S_SKIP_DOWNLOAD=true)
-        $this->laraKubeWarn('TODO: k3s detection and offline install');
+        // 2. Detect/install k3s (INSTALL_K3S_SKIP_DOWNLOAD=true)
+        $this->laraKubeInfo('Ensuring k3s is installed (offline mode)...');
+        $k3sInstalled = (shell_exec('which k3s') !== null && trim((string) shell_exec('which k3s')) !== '');
 
-        // TODO: 3. ctr images import the tarballs
-        $this->laraKubeWarn('TODO: ctr images import images/*.tar');
+        if (! $k3sInstalled) {
+            $this->line('  <fg=gray>K3s not found. Installing from offline artifacts...</>');
+
+            // Put images in containerd directory BEFORE install
+            passthru('mkdir -p /var/lib/rancher/k3s/agent/images/');
+            passthru('cp k3s-airgap-images.tar /var/lib/rancher/k3s/agent/images/');
+
+            // Put k3s binary in PATH
+            passthru('cp k3s /usr/local/bin/k3s');
+
+            // Run offline installer
+            passthru('INSTALL_K3S_SKIP_DOWNLOAD=true ./k3s-install.sh --disable=traefik --write-kubeconfig-mode 644', $k3sCode);
+            if ($k3sCode !== 0) {
+                $this->laraKubeError('K3s installation failed.');
+
+                return 1;
+            }
+            $this->laraKubeInfo('✅ K3s installed successfully.');
+        } else {
+            $this->laraKubeInfo('✅ K3s is already installed. Skipping installation.');
+        }
+
+        // 3. ctr images import the tarballs
+        $this->laraKubeInfo('Importing application and dependency images into containerd...');
+        foreach (glob('images/*.tar') as $tar) {
+            $this->line("  <fg=gray>import</> {$tar}");
+            passthru('k3s ctr images import '.escapeshellarg($tar), $importCode);
+            if ($importCode !== 0) {
+                $this->laraKubeError("Failed to import {$tar}");
+
+                return 1;
+            }
+        }
 
         // 4. Secrets Generation & Customer .env Merging
         $this->laraKubeInfo('Generating secure install secrets...');
