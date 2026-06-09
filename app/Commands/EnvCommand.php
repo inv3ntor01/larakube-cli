@@ -2,7 +2,6 @@
 
 namespace App\Commands;
 
-use App\Contracts\HasPromptableHosts;
 use App\Data\ConfigData;
 use App\Data\EnvironmentData;
 use App\Data\RegistryData;
@@ -11,6 +10,7 @@ use App\Enums\RegistryProvider;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PromptsForHosts;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
@@ -21,7 +21,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class EnvCommand extends Command
 {
-    use GeneratesProjectInfrastructure, InteractsWithProjectConfig, LaraKubeOutput;
+    use GeneratesProjectInfrastructure, InteractsWithProjectConfig, LaraKubeOutput, PromptsForHosts;
 
     /**
      * The name and signature of the console command.
@@ -146,36 +146,12 @@ class EnvCommand extends Command
             );
         }
 
-        // Web host: optional. Empty = no host configured (env still works on internal/dev.test domains).
-        $webHost = text(
-            label: "Web host for {$envName} (optional, e.g. staging.example.com)",
-            placeholder: 'leave blank to skip',
-            required: false,
-        );
-        if ($webHost !== '') {
-            $envData->hosts['web'] = $webHost;
-        }
-
-        // Per-service host overrides — only for genuinely client-facing
-        // endpoints worth a vanity subdomain (Reverb's WebSocket host, an
-        // object-storage S3/CDN host). Admin consoles (search dashboards,
-        // Mailpit, metrics) are intentionally NOT prompted — they still get
-        // a derived ingress host, but the wizard stays quiet. Anything can
-        // still be set by hand in .larakube.json.
-        foreach ($this->resolveEnvComponents($config, $envName, $envData) as $component) {
-            if (! $component instanceof HasPromptableHosts) {
-                continue;
-            }
-            foreach ($component->getPromptableHostServices() as $service => $label) {
-                $override = text(
-                    label: "Custom host for {$label} in {$envName} (optional)",
-                    placeholder: 'leave blank to derive from web host',
-                    required: false,
-                );
-                if ($override !== '') {
-                    $envData->hosts[$service] = $override;
-                }
-            }
+        // Client-facing hosts — the optional web host plus any HasPromptableHosts
+        // service overrides (Reverb WS, object-storage S3/CDN). Shared via
+        // PromptsForHosts so the bundle installer and other flows reuse one wizard.
+        // Admin consoles aren't prompted; they get a derived ingress host.
+        foreach ($this->promptForHosts($envName, $this->resolveEnvComponents($config, $envName, $envData)) as $service => $host) {
+            $envData->hosts[$service] = $host;
         }
 
         // Container registry: optional. Only relevant for cloud environments.
