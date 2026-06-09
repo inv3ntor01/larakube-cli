@@ -25,7 +25,10 @@ spec:
             - name: MINIO_ROOT_USER
               value: "larakube"
             - name: MINIO_ROOT_PASSWORD
-              value: "larakubesecretpassword"
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: AWS_SECRET_ACCESS_KEY
           readinessProbe:
             httpGet:
               path: /minio/health/ready

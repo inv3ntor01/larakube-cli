@@ -20,7 +20,10 @@ spec:
             - name: MONGO_INITDB_ROOT_USERNAME
               value: "{{ $driver->dbUsername() }}"
             - name: MONGO_INITDB_ROOT_PASSWORD
-              value: "larakubesecretpassword"
+              valueFrom:
+                secretKeyRef:
+                  name: laravel-secrets
+                  key: DB_PASSWORD
           ports:
             - containerPort: {{ $driver->dbPort() }}
           volumeMounts:
