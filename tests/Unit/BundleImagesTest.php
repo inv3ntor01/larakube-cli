@@ -1,0 +1,35 @@
+<?php
+
+use App\Data\ConfigData;
+use App\Traits\AssemblesBundle;
+
+function bundleAssembler(): object
+{
+    return new class
+    {
+        use AssemblesBundle;
+    };
+}
+
+test('bundleImages derives the app image + every declared dependency, enum-driven', function () {
+    $config = ConfigData::from([
+        'name' => 'shop',
+        'database' => 'postgres',
+        'cacheDriver' => 'redis',
+        'objectStorage' => 'minio',
+    ]);
+
+    $images = bundleAssembler()->bundleImages($config);
+
+    expect($images['app'])->toBe('shop:latest')
+        ->and($images['dependencies'])->toContain('traefik:v3.1')
+        ->and(collect($images['dependencies'])->contains(fn ($i) => str_contains($i, 'postgres')))->toBeTrue()
+        ->and(collect($images['dependencies'])->contains(fn ($i) => str_contains($i, 'redis')))->toBeTrue()
+        ->and(collect($images['dependencies'])->contains(fn ($i) => str_contains($i, 'minio')))->toBeTrue();
+});
+
+test('a SQLite + database-cache project adds only the system image (no DB/cache service)', function () {
+    $config = ConfigData::from(['name' => 'tiny', 'database' => 'sqlite', 'cacheDriver' => 'database']);
+
+    expect(bundleAssembler()->bundleImages($config)['dependencies'])->toBe(['traefik:v3.1']);
+});
