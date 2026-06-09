@@ -66,13 +66,8 @@ trait InteractsWithArchitecturalEngine
 
         // Execute JS installation if needed
         if (! empty($jsCommands)) {
-            $js = [];
-            if ($config->isScaffolding) {
-                $js[] = 'apk add --no-cache php php-cli php-phar php-mbstring php-openssl php-ctype php-json php-tokenizer php-xml php-dom php-xmlwriter php-session php-pdo_sqlite php-sqlite3 || (apt-get update && apt-get install -y php-cli php-sqlite3)';
-            }
-            $js = array_merge($js, $jsCommands, [$config->packageManager->buildCommand()]);
-
-            $this->runInContainer(implode(' && ', $js), $projectPath, $config->frontend->getPodName($config));
+            $js = array_merge($jsCommands, [$config->packageManager->buildCommand()]);
+            $this->runInContainer(implode(' && ', $js), $projectPath, 'php');
         }
     }
 
@@ -131,14 +126,9 @@ trait InteractsWithArchitecturalEngine
         // JS
         if (! empty($jsCommands)) {
             $this->laraKubeInfo('Installing JS packages and building assets...');
+            $js = array_merge($jsCommands, [$config->packageManager->buildCommand()]);
 
-            $js = [];
-            if ($config->isScaffolding) {
-                $js[] = 'apk add --no-cache php php-cli php-phar php-mbstring php-openssl php-ctype php-json php-tokenizer php-xml php-dom php-xmlwriter php-session php-pdo_sqlite php-sqlite3 || (apt-get update && apt-get install -y php-cli php-sqlite3)';
-            }
-            $js = array_merge($js, $jsCommands, [$config->packageManager->buildCommand()]);
-
-            $this->runInContainer(implode(' && ', $js), $projectPath, $config->frontend->getPodName($config));
+            $this->runInContainer(implode(' && ', $js), $projectPath, 'php');
         }
     }
 }

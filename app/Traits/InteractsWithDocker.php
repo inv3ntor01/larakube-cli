@@ -57,9 +57,7 @@ trait InteractsWithDocker
      */
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
     {
-        if ($type === 'node') {
-            return "docker run --rm --init -v $path:/usr/src/app -w /usr/src/app --user root $envs -e npm_config_cache=/tmp/.npm node:22-alpine ";
-        }
+
 
         $appName = basename($path);
         $localImage = "$appName:latest";
