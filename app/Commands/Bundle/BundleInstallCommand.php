@@ -96,13 +96,31 @@ class BundleInstallCommand extends Command
             $this->laraKubeInfo('✅ K3s is already installed. Skipping installation.');
         }
 
-        // 3. ctr images import the tarballs
+        $this->laraKubeInfo('Waiting for K3s containerd to become ready...');
+        for ($i = 0; $i < 30; $i++) {
+            exec('k3s ctr version >/dev/null 2>&1', $output, $code);
+            if ($code === 0) {
+                break;
+            }
+            sleep(1);
+        }
+
         $this->laraKubeInfo('Importing application and dependency images into containerd...');
         foreach (glob('images/*.tar') as $tar) {
             $this->line("  <fg=gray>import</> {$tar}");
-            passthru('k3s ctr images import '.escapeshellarg($tar), $importCode);
-            if ($importCode !== 0) {
-                $this->laraKubeError("Failed to import {$tar}");
+            $success = false;
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                passthru('k3s ctr images import '.escapeshellarg($tar), $importCode);
+                if ($importCode === 0) {
+                    $success = true;
+                    break;
+                }
+                $this->line("  <fg=yellow>import failed. Retrying in 3 seconds... ({$attempt}/3)</>");
+                sleep(3);
+            }
+            
+            if (! $success) {
+                $this->laraKubeError("Failed to import {$tar} after 3 attempts.");
 
                 return 1;
             }
