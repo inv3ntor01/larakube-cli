@@ -109,8 +109,22 @@ class BundleInstallCommand extends Command
         }
 
         // 4. Secrets Generation & Customer .env Merging
+        $ns = escapeshellarg($namespace);
+
+        // Extract existing secrets from the cluster (for idempotent updates)
+        $existingSecretsJson = shell_exec("kubectl get secret laravel-secrets -n {$ns} -o json 2>/dev/null");
+        $existingSecrets = [];
+        if ($existingSecretsJson) {
+            $parsed = json_decode($existingSecretsJson, true);
+            if (isset($parsed['data']) && is_array($parsed['data'])) {
+                foreach ($parsed['data'] as $k => $v) {
+                    $existingSecrets[$k] = base64_decode($v);
+                }
+            }
+        }
+
         $this->laraKubeInfo('Generating secure install secrets...');
-        $mergedEnv = $this->generateInstallSecrets($config, $env);
+        $mergedEnv = $this->generateInstallSecrets($config, $env, $existingSecrets);
 
         $envFile = (string) $this->option('env-file');
         if ($envFile === '') {
@@ -174,8 +188,6 @@ class BundleInstallCommand extends Command
         $certDir = sys_get_temp_dir().'/larakube-certs-'.time();
         @mkdir($certDir, 0700, true);
         $certs = $this->generateSanCertificates(array_values($hosts), $certDir);
-
-        $ns = escapeshellarg($namespace);
 
         // Ensure namespace exists before we create secrets
         shell_exec("kubectl create namespace {$ns} --dry-run=client -o yaml | kubectl apply -f -");

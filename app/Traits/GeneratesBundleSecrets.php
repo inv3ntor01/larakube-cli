@@ -15,45 +15,45 @@ trait GeneratesBundleSecrets
      * local dev defaults. Returns an array of ENV variables suitable for
      * the laravel-secrets Secret.
      */
-    public function generateInstallSecrets(ConfigData $config, string $environment): array
+    public function generateInstallSecrets(ConfigData $config, string $environment, array $existing = []): array
     {
         $secrets = [];
 
         // 1. App Key (always needed)
-        $secrets['APP_KEY'] = 'base64:'.base64_encode(random_bytes(32));
+        $secrets['APP_KEY'] = $existing['APP_KEY'] ?? 'base64:'.base64_encode(random_bytes(32));
 
         // 2. Database Password
         $dbDriver = $config->getDatabase();
         if ($dbDriver && $dbDriver !== DatabaseDriver::SQLITE) {
-            $dbPassword = Str::random(32);
+            $dbPassword = $existing['DB_PASSWORD'] ?? Str::random(32);
             $secrets['DB_PASSWORD'] = $dbPassword;
 
             if ($dbDriver === DatabaseDriver::MONGODB) {
                 $host = $config->getInternalFqdn($dbDriver, $environment);
-                $secrets['DB_URI'] = "mongodb://root:{$dbPassword}@{$host}:27017/laravel?authSource=admin";
+                $secrets['DB_URI'] = $existing['DB_URI'] ?? "mongodb://root:{$dbPassword}@{$host}:27017/laravel?authSource=admin";
             }
         }
 
         // 3. Reverb Keys
         if ($config->hasFeature(LaravelFeature::REVERB, $environment)) {
-            $secrets['REVERB_APP_ID'] = (string) random_int(100000, 999999);
-            $secrets['REVERB_APP_KEY'] = Str::random(32);
-            $secrets['REVERB_APP_SECRET'] = Str::random(32);
+            $secrets['REVERB_APP_ID'] = $existing['REVERB_APP_ID'] ?? (string) random_int(100000, 999999);
+            $secrets['REVERB_APP_KEY'] = $existing['REVERB_APP_KEY'] ?? Str::random(32);
+            $secrets['REVERB_APP_SECRET'] = $existing['REVERB_APP_SECRET'] ?? Str::random(32);
         }
 
         // 4. Object Storage (MinIO / SeaweedFS / Garage)
         $storage = $config->getObjectStorage();
         if ($storage) {
-            $secrets['AWS_SECRET_ACCESS_KEY'] = Str::random(40);
+            $secrets['AWS_SECRET_ACCESS_KEY'] = $existing['AWS_SECRET_ACCESS_KEY'] ?? Str::random(40);
         }
 
         // 5. Scout (Meilisearch / Typesense)
         $scout = $config->getScoutDriver();
         if ($scout) {
             if ($scout === ScoutDriver::MEILISEARCH) {
-                $secrets['MEILISEARCH_KEY'] = Str::random(32);
+                $secrets['MEILISEARCH_KEY'] = $existing['MEILISEARCH_KEY'] ?? Str::random(32);
             } elseif ($scout === ScoutDriver::TYPESENSE) {
-                $secrets['TYPESENSE_API_KEY'] = Str::random(32);
+                $secrets['TYPESENSE_API_KEY'] = $existing['TYPESENSE_API_KEY'] ?? Str::random(32);
             }
         }
 
