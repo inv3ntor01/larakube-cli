@@ -7,7 +7,6 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
-use Phar;
 
 /**
  * Build-side: assemble a self-contained air-gapped install kit for an on-prem
@@ -142,11 +141,11 @@ class BundleBuildCommand extends Command
 
         $binArch = $arch === 'amd64' ? 'x64' : 'arm';
         $binaryName = "larakube-linux-{$binArch}";
-        
+
         $this->line("  <fg=gray>download</> larakube binary (Linux {$binArch})");
         $binaryUrl = "https://github.com/luchavez-technologies/larakube-cli/releases/latest/download/{$binaryName}";
         passthru('curl -sL '.escapeshellarg($binaryUrl).' -o '.escapeshellarg("$outDir/larakube"));
-        
+
         passthru('chmod +x '.escapeshellarg("$outDir/larakube"));
 
         // 5. bundle.json

@@ -83,3 +83,18 @@ test('it generates scout secrets when enabled', function () {
     $secretsType = $generator->generateInstallSecrets($configType, 'production');
     expect($secretsType)->toHaveKey('TYPESENSE_API_KEY');
 });
+
+test('it preserves existing secrets when provided', function () {
+    $generator = new SecretsGenerator;
+    $config = new ConfigData(name: 'test', database: DatabaseDriver::POSTGRESQL);
+
+    $existing = [
+        'APP_KEY' => 'base64:existing_key',
+        'DB_PASSWORD' => 'existing_password',
+    ];
+
+    $secrets = $generator->generateInstallSecrets($config, 'production', $existing);
+
+    expect($secrets['APP_KEY'])->toBe('base64:existing_key')
+        ->and($secrets['DB_PASSWORD'])->toBe('existing_password');
+});
