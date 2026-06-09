@@ -41,6 +41,12 @@ class ConfigData extends Data
     // used by envs that opt into shared cross-node storage (sharedStorage).
     const string NFS_STORAGE_CLASS = 'larakube-nfs';
 
+    /** Conservative default pod resources, applied to every app pod and overridable per env/component. */
+    const array DEFAULT_RESOURCES = [
+        'requests' => ['cpu' => '100m', 'memory' => '256Mi'],
+        'limits' => ['cpu' => '1', 'memory' => '1Gi'],
+    ];
+
     public function __construct(
         public string $id = '',
         public ?string $name = null,
@@ -398,6 +404,42 @@ class ConfigData extends Data
     public function getPlex(string $environment): array
     {
         return $this->getEnvironment($environment)?->plex ?? [];
+    }
+
+    /**
+     * Effective resources for a pod component in an env, merging in precedence:
+     * code default ← env "default" block ← per-component override. Always returns a
+     * full {requests:{cpu,memory}, limits:{cpu,memory}} so templates render it
+     * unconditionally — that's the "default limits on every app pod" hardening.
+     *
+     * @return array{requests: array{cpu: string, memory: string}, limits: array{cpu: string, memory: string}}
+     */
+    public function getResources(string $environment, string $component): array
+    {
+        $configured = $this->getEnvironment($environment)?->resources ?? [];
+        $merged = self::DEFAULT_RESOURCES;
+
+        foreach (['default', $component] as $key) {
+            $block = $configured[$key] ?? [];
+            if (! is_array($block)) {
+                continue;
+            }
+            foreach (['requests', 'limits'] as $kind) {
+                foreach ((array) ($block[$kind] ?? []) as $dim => $value) {
+                    if (in_array($dim, ['cpu', 'memory'], true) && is_string($value) && trim($value) !== '') {
+                        $merged[$kind][$dim] = trim($value);
+                    }
+                }
+            }
+        }
+
+        return $merged;
+    }
+
+    /** Is $value a valid Kubernetes CPU/memory quantity (e.g. 100m, 1, 1.5, 256Mi, 1Gi)? */
+    public static function isValidQuantity(string $value): bool
+    {
+        return preg_match('/^\d+(\.\d+)?(m|k|Ki|Mi|Gi|Ti|Pi|M|G|T|P)?$/', trim($value)) === 1;
     }
 
     /**

@@ -158,5 +158,17 @@ class EnvironmentData extends Data
          * an emptyDir. Requires the NFS provisioner — `larakube cloud:provision:nfs`.
          */
         public bool $sharedStorage = false,
+        /**
+         * Per-component pod resources (hybrid): an optional "default" block plus
+         * optional per-pod overrides, e.g.
+         *   {"default": {"requests": {"cpu":"100m","memory":"256Mi"}, "limits": {...}},
+         *    "horizon": {"limits": {"memory": "2Gi"}}}
+         * Merged over the conservative code default by ConfigData::getResources();
+         * a component override merges into "default" (only the keys it sets win).
+         * Edit via `larakube resources` — not by hand.
+         *
+         * @var array<string, mixed>
+         */
+        public array $resources = [],
     ) {}
 }
