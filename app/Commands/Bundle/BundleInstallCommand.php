@@ -203,7 +203,7 @@ class BundleInstallCommand extends Command
 
         // 5. promptForHosts for the hostname
         $components = $config->getComponents($env);
-        $webDefault = $config->getFqdn($env); // The default FQDN from the blueprint
+        $webDefault = $config->getWebHost($env); // The default FQDN from the blueprint
 
         $this->laraKubeInfo('Configuring hostnames...');
         $hosts = $this->promptForHosts($env, $components, $webDefault);
