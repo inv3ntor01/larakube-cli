@@ -118,7 +118,7 @@ class BundleInstallCommand extends Command
                 $this->line("  <fg=yellow>import failed. Retrying in 3 seconds... ({$attempt}/3)</>");
                 sleep(3);
             }
-            
+
             if (! $success) {
                 $this->laraKubeError("Failed to import {$tar} after 3 attempts.");
 
