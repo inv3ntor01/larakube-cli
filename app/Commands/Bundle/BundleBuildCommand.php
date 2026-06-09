@@ -101,7 +101,7 @@ class BundleBuildCommand extends Command
                 passthru('docker image inspect '.escapeshellarg($image).' >/dev/null 2>&1 || docker pull --platform '.escapeshellarg($platform).' '.escapeshellarg($image));
             }
             $this->line('  <fg=gray>save</> '.$image);
-            passthru('docker save '.escapeshellarg($image).' -o '.escapeshellarg($tar), $code);
+            passthru('docker save --platform '.escapeshellarg($platform).' '.escapeshellarg($image).' -o '.escapeshellarg($tar), $code);
             if ($code !== 0) {
                 $this->laraKubeError("Failed to save {$image} — is it built/pulled and is Docker running?");
 
