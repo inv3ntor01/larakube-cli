@@ -33,3 +33,24 @@ test('a SQLite + database-cache project adds only the system image (no DB/cache 
 
     expect(bundleAssembler()->bundleImages($config)['dependencies'])->toBe(['traefik:v3.1']);
 });
+
+test('imageTarName produces filesystem-safe tarball names', function () {
+    $r = bundleAssembler();
+
+    expect($r->imageTarName('redis:7.4'))->toBe('redis-7.4.tar')
+        ->and($r->imageTarName('shop:latest'))->toBe('shop-latest.tar')
+        ->and($r->imageTarName('minio/minio:RELEASE.2025-09-07T16-13-09Z'))->toBe('minio-minio-RELEASE.2025-09-07T16-13-09Z.tar');
+});
+
+test('bundleManifest records app, env, arch and the deduped image list', function () {
+    $manifest = bundleAssembler()->bundleManifest(
+        ConfigData::from(['name' => 'shop']), 'production', 'amd64', ['shop:latest', 'redis:7.4', 'redis:7.4'],
+    );
+
+    expect($manifest)->toMatchArray([
+        'app' => 'shop',
+        'environment' => 'production',
+        'arch' => 'amd64',
+        'images' => ['shop:latest', 'redis:7.4'],
+    ])->and($manifest)->toHaveKey('createdAt');
+});

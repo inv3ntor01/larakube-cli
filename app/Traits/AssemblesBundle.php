@@ -50,4 +50,28 @@ trait AssemblesBundle
             'dependencies' => array_values(array_unique($dependencies)),
         ];
     }
+
+    /** A filesystem-safe `.tar` name for an image ref (`minio/minio:RELEASE.x` → `minio-minio-RELEASE.x.tar`). */
+    public function imageTarName(string $image): string
+    {
+        return trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '-', $image), '-').'.tar';
+    }
+
+    /**
+     * The `bundle.json` manifest — what the kit contains and how to verify it. Pure.
+     *
+     * @param  array<int, string>  $images
+     * @return array<string, mixed>
+     */
+    public function bundleManifest(ConfigData $config, string $environment, string $arch, array $images): array
+    {
+        return [
+            'app' => $config->getName(),
+            'environment' => $environment,
+            'arch' => $arch,
+            'createdAt' => date('c'),
+            'images' => array_values(array_unique($images)),
+            // k3s version + per-artifact checksums are filled in once those steps land.
+        ];
+    }
 }
