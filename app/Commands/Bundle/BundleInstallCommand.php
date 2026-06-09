@@ -3,6 +3,7 @@
 namespace App\Commands\Bundle;
 
 use App\Traits\GeneratesBundleSecrets;
+use App\Traits\GeneratesOfflineCertificates;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
@@ -17,7 +18,7 @@ use LaravelZero\Framework\Commands\Command;
  */
 class BundleInstallCommand extends Command
 {
-    use GeneratesBundleSecrets, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, PromptsForHosts;
+    use GeneratesBundleSecrets, GeneratesOfflineCertificates, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, PromptsForHosts;
 
     protected $signature = 'bundle:install
                             {--env-file= : Path to a custom .env file to merge with auto-generated secrets}';
@@ -130,10 +131,7 @@ class BundleInstallCommand extends Command
         // Split for K8s ConfigMap (public) vs Secret (secret)
         ['public' => $public, 'secret' => $secret] = $this->splitEnvForK8s($mergedLines, $knownSecrets);
 
-        // TODO: 5. Generate CA+cert + wire Traefik TLSStore
-        $this->laraKubeWarn('TODO: Generate CA+cert + wire Traefik TLSStore');
-
-        // 6. promptForHosts for the hostname
+        // 5. promptForHosts for the hostname
         $components = $config->getComponents($env);
         $webDefault = $config->getFqdn($env); // The default FQDN from the blueprint
 
@@ -145,13 +143,29 @@ class BundleInstallCommand extends Command
             $config->setHost($service, $host, $env);
         }
 
-        // 7. Write the Secret/ConfigMap into the cluster
-        // We use `kubectl` against the local cluster. Since we are on-box, we use the default context (k3s).
-        $this->laraKubeInfo('Applying ConfigMap and Secrets...');
+        // 6. Generate CA+cert + wire Traefik TLSStore
+        $this->laraKubeInfo('Generating secure local CA and TLS certificates...');
+        $certDir = sys_get_temp_dir().'/larakube-certs-'.time();
+        @mkdir($certDir, 0700, true);
+        $certs = $this->generateSanCertificates(array_values($hosts), $certDir);
+
         $ns = escapeshellarg($namespace);
 
-        // Create namespace if not exists (ignore errors if it already exists)
+        // Ensure namespace exists before we create secrets
         shell_exec("kubectl create namespace {$ns} --dry-run=client -o yaml | kubectl apply -f -");
+
+        // Traefik expects the TLSStore in its own namespace for the default certificate
+        shell_exec('kubectl create namespace traefik --dry-run=client -o yaml | kubectl apply -f -');
+
+        $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
+        file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
+        shell_exec("kubectl create configmap traefik-config -n traefik --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+
+        $tmpTlsCrt = escapeshellarg($certs['tls_crt']);
+        $tmpTlsKey = escapeshellarg($certs['tls_key']);
+        shell_exec("kubectl create secret generic traefik-certificates -n traefik --from-file=local-dev.pem={$tmpTlsCrt} --from-file=local-dev-key.pem={$tmpTlsKey} --dry-run=client -o yaml | kubectl apply -f -");
+
+        @unlink($tmpCertsYml);
 
         if ($public !== '') {
             shell_exec("kubectl create configmap laravel-config -n {$ns} {$public} --dry-run=client -o yaml | kubectl apply -f -");
@@ -189,7 +203,10 @@ class BundleInstallCommand extends Command
         if (isset($hosts['web'])) {
             $this->line("  <fg=gray>Your app should be available at:</> <fg=cyan>https://{$hosts['web']}</>");
         }
-        $this->laraKubeWarn('TODO: Print larakube trust CA instructions');
+        $this->newLine();
+        $this->line('  <fg=gray>To secure your browser, install the generated Certificate Authority:</>');
+        $this->line('  <fg=cyan>1. Download the CA certificate to your computer:</> '.$certs['ca_crt']);
+        $this->line('  <fg=cyan>2. Add it to your OS/Browser Trust Store.</>');
 
         return 0;
     }
