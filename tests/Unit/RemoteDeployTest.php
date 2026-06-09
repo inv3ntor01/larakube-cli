@@ -6,6 +6,8 @@
  * split. The actual build/ssh/kubectl I/O belongs in a droplet smoke test.
  */
 
+use App\Data\RegistryData;
+use App\Enums\RegistryProvider;
 use App\Traits\InteractsWithRemoteDeploy;
 
 function remoteDeploy(): object
@@ -116,6 +118,14 @@ test('the image tag uses the git sha when present, else a timestamped fallback',
     expect($r->formatImageTag('  abc1234  ', 1000))->toBe('abc1234-1000')   // sha prefix + unique timestamp
         ->and($r->formatImageTag(null, 1717286400))->toBe('build-1717286400')
         ->and($r->formatImageTag('', 1717286400))->toBe('build-1717286400');
+});
+
+test('the registry deploy can pin an immutable digest reference, not just a mutable tag', function () {
+    $registry = new RegistryData(provider: RegistryProvider::GHCR, image: 'me/app');
+    $digest = 'sha256:'.str_repeat('a', 64);
+
+    expect($registry->getFullImageReference('abc1234'))->toBe('ghcr.io/me/app:abc1234')   // mutable tag (re-pushable)
+        ->and($registry->getDigestReference($digest))->toBe("ghcr.io/me/app@{$digest}");   // immutable, content-addressed
 });
 
 test('env split routes secrets to the Secret and the rest to the ConfigMap', function () {

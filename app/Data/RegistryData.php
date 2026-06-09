@@ -37,4 +37,17 @@ class RegistryData extends Data
 
         return "{$host}/{$image}:{$tag}";
     }
+
+    /**
+     * A digest-pinned reference (`host/image@sha256:…`) — immutable, since a
+     * registry can't repoint a digest to different bytes the way it can a tag.
+     * $digest is the full `sha256:…` string.
+     */
+    public function getDigestReference(string $digest): string
+    {
+        $host = $this->getRegistryHost();
+        $image = $this->image ?? 'app';
+
+        return "{$host}/{$image}@{$digest}";
+    }
 }

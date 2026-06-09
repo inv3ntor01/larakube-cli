@@ -400,6 +400,17 @@ trait InteractsWithRemoteDeploy
             return 1;
         }
 
+        // Pin the deploy to the immutable digest the registry just assigned, not the
+        // mutable tag — an attacker with push access can repoint a tag, never a digest.
+        // Fall back to the tag (with a warning) if buildx can't resolve it.
+        $deployImage = $registryImage;
+        if (($digest = $this->resolvePushedDigest($registryImage)) !== null) {
+            $deployImage = $registry->getDigestReference($digest);
+            $this->line('  <fg=gray>Pinned digest:</> <fg=cyan>'.$digest.'</>');
+        } else {
+            $this->laraKubeWarn('Could not resolve the pushed image digest — deploying by tag (mutable). Is `docker buildx` available?');
+        }
+
         // 3. Namespace — ADMIN only (cluster-scoped; the scoped SA can't create it).
         $ctx = escapeshellarg($context);
         $ns = escapeshellarg($namespace);
@@ -413,7 +424,22 @@ trait InteractsWithRemoteDeploy
         }
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $registryImage);
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $deployImage);
+    }
+
+    /**
+     * The immutable digest the registry assigned to the just-pushed image, so the
+     * deploy can pin `repo@sha256:…` instead of a mutable `:tag`. Null when buildx
+     * imagetools can't resolve it (caller falls back to the tag with a warning).
+     */
+    protected function resolvePushedDigest(string $registryImage): ?string
+    {
+        $digest = trim((string) shell_exec(
+            'docker buildx imagetools inspect '.escapeshellarg($registryImage)
+            .' --format '.escapeshellarg('{{.Manifest.Digest}}').' 2>/dev/null',
+        ));
+
+        return preg_match('/^sha256:[0-9a-f]{64}$/', $digest) === 1 ? $digest : null;
     }
 
     /**
