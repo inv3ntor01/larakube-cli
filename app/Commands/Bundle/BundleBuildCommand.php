@@ -98,7 +98,8 @@ class BundleBuildCommand extends Command
         foreach ($allImages as $index => $image) {
             $tar = "$outDir/images/".$this->imageTarName($image);
             if ($index > 0) {
-                passthru('docker image inspect '.escapeshellarg($image).' >/dev/null 2>&1 || docker pull --platform '.escapeshellarg($platform).' '.escapeshellarg($image));
+                $this->line('  <fg=gray>pull</> '.$image.' for '.$platform);
+                passthru('docker pull --platform '.escapeshellarg($platform).' '.escapeshellarg($image));
             }
             $this->line('  <fg=gray>save</> '.$image);
             passthru('docker save --platform '.escapeshellarg($platform).' '.escapeshellarg($image).' -o '.escapeshellarg($tar), $code);
