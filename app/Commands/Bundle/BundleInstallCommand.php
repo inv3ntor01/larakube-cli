@@ -164,8 +164,15 @@ class BundleInstallCommand extends Command
         $tmpTlsCrt = escapeshellarg($certs['tls_crt']);
         $tmpTlsKey = escapeshellarg($certs['tls_key']);
         shell_exec("kubectl create secret generic traefik-certificates -n traefik --from-file=local-dev.pem={$tmpTlsCrt} --from-file=local-dev-key.pem={$tmpTlsKey} --dry-run=client -o yaml | kubectl apply -f -");
-
+        
         @unlink($tmpCertsYml);
+
+        // 7. Deploy Traefik
+        $this->laraKubeInfo('Deploying Traefik Ingress Controller...');
+        $tmpInstall = sys_get_temp_dir().'/traefik-install.yaml';
+        file_put_contents($tmpInstall, view('k8s.traefik-install')->render());
+        passthru("kubectl apply -f {$tmpInstall}");
+        @unlink($tmpInstall);
 
         if ($public !== '') {
             shell_exec("kubectl create configmap laravel-config -n {$ns} {$public} --dry-run=client -o yaml | kubectl apply -f -");
