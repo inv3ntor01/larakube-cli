@@ -91,6 +91,43 @@ trait GeneratesProjectInfrastructure
         return preg_replace('/^#?\s*ASSET_URL=.*$/m', 'ASSET_URL='.$target, $content, 1);
     }
 
+    /** True when a tracked manifest's current content no longer matches its recorded hash. */
+    public function manifestHandEdited(ConfigData $config, string $absPath, string $relPath): bool
+    {
+        $sigs = $this->loadManifestSigs($config);
+
+        return is_file($absPath)
+            && isset($sigs[$relPath])
+            && hash('sha256', (string) file_get_contents($absPath)) !== $sigs[$relPath];
+    }
+
+    /**
+     * Load the manifest-signature sidecar (relPath → sha256). Empty when absent.
+     *
+     * @return array<string, string>
+     */
+    public function loadManifestSigs(ConfigData $config): array
+    {
+        $path = $config->getK8sPath().'/.larakube-sigs.json';
+        $data = is_file($path) ? json_decode((string) file_get_contents($path), true) : [];
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * Persist the manifest-signature sidecar (sorted, for a stable file).
+     *
+     * @param  array<string, string>  $sigs
+     */
+    public function saveManifestSigs(ConfigData $config, array $sigs): void
+    {
+        ksort($sigs);
+        file_put_contents(
+            $config->getK8sPath().'/.larakube-sigs.json',
+            json_encode($sigs, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n",
+        );
+    }
+
     /**
      * Align ASSET_URL in a cloud environment's env file (.env.<environment> —
      * production, staging, …) with that environment's web domain. Laravel's
@@ -222,6 +259,8 @@ trait GeneratesProjectInfrastructure
             '.infrastructure/volume_data',
             '# Operator-specific cloud connection (server IP/SSH/key path) — never commit',
             '.larakube.local.json',
+            '# LaraKube manifest fingerprints (reproducible — detects hand-edits, not for sharing)',
+            '.infrastructure/k8s/.larakube-sigs.json',
         ];
 
         $toAdd = [];
@@ -311,9 +350,7 @@ trait GeneratesProjectInfrastructure
                 'workspacePath' => $workspacePath,
             ])->render();
 
-            if (! $config->isLocked(".infrastructure/k8s/{$stub}")) {
-                file_put_contents("$k8sPath/$stub", $content);
-            }
+            $this->writeManagedManifest($config, "$k8sPath/$stub", ".infrastructure/k8s/{$stub}", $content);
         };
 
         // Base layer (environment-agnostic; rendered with the local command
@@ -496,9 +533,7 @@ trait GeneratesProjectInfrastructure
             $filename = "{$pod->value}-managed-delete-".strtolower($resource['kind']).'.yaml';
             $dest = "overlays/$env/$filename";
 
-            if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
-                file_put_contents("$k8sPath/$dest", $doc);
-            }
+            $this->writeManagedManifest($config, "$k8sPath/$dest", ".infrastructure/k8s/{$dest}", $doc);
             $this->appendToKustomization($k8sPath, "overlays/$env", $filename, 'patches');
         }
     }
@@ -582,6 +617,41 @@ trait GeneratesProjectInfrastructure
         }
 
         return $referenced;
+    }
+
+    /**
+     * Write a generated manifest without ever silently clobbering a hand-edit.
+     * LaraKube records a hash of each file it writes in a gitignored sidecar
+     * (.larakube-sigs.json); if a file's current content no longer matches that
+     * hash, the user changed it by hand — so we keep their version and advise
+     * locking it instead of overwriting. Locked files are always left alone, and
+     * kustomization.yaml is machine-managed (rewritten by appendToKustomization),
+     * so it's written plain and not tracked.
+     */
+    protected function writeManagedManifest(ConfigData $config, string $absPath, string $relPath, string $content): void
+    {
+        if ($config->isLocked($relPath)) {
+            return;
+        }
+
+        if (str_ends_with($relPath, 'kustomization.yaml')) {
+            file_put_contents($absPath, $content);
+
+            return;
+        }
+
+        if ($this->manifestHandEdited($config, $absPath, $relPath)) {
+            $this->laraKubeWarn("⚠ {$relPath} looks hand-edited — keeping your version, not regenerating it.");
+            $this->laraKubeLine("   Run `larakube lock {$relPath}` to keep it for good, or revert/delete it to let LaraKube manage it again.");
+
+            return;
+        }
+
+        file_put_contents($absPath, $content);
+
+        $sigs = $this->loadManifestSigs($config);
+        $sigs[$relPath] = hash('sha256', $content);
+        $this->saveManifestSigs($config, $sigs);
     }
 
     /**
