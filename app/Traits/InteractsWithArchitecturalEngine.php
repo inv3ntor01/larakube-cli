@@ -66,8 +66,8 @@ trait InteractsWithArchitecturalEngine
 
         // Execute JS installation if needed
         if (! empty($jsCommands)) {
-            $js = [...$jsCommands, $config->packageManager->buildCommand()];
-            $this->runInContainer(implode(' && ', $js), $projectPath, $config->frontend->getPodName($config));
+            $js = array_merge($jsCommands, [$config->packageManager->buildCommand()]);
+            $this->runInContainer(implode(' && ', $js), $projectPath, 'php');
         }
     }
 
@@ -126,10 +126,9 @@ trait InteractsWithArchitecturalEngine
         // JS
         if (! empty($jsCommands)) {
             $this->laraKubeInfo('Installing JS packages and building assets...');
+            $js = array_merge($jsCommands, [$config->packageManager->buildCommand()]);
 
-            $js = [...$jsCommands, $config->packageManager->buildCommand()];
-
-            $this->runInContainer(implode(' && ', $js), $projectPath, $config->frontend->getPodName($config));
+            $this->runInContainer(implode(' && ', $js), $projectPath, 'php');
         }
     }
 }

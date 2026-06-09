@@ -260,25 +260,33 @@ trait GathersInfrastructureConfig
 
         // 13. Deployment Strategy
         if (! $config->hasStrategy()) {
-            $strategy = select(
-                label: 'What is your primary deployment strategy?',
-                options: DeploymentStrategy::getSelectOptions($config),
-                default: DeploymentStrategy::SINGLE_NODE->value,
-            );
+            if ($config->isScaffolding()) {
+                $config->setStrategy(DeploymentStrategy::SINGLE_NODE);
+            } else {
+                $strategy = select(
+                    label: 'What is your primary deployment strategy?',
+                    options: DeploymentStrategy::getSelectOptions($config),
+                    default: DeploymentStrategy::SINGLE_NODE->value,
+                );
 
-            $config->setStrategy(DeploymentStrategy::from($strategy));
+                $config->setStrategy(DeploymentStrategy::from($strategy));
+            }
         }
 
         // 14. Ingress Controller (Production)
         $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
         if (! $prodEnv->ingress) {
-            $controller = select(
-                label: 'Which Ingress Controller will you use in production?',
-                options: IngressController::getSelectOptions($config),
-                default: IngressController::TRAEFIK->value,
-            );
+            if ($config->isScaffolding()) {
+                $prodEnv->ingress = IngressController::TRAEFIK;
+            } else {
+                $controller = select(
+                    label: 'Which Ingress Controller will you use in production?',
+                    options: IngressController::getSelectOptions($config),
+                    default: IngressController::TRAEFIK->value,
+                );
 
-            $prodEnv->ingress = IngressController::from($controller);
+                $prodEnv->ingress = IngressController::from($controller);
+            }
             $config->environments['production'] = $prodEnv;
         }
 
@@ -287,11 +295,15 @@ trait GathersInfrastructureConfig
             $managedOptions = $config->getManageableServices();
 
             if (! empty($managedOptions)) {
-                $managed = multiselect(
-                    label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?',
-                    options: $managedOptions,
-                    hint: 'These services will be orchestrated locally but skipped in production manifests.',
-                );
+                if ($config->isScaffolding()) {
+                    $managed = [];
+                } else {
+                    $managed = multiselect(
+                        label: 'Which services are managed externally in production (e.g. AWS RDS, ElastiCache, Meilisearch Cloud, S3)?',
+                        options: $managedOptions,
+                        hint: 'These services will be orchestrated locally but skipped in production manifests.',
+                    );
+                }
 
                 $prodEnv = $config->getEnvironment('production') ?? new EnvironmentData;
                 $prodEnv->managed = $managed;
