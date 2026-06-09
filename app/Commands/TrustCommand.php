@@ -99,17 +99,17 @@ class TrustCommand extends Command
 
         if ($os === 'Darwin') {
             $this->info('  🔒 macOS detected. Installing to System Keychain...');
-            passthru("sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"{$tempCa}\"");
+            passthru('sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '.escapeshellarg($tempCa));
         } elseif ($os === 'Linux') {
             if (file_exists('/usr/local/share/ca-certificates/')) {
                 $this->info('  🔒 Linux (Debian/Ubuntu) detected. Installing to ca-certificates...');
                 $target = '/usr/local/share/ca-certificates/larakube-local-ca.crt';
-                passthru("sudo cp \"{$tempCa}\" \"{$target}\"");
+                passthru('sudo cp '.escapeshellarg($tempCa).' '.escapeshellarg($target));
                 passthru('sudo update-ca-certificates');
             } elseif (file_exists('/etc/pki/ca-trust/source/anchors/')) {
                 $this->info('  🔒 Linux (Fedora/RHEL) detected. Installing to ca-trust...');
                 $target = '/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt';
-                passthru("sudo cp \"{$tempCa}\" \"{$target}\"");
+                passthru('sudo cp '.escapeshellarg($tempCa).' '.escapeshellarg($target));
                 passthru('sudo update-ca-trust extract');
             }
         } else {
