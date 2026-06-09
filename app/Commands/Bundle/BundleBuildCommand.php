@@ -106,6 +106,7 @@ class BundleBuildCommand extends Command
         if (is_dir($k8s)) {
             passthru('cp -R '.escapeshellarg($k8s.'/.').' '.escapeshellarg("$outDir/manifests"));
         }
+        passthru('cp '.escapeshellarg($config->getPath().'/.larakube.json').' '.escapeshellarg("$outDir/.larakube.json"));
 
         // 4. bundle.json
         file_put_contents(
