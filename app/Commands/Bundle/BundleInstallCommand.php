@@ -156,6 +156,14 @@ class BundleInstallCommand extends Command
         $this->laraKubeInfo('Generating secure install secrets...');
         $mergedEnv = $this->generateInstallSecrets($config, $env, $existingSecrets);
 
+        foreach ($mergedEnv as $key => $value) {
+            if (isset($existingSecrets[$key])) {
+                $this->line("  <fg=gray>Restored existing secret:</> <fg=cyan>{$key}</>");
+            } else {
+                $this->line("  <fg=green>Generated new secret:</> <fg=cyan>{$key}</>");
+            }
+        }
+
         $envFile = (string) $this->option('env-file');
         if ($envFile === '') {
             $envFile = getcwd().'/.env';
