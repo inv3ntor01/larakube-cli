@@ -129,7 +129,7 @@ class BundleBuildCommand extends Command
             }
         }
 
-        if (!$this->runPreDeploymentSteps($config)) {
+        if (! $this->runPreDeploymentSteps($config)) {
             return 1;
         }
 

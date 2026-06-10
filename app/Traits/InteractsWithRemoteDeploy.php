@@ -53,7 +53,7 @@ trait InteractsWithRemoteDeploy
     public function runPreDeploymentSteps(ConfigData $config): bool
     {
         $this->laraKubeInfo('Running Pre-Deployment Build Steps...');
-        
+
         $bin = escapeshellarg($_SERVER['argv'][0] ?? 'larakube');
         $pm = escapeshellarg($config->getPackageManager()->value);
 
@@ -63,6 +63,7 @@ trait InteractsWithRemoteDeploy
         passthru($composerCmd, $code);
         if ($code !== 0) {
             $this->laraKubeError('Composer install failed. Is your local dev cluster running (`larakube up`)?');
+
             return false;
         }
 
@@ -74,6 +75,7 @@ trait InteractsWithRemoteDeploy
         passthru($installCmdStr, $code);
         if ($code !== 0) {
             $this->laraKubeError('Node dependencies install failed.');
+
             return false;
         }
 
@@ -83,6 +85,7 @@ trait InteractsWithRemoteDeploy
             passthru("$bin php artisan wayfinder:generate --with-form", $code);
             if ($code !== 0) {
                 $this->laraKubeError('Wayfinder generation failed.');
+
                 return false;
             }
         }
@@ -94,10 +97,12 @@ trait InteractsWithRemoteDeploy
         passthru($buildCmdStr, $code);
         if ($code !== 0) {
             $this->laraKubeError('Asset compilation failed.');
+
             return false;
         }
 
         $this->newLine();
+
         return true;
     }
 
