@@ -125,12 +125,16 @@ class ClusterSetupCommand extends Command
         $this->laraKubeInfo('Creating LaraKube local cluster...');
         $this->info("  🛡 Universal workspace bridge: {$userRoot}");
 
+        $k3sVersion = (new \App\Data\ConfigData)->k3sVersion ?? 'v1.30.4+k3s1';
+        $k3dImage = 'rancher/k3s:'.str_replace('+', '-', $k3sVersion);
+
         // Create k3d cluster with standard ports exposed
         // And mount the user root so hostPath mounts work correctly
         $command = "k3d cluster create {$clusterName} ".
                    '-p "80:80@loadbalancer" '.
                    '-p "443:443@loadbalancer" '.
                    "-v \"{$userRoot}:{$userRoot}@all\" ".
+                   "--image {$k3dImage} ".
                    '--agents 1 '.
                    '--k3s-arg "--disable=traefik@server:*" '.
                    '--wait';
@@ -151,11 +155,13 @@ class ClusterSetupCommand extends Command
             return 1;
         }
 
+        $k3sVersion = escapeshellarg((new \App\Data\ConfigData)->k3sVersion ?? 'v1.30.4+k3s1');
+
         $this->laraKubeInfo('Installing native k3s...');
         // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
         // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
         // below work without sudo.
-        passthru('curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" sh -', $installCode);
+        passthru("curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={$k3sVersion} K3S_KUBECONFIG_MODE=\"644\" sh -", $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');

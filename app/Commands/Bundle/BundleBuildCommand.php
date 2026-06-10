@@ -152,10 +152,10 @@ class BundleBuildCommand extends Command
         }
 
         $isUpdate = $this->option('update');
-        $k3sVersion = 'v1.30.4+k3s1';
-        $kustomizeVersion = 'v5.6.0';
+        $k3sVersion = $config->k3sVersion ?? 'v1.30.4+k3s1';
+        $kustomizeVersion = $config->kustomizeVersion ?? 'v5.6.0';
         $kArch = $arch === 'arm64' ? 'arm64' : 'amd64';
-        
+
         $this->laraKubeInfo("Downloading kustomize standalone binary ({$kustomizeVersion})...");
         $kustomizeUrl = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F{$kustomizeVersion}/kustomize_{$kustomizeVersion}_linux_{$kArch}.tar.gz";
         passthru('curl -sL '.escapeshellarg($kustomizeUrl).' | tar -xz -C '.escapeshellarg($outDir).' kustomize');

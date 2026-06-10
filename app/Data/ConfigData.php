@@ -102,6 +102,8 @@ class ConfigData extends Data
             'composer.lock',
             '.env',
         ],
+        public ?string $k3sVersion = 'v1.30.4+k3s1',
+        public ?string $kustomizeVersion = 'v5.6.0',
         /**
          * @deprecated Legacy intake only. Older blueprints stored a top-level
          * map of {env: {ip,user,port,key}} plus a shared `users` list. The

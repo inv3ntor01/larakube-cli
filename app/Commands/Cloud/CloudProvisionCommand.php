@@ -115,9 +115,11 @@ class CloudProvisionCommand extends Command
 
         $this->laraKubeInfo('Connection successful!');
 
+        $config = $this->getProjectConfigObject(getcwd());
+
         // 1. Install K3s
         if (confirm('Install K3s on the remote server?', true)) {
-            $this->installK3s($user, $ip, $port, $keyPath);
+            $this->installK3s($user, $ip, $port, $keyPath, $config);
         }
 
         // 2. Create larakube user if it's root
@@ -161,14 +163,16 @@ class CloudProvisionCommand extends Command
     /**
      * Install K3s on the remote server.
      */
-    protected function installK3s($user, $ip, $port, $keyPath): void
+    protected function installK3s($user, $ip, $port, $keyPath, $config): void
     {
         $this->laraKubeInfo('Hardening OS and Installing K3s on remote server...');
+
+        $k3sVersion = escapeshellarg($config->k3sVersion ?? 'v1.30.4+k3s1');
 
         // 1. Create Swap (Crucial for 512MB droplets)
         // 2. Enable IP Forwarding
         // 3. Install K3s (optimized for single-node)
-        $remoteCommand = <<<'BASH'
+        $remoteCommand = <<<BASH
     if [ ! -f /swapfile ]; then
     echo "Creating 1GB Swap file for stability..."
     fallocate -l 1G /swapfile
@@ -183,7 +187,7 @@ class CloudProvisionCommand extends Command
     grep -qxF 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
 
     echo "Installing K3s..."
-    curl -sfL https://get.k3s.io | sh -s - --disable=traefik --write-kubeconfig-mode 644
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={$k3sVersion} sh -s - --disable=traefik --write-kubeconfig-mode 644
     BASH;
 
         $this->runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand);
