@@ -22,7 +22,8 @@ class BundleInstallCommand extends Command
 
     protected $signature = 'bundle:install
                             {--env-file= : Path to a custom .env file to merge with auto-generated secrets}
-                            {--skip-images : Skip importing Docker images into containerd (useful for re-running configuration)}';
+                            {--skip-images : Skip importing Docker images into containerd (useful for re-running configuration)}
+                            {--swap= : Size of swap file to create (e.g. 1G, 2G). Prevents crashes on small servers.}';
 
     protected $description = 'Install an air-gapped bundle on the current server';
 
@@ -70,6 +71,26 @@ class BundleInstallCommand extends Command
         $name = $config->getName();
 
         $this->laraKubeInfo("Installing air-gapped bundle — {$name} · {$env}");
+
+        // 1.5. Optional Swap Creation (must happen before heavy k3s/docker loads)
+        if ($swapSize = $this->option('swap')) {
+            $this->laraKubeInfo("Allocating {$swapSize} swap file...");
+            if (file_exists('/swapfile')) {
+                $this->line('  <fg=gray>/swapfile already exists. Skipping.</>');
+            } else {
+                passthru('fallocate -l '.escapeshellarg($swapSize).' /swapfile', $swapCode);
+                if ($swapCode === 0) {
+                    passthru('chmod 600 /swapfile');
+                    passthru('mkswap /swapfile');
+                    passthru('swapon /swapfile');
+                    passthru("echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab > /dev/null");
+                    $this->laraKubeInfo('✅ Swap file activated.');
+                } else {
+                    $this->laraKubeError('Failed to allocate swap space (check disk space or permissions).');
+                    // We don't abort install on swap failure, but let the user know.
+                }
+            }
+        }
 
         // 2. Detect/install k3s (INSTALL_K3S_SKIP_DOWNLOAD=true)
         $this->laraKubeInfo('Ensuring k3s is installed (offline mode)...');
