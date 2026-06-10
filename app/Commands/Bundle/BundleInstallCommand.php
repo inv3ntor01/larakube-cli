@@ -356,8 +356,12 @@ class BundleInstallCommand extends Command
             $this->line("  <fg=gray>Your app should be available at:</> <fg=cyan>https://{$hosts['web']}</>");
         }
         $this->newLine();
-        $this->line('  <fg=gray>To secure your browser, you can install the generated Certificate Authority by running:</>');
-        $this->line('  <fg=cyan>larakube trust '.$niceCaPath.'</>');
+        $this->line('  <fg=gray>The CA certificate for this installation is at:</>');
+        $this->line('  <fg=cyan>'.$niceCaPath.'</>');
+        $this->newLine();
+        $this->line('  <fg=gray>Pull it to your developer machine and trust it:</>');
+        $this->line('  <fg=cyan>rsync -P root@YOUR_SERVER_IP:'.escapeshellarg($niceCaPath).' ~/Downloads/</>');
+        $this->line('  <fg=cyan>larakube trust ~/Downloads/'.$niceCaName.'</>');
         $this->newLine();
         $this->line('  <fg=gray>To wipe everything and start fresh, run:</> <fg=cyan>sudo larakube-reset</>');
 
