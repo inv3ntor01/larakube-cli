@@ -96,6 +96,14 @@ class BundleBuildCommand extends Command
             }
         }
 
+        $dockerignorePath = $config->getPath().'/.dockerignore';
+        if (file_exists($dockerignorePath)) {
+            $dockerignore = file_get_contents($dockerignorePath);
+            if (! str_contains($dockerignore, '/dist')) {
+                file_put_contents($dockerignorePath, rtrim($dockerignore)."\n/dist\n");
+            }
+        }
+
         // 1. Build the app image for the TARGET arch (the customer's, not the Mac's).
         $this->laraKubeInfo("Building app image for {$platform}…");
         passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform), $code);
