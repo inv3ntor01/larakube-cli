@@ -145,19 +145,6 @@ class BundleBuildCommand extends Command
                 }
             }
 
-            // Fix Kustomize v5.0.4 bug specifically for this airgap bundle
-            // by switching `patches: path:` to `patchesStrategicMerge:` 
-            // This prevents multi-document parsing crashes on the remote server
-            // without modifying the user's global project templates.
-            $kustomizationFile = "$outDir/manifests/overlays/{$env}/kustomization.yaml";
-            if (file_exists($kustomizationFile)) {
-                $content = file_get_contents($kustomizationFile);
-                $content = preg_replace('/^patches:$/m', 'patchesStrategicMerge:', $content);
-                $content = preg_replace('/^(\s*)-\s*path:\s*(.+)$/m', '$1- $2', $content);
-                if ($content !== null) {
-                    file_put_contents($kustomizationFile, $content);
-                }
-            }
         }
         passthru('cp '.escapeshellarg($config->getPath().'/.larakube.json').' '.escapeshellarg("$outDir/.larakube.json"));
         if (file_exists($config->getPath().'/.env.example')) {
@@ -166,6 +153,13 @@ class BundleBuildCommand extends Command
 
         $isUpdate = $this->option('update');
         $k3sVersion = 'v1.30.4+k3s1';
+        $kustomizeVersion = 'v5.6.0';
+        $kArch = $arch === 'arm64' ? 'arm64' : 'amd64';
+        
+        $this->laraKubeInfo("Downloading kustomize standalone binary ({$kustomizeVersion})...");
+        $kustomizeUrl = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F{$kustomizeVersion}/kustomize_{$kustomizeVersion}_linux_{$kArch}.tar.gz";
+        passthru('curl -sL '.escapeshellarg($kustomizeUrl).' | tar -xz -C '.escapeshellarg($outDir).' kustomize');
+        passthru('chmod +x '.escapeshellarg("$outDir/kustomize"));
 
         if (! $isUpdate) {
             // 4. Offline k3s artifacts & larakube binary

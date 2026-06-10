@@ -268,8 +268,8 @@ class BundleInstallCommand extends Command
             return 1;
         }
 
-        // The app image is already in the tarball under `<app>:latest`, and manifests reference it. No rewrite needed.
-        $applyCmd = 'kubectl kustomize '.escapeshellarg($overlayPath).' | kubectl apply -f -';
+        // Use the standalone Kustomize binary bundled with the tarball to bypass older K3s parser bugs
+        $applyCmd = getcwd().'/kustomize build '.escapeshellarg($overlayPath).' | kubectl apply -f -';
 
         passthru($applyCmd, $applyCode);
         if ($applyCode !== 0) {
