@@ -954,7 +954,6 @@ spec:
 
           command: ["sh", "-c", "until curl -sf http://web/up; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 ---
-
 apiVersion: batch/v1
 kind: CronJob
 metadata:
