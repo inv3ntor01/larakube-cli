@@ -632,31 +632,12 @@ images:
 
 --- FILE: overlays/production/mysql-volumes.yaml ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: mysql-test-mysql-pv
-  labels:
-    larakube-project: mysql-test
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/mysql
-    type: DirectoryOrCreate
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mysql-test-mysql-pvc
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
-  volumeName: mysql-test-mysql-pv
   resources:
     requests:
       storage: 1Gi

@@ -92,7 +92,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         // Write volumes
         if ($viewName = $this->getStorageViewName()) {
             $storageDest = $this->getStorageYamlDestination();
-            $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
 
             foreach ($config->getEnvironments() as $env) {
                 // Skip envs where this service is externally managed — it has
@@ -103,6 +102,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
                 }
                 $dest = "overlays/$env/{$storageDest}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+                    $vols = view($viewName, ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
                     file_put_contents("$k8sPath/{$dest}", $vols);
                 }
             }

@@ -74,11 +74,11 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         // Write volumes (Memcached doesn't usually need persistent volumes in local dev, same as Redis here)
         if ($viewName = $this->getStorageViewName()) {
             $storageDest = $this->getStorageYamlDestination();
-            $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
 
             foreach ($config->getEnvironments() as $env) {
                 $dest = "overlays/$env/{$storageDest}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+                    $vols = view($viewName, ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
                     file_put_contents("$k8sPath/{$dest}", $vols);
                 }
             }

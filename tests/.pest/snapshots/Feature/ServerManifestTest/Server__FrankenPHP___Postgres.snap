@@ -624,31 +624,12 @@ metadata:
 
 --- FILE: overlays/production/postgres-volumes.yaml ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: franken-postgres-postgres-pv
-  labels:
-    larakube-project: franken-postgres
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/postgres
-    type: DirectoryOrCreate
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: franken-postgres-postgres-pvc
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
-  volumeName: franken-postgres-postgres-pv
   resources:
     requests:
       storage: 1Gi

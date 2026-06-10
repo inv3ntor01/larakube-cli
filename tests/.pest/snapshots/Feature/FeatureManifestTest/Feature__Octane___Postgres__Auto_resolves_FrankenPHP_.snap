@@ -624,31 +624,12 @@ metadata:
 
 --- FILE: overlays/production/postgres-volumes.yaml ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: octane-auto-franken-postgres-pv
-  labels:
-    larakube-project: octane-auto-franken
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/postgres
-    type: DirectoryOrCreate
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: octane-auto-franken-postgres-pvc
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
-  volumeName: octane-auto-franken-postgres-pv
   resources:
     requests:
       storage: 1Gi

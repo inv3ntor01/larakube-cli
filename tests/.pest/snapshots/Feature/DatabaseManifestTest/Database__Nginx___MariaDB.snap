@@ -632,31 +632,12 @@ images:
 
 --- FILE: overlays/production/mariadb-volumes.yaml ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: mariadb-test-mariadb-pv
-  labels:
-    larakube-project: mariadb-test
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/mariadb
-    type: DirectoryOrCreate
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mariadb-test-mariadb-pvc
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
-  volumeName: mariadb-test-mariadb-pv
   resources:
     requests:
       storage: 1Gi
