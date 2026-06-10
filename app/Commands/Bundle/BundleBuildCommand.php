@@ -22,6 +22,8 @@ class BundleBuildCommand extends Command
     protected $signature = 'bundle:build
                             {environment=production : The environment to bundle}
                             {--arch= : Target CPU architecture (amd64|arm64) — match the customer server, not your Mac}
+                            {--update : Build a lightweight update bundle (skips K3s and dependency images)}
+                            {--tar : Compress the bundle into a .tar.gz file after assembly}
                             {--dry-run : Show the plan (images, layout) without building or saving anything}';
 
     protected $description = 'Assemble a self-contained air-gapped install kit (images + manifests) for an on-prem customer';
@@ -62,7 +64,7 @@ class BundleBuildCommand extends Command
         $arch = str_replace('linux/', '', $platform);
 
         $images = $this->bundleImages($config);
-        $allImages = array_merge([$images['app']], $images['dependencies']);
+        $allImages = $this->option('update') ? [$images['app']] : array_merge([$images['app']], $images['dependencies']);
         $name = $config->getName();
         $outDir = $config->getPath()."/dist/{$name}-{$env}-{$arch}-bundle";
 
@@ -121,24 +123,28 @@ class BundleBuildCommand extends Command
             passthru('cp '.escapeshellarg($config->getPath().'/.env.example').' '.escapeshellarg("$outDir/.env.example"));
         }
 
-        // 4. Offline k3s artifacts & larakube binary
-        $k3sVersion = 'v1.31.0+k3s1';
-        $this->laraKubeInfo("Downloading k3s artifacts ({$k3sVersion}) for offline install...");
+        $isUpdate = $this->option('update');
 
-        $k3sBinaryUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s".($arch === 'arm64' ? '-arm64' : '');
-        $k3sImagesUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s-airgap-images-{$arch}.tar";
-        $k3sInstallUrl = 'https://get.k3s.io';
+        if (! $isUpdate) {
+            // 4. Offline k3s artifacts & larakube binary
+            $k3sVersion = 'v1.30.4+k3s1';
+            $this->laraKubeInfo("Downloading k3s artifacts ({$k3sVersion}) for offline install...");
 
-        $this->line('  <fg=gray>download</> k3s binary');
-        passthru('curl -sL '.escapeshellarg($k3sBinaryUrl).' -o '.escapeshellarg("$outDir/k3s"));
-        passthru('chmod +x '.escapeshellarg("$outDir/k3s"));
+            $k3sBinaryUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s".($arch === 'arm64' ? '-arm64' : '');
+            $k3sImagesUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s-airgap-images-{$arch}.tar";
+            $k3sInstallUrl = 'https://get.k3s.io';
 
-        $this->line('  <fg=gray>download</> k3s-airgap-images');
-        passthru('curl -sL '.escapeshellarg($k3sImagesUrl).' -o '.escapeshellarg("$outDir/k3s-airgap-images.tar"));
+            $this->line('  <fg=gray>download</> k3s binary');
+            passthru('curl -sL '.escapeshellarg($k3sBinaryUrl).' -o '.escapeshellarg("$outDir/k3s"));
+            passthru('chmod +x '.escapeshellarg("$outDir/k3s"));
 
-        $this->line('  <fg=gray>download</> k3s-install.sh');
-        passthru('curl -sL '.escapeshellarg($k3sInstallUrl).' -o '.escapeshellarg("$outDir/k3s-install.sh"));
-        passthru('chmod +x '.escapeshellarg("$outDir/k3s-install.sh"));
+            $this->line('  <fg=gray>download</> k3s-airgap-images');
+            passthru('curl -sL '.escapeshellarg($k3sImagesUrl).' -o '.escapeshellarg("$outDir/k3s-airgap-images.tar"));
+
+            $this->line('  <fg=gray>download</> k3s-install.sh');
+            passthru('curl -sL '.escapeshellarg($k3sInstallUrl).' -o '.escapeshellarg("$outDir/k3s-install.sh"));
+            passthru('chmod +x '.escapeshellarg("$outDir/k3s-install.sh"));
+        }
 
         $binArch = $arch === 'amd64' ? 'x64' : 'arm';
         $binaryName = "larakube-linux-{$binArch}";
@@ -159,7 +165,50 @@ class BundleBuildCommand extends Command
 
         $this->newLine();
         $this->laraKubeInfo('✅ Bundle assembled: '.$outDir);
-        $this->laraKubeInfo('Next step: copy the directory to the target server and run `sudo ./larakube bundle:install`.');
+
+        if ($this->option('tar')) {
+            $this->laraKubeInfo('Compressing bundle into a .tar.gz archive...');
+            $tarFile = $outDir.'.tar.gz';
+            $baseDir = dirname($outDir);
+            $folderName = basename($outDir);
+
+            passthru('tar -czf '.escapeshellarg($tarFile).' -C '.escapeshellarg($baseDir).' '.escapeshellarg($folderName), $tarCode);
+
+            if ($tarCode === 0) {
+                $this->laraKubeInfo('✅ Bundle compressed successfully: '.$tarFile);
+                $this->laraKubeInfo('You can safely delete the uncompressed folder: rm -rf '.escapeshellarg($outDir));
+
+                // Generate instructions file
+                $cmd = $isUpdate ? 'bundle:update' : 'bundle:install';
+                $instructionsFile = $outDir.'-INSTRUCTIONS.txt';
+                $instructions = <<<TXT
+=========================================================
+LARAKUBE AIR-GAPPED BUNDLE INSTRUCTIONS
+=========================================================
+
+1. TRANSFER THE BUNDLE TO THE SERVER
+   If your server has SSH enabled, you can transfer the bundle securely:
+   scp {$folderName}.tar.gz username@your-server-ip:~/
+
+2. EXTRACT THE BUNDLE
+   SSH into your server and run the following command to extract it:
+   tar -xzf {$folderName}.tar.gz
+
+3. RUN THE DEPLOYMENT
+   cd {$folderName}
+   sudo ./larakube {$cmd}
+
+=========================================================
+TXT;
+                file_put_contents($instructionsFile, $instructions);
+                $this->laraKubeInfo('✅ Generated instructions: '.$instructionsFile);
+            } else {
+                $this->laraKubeError('Failed to compress the bundle.');
+            }
+        }
+
+        $cmd = $isUpdate ? 'bundle:update' : 'bundle:install';
+        $this->laraKubeInfo("Next step: copy the bundle to the target server and run `sudo ./larakube {$cmd}`.");
 
         return 0;
     }
