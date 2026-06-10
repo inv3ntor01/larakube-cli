@@ -6,7 +6,7 @@ test('bundle:zip compresses a directory into a tarball and bundle:unzip extracts
     mkdir("$tmpDir/dist", 0755, true);
     $bundleDir = "$tmpDir/dist/test-bundle";
     mkdir($bundleDir, 0755, true);
-    
+
     // Create a mock bundle.json and .env
     file_put_contents("$bundleDir/bundle.json", '{"name":"test"}');
     file_put_contents("$bundleDir/.env", 'TEST_KEY=123');
@@ -38,10 +38,10 @@ test('bundle:zip compresses a directory into a tarball and bundle:unzip extracts
         expect(file_get_contents("$bundleDir/.env"))->toBe('TEST_KEY=123');
         // The archive should be deleted because of --delete
         expect(file_exists("$tmpDir/dist/my-bundle.tar.gz"))->toBeFalse();
-        
+
     } finally {
         chdir($originalCwd);
         // Cleanup
-        shell_exec('rm -rf ' . escapeshellarg($tmpDir));
+        shell_exec('rm -rf '.escapeshellarg($tmpDir));
     }
 });
