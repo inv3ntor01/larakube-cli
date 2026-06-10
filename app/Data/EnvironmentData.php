@@ -170,5 +170,12 @@ class EnvironmentData extends Data
          * @var array<string, mixed>
          */
         public array $resources = [],
+        /**
+         * Mark this environment for offline / air-gapped distribution.
+         * When true, `bundle:build` will auto-select this env and the CLI
+         * ships a standalone Kustomize binary inside the tarball so the
+         * remote server never depends on its host kubectl version.
+         */
+        public bool $offline = false,
     ) {}
 }

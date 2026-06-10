@@ -39,11 +39,36 @@ class BundleBuildCommand extends Command
             return 1;
         }
 
+        // Auto-detect offline environments when the user relies on the default.
+        $explicitEnv = $this->hasArgument('environment') && $this->argument('environment') !== 'production';
         $env = (string) $this->argument('environment');
+
+        if (! $explicitEnv) {
+            $offlineEnvs = collect($config->environments)
+                ->filter(fn ($e) => $e->offline ?? false)
+                ->keys()
+                ->all();
+
+            if (count($offlineEnvs) === 1) {
+                $env = $offlineEnvs[0];
+                $this->laraKubeInfo("Auto-selected offline environment: {$env}");
+            } elseif (count($offlineEnvs) > 1) {
+                $env = \Laravel\Prompts\select(
+                    label: 'Multiple offline environments found. Which one?',
+                    options: $offlineEnvs,
+                );
+            }
+        }
+
         if ($config->getEnvironment($env) === null) {
             $this->laraKubeError("Unknown environment '{$env}'. Pick one of: ".implode(', ', $config->getCloudEnvironments()));
 
             return 1;
+        }
+
+        $envData = $config->getEnvironment($env);
+        if (! ($envData->offline ?? false)) {
+            $this->laraKubeWarn("Environment '{$env}' is not marked as offline. Consider: larakube env {$env} --offline");
         }
 
         $archOption = $this->option('arch');
