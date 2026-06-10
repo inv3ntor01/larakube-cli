@@ -134,6 +134,30 @@ class BundleBuildCommand extends Command
         $k8s = $config->getK8sPath();
         if (is_dir($k8s)) {
             passthru('cp -R '.escapeshellarg($k8s.'/.').' '.escapeshellarg("$outDir/manifests"));
+
+            // Prune overlays for other environments to avoid leaking configs
+            foreach (array_keys($config->getEnvironments()) as $otherEnv) {
+                if ($otherEnv !== $env) {
+                    $overlayPath = "$outDir/manifests/overlays/{$otherEnv}";
+                    if (is_dir($overlayPath)) {
+                        passthru('rm -rf '.escapeshellarg($overlayPath));
+                    }
+                }
+            }
+
+            // Fix Kustomize v5.0.4 bug specifically for this airgap bundle
+            // by switching `patches: path:` to `patchesStrategicMerge:` 
+            // This prevents multi-document parsing crashes on the remote server
+            // without modifying the user's global project templates.
+            $kustomizationFile = "$outDir/manifests/overlays/{$env}/kustomization.yaml";
+            if (file_exists($kustomizationFile)) {
+                $content = file_get_contents($kustomizationFile);
+                $content = preg_replace('/^patches:$/m', 'patchesStrategicMerge:', $content);
+                $content = preg_replace('/^(\s*)-\s*path:\s*(.+)$/m', '$1- $2', $content);
+                if ($content !== null) {
+                    file_put_contents($kustomizationFile, $content);
+                }
+            }
         }
         passthru('cp '.escapeshellarg($config->getPath().'/.larakube.json').' '.escapeshellarg("$outDir/.larakube.json"));
         if (file_exists($config->getPath().'/.env.example')) {
