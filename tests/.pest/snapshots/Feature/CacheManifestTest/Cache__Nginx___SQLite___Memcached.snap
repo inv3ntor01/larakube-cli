@@ -287,6 +287,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: memcached-test:latest
+    newName: memcached-test
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -491,6 +496,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: memcached-test:latest
+    newName: memcached-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

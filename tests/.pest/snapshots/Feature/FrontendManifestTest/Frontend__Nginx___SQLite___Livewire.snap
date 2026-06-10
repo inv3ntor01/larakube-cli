@@ -236,6 +236,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: livewire-test:latest
+    newName: livewire-test
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -440,6 +445,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: livewire-test:latest
+    newName: livewire-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

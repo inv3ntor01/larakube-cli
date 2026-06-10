@@ -368,6 +368,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: horizon-auto-redis:latest
+    newName: horizon-auto-redis
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -749,6 +754,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: horizon-auto-redis:latest
+    newName: horizon-auto-redis
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

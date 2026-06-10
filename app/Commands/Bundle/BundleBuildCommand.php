@@ -89,6 +89,7 @@ class BundleBuildCommand extends Command
         $arch = str_replace('linux/', '', $platform);
 
         $images = $this->bundleImages($config);
+        $images['app'] = $config->getName().':'.$env.'-latest';
         $allImages = $this->option('update') ? [$images['app']] : array_merge([$images['app']], $images['dependencies']);
         $name = $config->getName();
         $timestamp = date('Ymd-His');

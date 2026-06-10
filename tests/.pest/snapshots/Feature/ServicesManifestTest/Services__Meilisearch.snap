@@ -305,6 +305,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: meilisearch-test:latest
+    newName: meilisearch-test
+    newTag: local
+
 
 --- FILE: overlays/local/meilisearch-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
@@ -567,6 +572,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: meilisearch-test:latest
+    newName: meilisearch-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/meilisearch-volumes.yaml ---

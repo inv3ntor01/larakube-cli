@@ -294,6 +294,11 @@ patches:
   - path: postgres-patch.yaml
   - path: patches.yaml
 
+images:
+  - name: octane-auto-franken:latest
+    newName: octane-auto-franken
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -603,6 +608,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: octane-auto-franken:latest
+    newName: octane-auto-franken
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

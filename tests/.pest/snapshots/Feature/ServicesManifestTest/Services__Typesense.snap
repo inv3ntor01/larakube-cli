@@ -340,6 +340,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: typesense-test:latest
+    newName: typesense-test
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -627,6 +632,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: typesense-test:latest
+    newName: typesense-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

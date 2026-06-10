@@ -236,6 +236,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: nginx-sqlite:latest
+    newName: nginx-sqlite
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -440,6 +445,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: nginx-sqlite:latest
+    newName: nginx-sqlite
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

@@ -310,6 +310,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: minio-test:latest
+    newName: minio-test
+    newTag: local
+
 
 --- FILE: overlays/local/minio-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
@@ -583,6 +588,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: minio-test:latest
+    newName: minio-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/minio-volumes.yaml ---

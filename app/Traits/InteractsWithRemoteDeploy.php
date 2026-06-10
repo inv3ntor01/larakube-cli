@@ -407,7 +407,7 @@ trait InteractsWithRemoteDeploy
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $image);
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $image);
     }
 
     /**
@@ -493,7 +493,7 @@ trait InteractsWithRemoteDeploy
         }
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $deployImage);
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $deployImage);
     }
 
     /**

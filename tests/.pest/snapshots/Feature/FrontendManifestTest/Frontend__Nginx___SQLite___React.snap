@@ -237,6 +237,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: react-test:latest
+    newName: react-test
+    newTag: local
+
 
 --- FILE: overlays/local/node-deployment.yaml ---
 # The hot-file URL is sourced from vite.config.js#server.origin (the only lever
@@ -545,6 +550,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: react-test:latest
+    newName: react-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

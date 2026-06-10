@@ -88,7 +88,7 @@ trait InteractsWithDocker
         $path = $config->getPath();
 
         // Build Primary Project Image (Includes PHP, Node, and correct permissions)
-        $this->buildTargetedImage($appName, "$path/Dockerfile.php", $path, $uid, $gid);
+        $this->buildTargetedImage("$appName:local", "$path/Dockerfile.php", $path, $uid, $gid);
     }
 
     /**
@@ -111,13 +111,12 @@ trait InteractsWithDocker
         return $cluster !== '' ? $cluster : null;
     }
 
-    protected function buildTargetedImage(string $tag, string $dockerfile, string $path, int $uid, int $gid): void
+    protected function buildTargetedImage(string $imageTag, string $dockerfile, string $path, int $uid, int $gid): void
     {
         if (! file_exists($dockerfile)) {
             return;
         }
 
-        $imageTag = "$tag:latest";
         $this->laraKubeInfo("Building local image '$imageTag'...");
 
         $target = '';

@@ -275,7 +275,7 @@ class UpCommand extends Command
 
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
         if ($environment === 'local' && ! $this->option('no-build')) {
-            $imageTag = "{$appName}:latest";
+            $imageTag = "{$appName}:local";
 
             if ($this->option('build') || ! $this->imageExists($imageTag)) {
                 // Forced, or no image in Docker yet → build (which also sideloads).

@@ -499,6 +499,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: kitchen-sink:latest
+    newName: kitchen-sink
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -1021,6 +1026,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: kitchen-sink:latest
+    newName: kitchen-sink
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---
