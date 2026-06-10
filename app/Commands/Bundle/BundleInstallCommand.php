@@ -21,7 +21,7 @@ class BundleInstallCommand extends Command
     use GeneratesBundleSecrets, GeneratesOfflineCertificates, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, PromptsForHosts;
 
     protected $signature = 'bundle:install
-                            {--env-file= : Path to a custom .env file to merge with auto-generated secrets}
+                            {--env= : Path to a custom .env file to merge with auto-generated secrets}
                             {--skip-images : Skip importing Docker images into containerd (useful for re-running configuration)}
                             {--swap= : Size of swap file to create (e.g. 1G, 2G). Prevents crashes on small servers.}';
 
@@ -190,7 +190,7 @@ class BundleInstallCommand extends Command
             }
         }
 
-        $envFile = (string) $this->option('env-file');
+        $envFile = (string) $this->option('env');
         if ($envFile === '') {
             $envFile = getcwd().'/.env';
         }
@@ -218,8 +218,8 @@ class BundleInstallCommand extends Command
                     $mergedEnv[$key] = trim($value);
                 }
             }
-        } elseif ((string) $this->option('env-file') !== '') {
-            $this->laraKubeError("Provided env file '".((string) $this->option('env-file'))."' does not exist.");
+        } elseif ((string) $this->option('env') !== '') {
+            $this->laraKubeError("Provided env file '".((string) $this->option('env'))."' does not exist.");
 
             return 1;
         }

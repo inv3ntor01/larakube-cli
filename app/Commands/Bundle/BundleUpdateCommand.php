@@ -21,7 +21,7 @@ class BundleUpdateCommand extends Command
     use GeneratesBundleSecrets, GeneratesOfflineCertificates, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput, PromptsForHosts;
 
     protected $signature = 'bundle:update
-                            {--env-file= : Path to a custom .env file to merge with auto-generated secrets}';
+                            {--env= : Path to a custom .env file to merge with auto-generated secrets}';
 
     protected $description = 'Update an air-gapped bundle on the current server';
 
@@ -130,7 +130,7 @@ class BundleUpdateCommand extends Command
         $this->laraKubeInfo('Generating secure install secrets...');
         $mergedEnv = $this->generateInstallSecrets($config, $env, $existingSecrets);
 
-        $envFile = (string) $this->option('env-file');
+        $envFile = (string) $this->option('env');
         if ($envFile === '') {
             $envFile = getcwd().'/.env';
         }
@@ -158,8 +158,8 @@ class BundleUpdateCommand extends Command
                     $mergedEnv[$key] = trim($value);
                 }
             }
-        } elseif ((string) $this->option('env-file') !== '') {
-            $this->laraKubeError("Provided env file '".((string) $this->option('env-file'))."' does not exist.");
+        } elseif ((string) $this->option('env') !== '') {
+            $this->laraKubeError("Provided env file '".((string) $this->option('env'))."' does not exist.");
 
             return 1;
         }
