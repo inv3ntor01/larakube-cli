@@ -307,15 +307,19 @@ class BundleInstallCommand extends Command
         $this->laraKubeInfo('Waiting for rollout...');
         passthru('kubectl rollout status deploy/web -n '.escapeshellarg($namespace).' --timeout=180s');
 
+        // 10. Expose CA for easy download
+        $niceCaName = "{$name}-{$env}-" . date('Y-m-d') . "-ca.crt";
+        $niceCaPath = getcwd() . '/' . $niceCaName;
+        copy($certs['ca_crt'], $niceCaPath);
+
         $this->newLine();
         $this->laraKubeInfo('✅ Bundle successfully installed!');
         if (isset($hosts['web'])) {
             $this->line("  <fg=gray>Your app should be available at:</> <fg=cyan>https://{$hosts['web']}</>");
         }
         $this->newLine();
-        $this->line('  <fg=gray>To secure your browser, install the generated Certificate Authority:</>');
-        $this->line('  <fg=cyan>1. Download the CA certificate to your computer:</> '.$certs['ca_crt']);
-        $this->line('  <fg=cyan>2. Add it to your OS/Browser Trust Store.</>');
+        $this->line('  <fg=gray>To secure your browser, you can install the generated Certificate Authority by running:</>');
+        $this->line('  <fg=cyan>larakube trust '.$niceCaPath.'</>');
 
         return 0;
     }
