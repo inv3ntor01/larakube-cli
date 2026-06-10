@@ -122,6 +122,10 @@ class BundleInstallCommand extends Command
             $this->laraKubeInfo('✅ K3s is already installed. Skipping installation.');
         }
 
+        // Make the k3s kubeconfig available at the standard path so kubectl, k9s,
+        // and other tools work without needing KUBECONFIG set explicitly.
+        passthru('mkdir -p /root/.kube && cp /etc/rancher/k3s/k3s.yaml /root/.kube/config');
+
         if (file_exists('./k9s')) {
             $this->laraKubeInfo('Installing k9s terminal UI...');
             passthru('cp k9s /usr/local/bin/k9s');
