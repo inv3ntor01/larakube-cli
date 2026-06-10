@@ -59,7 +59,7 @@ trait InteractsWithDocker
     {
 
         $appName = basename($path);
-        $localImage = "$appName:latest";
+        $localImage = "$appName:local";
 
         // Check if we have a local image, otherwise fallback to base
         $imageExists = shell_exec("docker images -q {$localImage} 2>/dev/null");
@@ -307,7 +307,7 @@ trait InteractsWithDocker
         $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
 
         $appName = basename($path);
-        $image = "$appName:latest";
+        $image = "$appName:local";
 
         // Fallback if image doesn't exist
         $imageExists = shell_exec("docker images -q {$image} 2>/dev/null");
