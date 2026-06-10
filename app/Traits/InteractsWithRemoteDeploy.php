@@ -16,8 +16,6 @@ use App\Enums\RegistryProvider;
  * The command-builders are pure (no I/O) so they're unit-testable; the
  * orchestration runs them.
  */
-use function Laravel\Prompts\spin;
-
 trait InteractsWithRemoteDeploy
 {
     /** The kube-context cloud:provision creates for a host. Pure. */
@@ -55,29 +53,25 @@ trait InteractsWithRemoteDeploy
     public function runPreDeploymentSteps(ConfigData $config): bool
     {
         $this->laraKubeInfo('Running Pre-Deployment Build Steps...');
-        $path = $config->getPath();
-
-        $phpExec = file_exists($path . '/php') ? './php' : 'php';
         
-        $pm = $config->getPackageManager()->value; // 'npm', 'yarn', 'pnpm', 'bun'
-        $pmExec = file_exists($path . '/' . $pm) ? './' . $pm : $pm;
+        $bin = escapeshellarg($_SERVER['argv'][0] ?? 'larakube');
+        $pm = escapeshellarg($config->getPackageManager()->value);
 
         // 1. Composer install
         $this->line('  <fg=gray>📦 composer install</>');
-        $composerCmd = escapeshellarg($phpExec) . ' composer install --optimize-autoloader --no-interaction --no-progress';
-        passthru("cd " . escapeshellarg($path) . " && $composerCmd", $code);
+        $composerCmd = "$bin composer install --optimize-autoloader --no-interaction --no-progress";
+        passthru($composerCmd, $code);
         if ($code !== 0) {
-            $this->laraKubeError('Composer install failed.');
+            $this->laraKubeError('Composer install failed. Is your local dev cluster running (`larakube up`)?');
             return false;
         }
 
         // 2. Node install
         $this->line("  <fg=gray>🛠  {$pm} install</>");
         $installCmd = $config->getPackageManager()->installCommand();
-        if (file_exists($path . '/' . $pm)) {
-            $installCmd = preg_replace('/^' . preg_quote($pm, '/') . '\b/', escapeshellarg('./' . $pm), $installCmd);
-        }
-        passthru("cd " . escapeshellarg($path) . " && $installCmd", $code);
+        // Since installCmd might be "npm ci" or "yarn install --immutable", we replace the tool name with "$bin <tool>"
+        $installCmdStr = preg_replace('/^([a-z]+)\b/', "$bin $1", $installCmd);
+        passthru($installCmdStr, $code);
         if ($code !== 0) {
             $this->laraKubeError('Node dependencies install failed.');
             return false;
@@ -86,7 +80,7 @@ trait InteractsWithRemoteDeploy
         // 3. Wayfinder
         if ($config->usesWayfinder()) {
             $this->line('  <fg=gray>🏎  wayfinder:generate</>');
-            passthru("cd " . escapeshellarg($path) . " && " . escapeshellarg($phpExec) . " artisan wayfinder:generate --with-form", $code);
+            passthru("$bin php artisan wayfinder:generate --with-form", $code);
             if ($code !== 0) {
                 $this->laraKubeError('Wayfinder generation failed.');
                 return false;
@@ -96,10 +90,8 @@ trait InteractsWithRemoteDeploy
         // 4. Build assets
         $this->line("  <fg=gray>💎 {$pm} run build</>");
         $buildCmd = $config->getPackageManager()->buildCommand();
-        if (file_exists($path . '/' . $pm)) {
-            $buildCmd = preg_replace('/^' . preg_quote($pm, '/') . '\b/', escapeshellarg('./' . $pm), $buildCmd);
-        }
-        passthru("cd " . escapeshellarg($path) . " && $buildCmd", $code);
+        $buildCmdStr = preg_replace('/^([a-z]+)\b/', "$bin $1", $buildCmd);
+        passthru($buildCmdStr, $code);
         if ($code !== 0) {
             $this->laraKubeError('Asset compilation failed.');
             return false;
@@ -380,7 +372,7 @@ trait InteractsWithRemoteDeploy
         $dockerfile = "{$path}/Dockerfile.php";
         $ssh = $this->sshBaseCommand($cloud->user, $cloud->ip, $cloud->port, $cloud->key);
 
-        if (!$this->runPreDeploymentSteps($config)) {
+        if (! $this->runPreDeploymentSteps($config)) {
             return 1;
         }
 
@@ -457,7 +449,7 @@ trait InteractsWithRemoteDeploy
         $this->laraKubeInfo('Verifying registry credentials...');
         // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
 
-        if (!$this->runPreDeploymentSteps($config)) {
+        if (! $this->runPreDeploymentSteps($config)) {
             return 1;
         }
 
