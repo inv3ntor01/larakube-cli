@@ -196,8 +196,8 @@ LARAKUBE AIR-GAPPED BUNDLE INSTRUCTIONS
 =========================================================
 
 1. TRANSFER THE BUNDLE TO THE SERVER
-   If your server has SSH enabled, you can transfer the bundle securely:
-   scp {$folderName}.tar.gz username@your-server-ip:~/
+   If your server has SSH enabled, transfer the bundle securely with rsync (which shows a progress bar):
+   rsync -P {$folderName}.tar.gz username@your-server-ip:~/
 
 2. EXTRACT THE BUNDLE
    SSH into your server and run the following command to extract it:
