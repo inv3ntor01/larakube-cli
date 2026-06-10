@@ -23,7 +23,7 @@ class BundleInstallCommand extends Command
     protected $signature = 'bundle:install
                             {--env= : Path to a custom .env file to merge with auto-generated secrets}
                             {--skip-images : Skip importing Docker images into containerd (useful for re-running configuration)}
-                            {--swap= : Size of swap file to create (e.g. 1G, 2G). Prevents crashes on small servers.}';
+                            {--swap=1G : Size of swap file to create (e.g. 2G). Defaults to 1G. Prevents crashes on small servers.}';
 
     protected $description = 'Install an air-gapped bundle on the current server';
 
@@ -73,7 +73,11 @@ class BundleInstallCommand extends Command
         $this->laraKubeInfo("Installing air-gapped bundle — {$name} · {$env}");
 
         // 1.5. Optional Swap Creation (must happen before heavy k3s/docker loads)
-        if ($swapSize = $this->option('swap')) {
+        if (($swapSize = $this->option('swap')) !== null) {
+            // Normalize bare numbers to gigabytes (--swap=2 → 2G)
+            if (preg_match('/^\d+$/', $swapSize)) {
+                $swapSize .= 'G';
+            }
             $this->laraKubeInfo("Allocating {$swapSize} swap file...");
             if (file_exists('/swapfile')) {
                 $this->line('  <fg=gray>/swapfile already exists. Skipping.</>');
