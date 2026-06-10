@@ -198,8 +198,25 @@ class BundleInstallCommand extends Command
             return 1;
         }
 
-        $mergedLines = [];
+        // Get ALL base environment variables defined by the blueprint (DB_CONNECTION, DB_HOST, etc.)
+        $baseEnvLines = $config->getEnvironmentVariables($env);
+        $finalEnv = [];
+
+        // Parse base lines into an associative array
+        foreach ($baseEnvLines as $line) {
+            if (str_contains($line, '=')) {
+                [$k, $v] = explode('=', $line, 2);
+                $finalEnv[$k] = $v;
+            }
+        }
+
+        // Apply our generated secrets and any overrides from the customer's .env
         foreach ($mergedEnv as $k => $v) {
+            $finalEnv[$k] = $v;
+        }
+
+        $mergedLines = [];
+        foreach ($finalEnv as $k => $v) {
             $mergedLines[] = "{$k}={$v}";
         }
 
