@@ -66,7 +66,8 @@ class BundleBuildCommand extends Command
         $images = $this->bundleImages($config);
         $allImages = $this->option('update') ? [$images['app']] : array_merge([$images['app']], $images['dependencies']);
         $name = $config->getName();
-        $outDir = $config->getPath()."/dist/{$name}-{$env}-{$arch}-bundle";
+        $timestamp = date('Ymd-His');
+        $outDir = $config->getPath()."/dist/{$name}-{$env}-{$arch}-bundle-{$timestamp}";
 
         $this->laraKubeInfo("Air-gapped bundle — {$name} · {$env} · {$arch}");
         $this->newLine();
