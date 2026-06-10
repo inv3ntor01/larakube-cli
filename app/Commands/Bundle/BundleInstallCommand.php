@@ -308,8 +308,8 @@ class BundleInstallCommand extends Command
         passthru('kubectl rollout status deploy/web -n '.escapeshellarg($namespace).' --timeout=180s');
 
         // 10. Expose CA for easy download
-        $niceCaName = "{$name}-{$env}-" . date('Y-m-d') . "-ca.crt";
-        $niceCaPath = getcwd() . '/' . $niceCaName;
+        $niceCaName = "{$name}-{$env}-".date('Y-m-d').'-ca.crt';
+        $niceCaPath = getcwd().'/'.$niceCaName;
         copy($certs['ca_crt'], $niceCaPath);
 
         $this->newLine();

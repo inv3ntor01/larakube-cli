@@ -10,7 +10,8 @@ class TrustCommand extends Command
 {
     use DetectsWsl, LaraKubeOutput;
 
-    protected $signature = 'trust {--refresh : Force download of the latest CA from Server Side Up}';
+    protected $signature = 'trust {ca-file? : An optional path to a specific CA file to trust}
+                                   {--refresh : Force download of the latest CA from Server Side Up}';
 
     protected $description = 'Install the LaraKube Local CA into your system trust store for seamless HTTPS';
 
@@ -26,33 +27,45 @@ class TrustCommand extends Command
             return 1;
         }
 
-        $caPath = base_path('resources/views/traefik/certificates/local-ca.pem');
-        $caUrl = 'https://serversideup.net/ca/ssu-ca.pem';
-        $useBundled = file_exists($caPath) && ! $this->option('refresh');
+        $customCa = $this->argument('ca-file');
 
-        // Check if bundled CA is expired
-        if ($useBundled) {
-            $expiration = shell_exec("openssl x509 -enddate -noout -in {$caPath} 2>/dev/null");
-            if ($expiration) {
-                $expiryDate = strtotime(str_replace('notAfter=', '', trim($expiration)));
-                if ($expiryDate < time()) {
-                    $this->warn('  ⚠ Bundled CA has expired. Attempting to download the latest version...');
-                    $useBundled = false;
-                }
-            }
-        }
-
-        if ($useBundled) {
-            $this->info('  📦 Using bundled Local CA certificate.');
-            $caContent = file_get_contents($caPath);
-        } else {
-            $this->info('  🌐 Downloading latest Local CA from Server Side Up...');
-            $caContent = @file_get_contents($caUrl);
-
-            if (! $caContent) {
-                $this->error('  ✖ Failed to download the latest CA certificate. Please check your internet connection.');
+        if ($customCa) {
+            if (! file_exists($customCa)) {
+                $this->error("  ✖ The specified CA file was not found: {$customCa}");
 
                 return 1;
+            }
+            $this->info("  📦 Using custom CA certificate from {$customCa}");
+            $caContent = file_get_contents($customCa);
+        } else {
+            $caPath = base_path('resources/views/traefik/certificates/local-ca.pem');
+            $caUrl = 'https://serversideup.net/ca/ssu-ca.pem';
+            $useBundled = file_exists($caPath) && ! $this->option('refresh');
+
+            // Check if bundled CA is expired
+            if ($useBundled) {
+                $expiration = shell_exec("openssl x509 -enddate -noout -in {$caPath} 2>/dev/null");
+                if ($expiration) {
+                    $expiryDate = strtotime(str_replace('notAfter=', '', trim($expiration)));
+                    if ($expiryDate < time()) {
+                        $this->warn('  ⚠ Bundled CA has expired. Attempting to download the latest version...');
+                        $useBundled = false;
+                    }
+                }
+            }
+
+            if ($useBundled) {
+                $this->info('  📦 Using bundled Local CA certificate.');
+                $caContent = file_get_contents($caPath);
+            } else {
+                $this->info('  🌐 Downloading latest Local CA from Server Side Up...');
+                $caContent = @file_get_contents($caUrl);
+
+                if (! $caContent) {
+                    $this->error('  ✖ Failed to download the latest CA certificate. Please check your internet connection.');
+
+                    return 1;
+                }
             }
         }
 
