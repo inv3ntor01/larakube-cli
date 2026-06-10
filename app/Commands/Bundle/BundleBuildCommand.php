@@ -24,6 +24,7 @@ class BundleBuildCommand extends Command
                             {--arch= : Target CPU architecture (amd64|arm64) — match the customer server, not your Mac}
                             {--update : Build a lightweight update bundle (skips K3s and dependency images)}
                             {--tar : Compress the bundle into a .tar.gz file after assembly}
+                            {--k9s : Bundle the k9s terminal UI alongside the kit}
                             {--dry-run : Show the plan (images, layout) without building or saving anything}';
 
     protected $description = 'Assemble a self-contained air-gapped install kit (images + manifests) for an on-prem customer';
@@ -191,6 +192,14 @@ class BundleBuildCommand extends Command
         passthru('curl -sL '.escapeshellarg($kustomizeUrl).' | tar -xz -C '.escapeshellarg($outDir).' kustomize');
         passthru('chmod +x '.escapeshellarg("$outDir/kustomize"));
 
+        if ($this->option('k9s')) {
+            $k9sVersion = $config->k9sVersion ?? 'v0.32.7';
+            $this->laraKubeInfo("Downloading k9s ({$k9sVersion})...");
+            $k9sUrl = "https://github.com/derailed/k9s/releases/download/{$k9sVersion}/k9s_Linux_{$kArch}.tar.gz";
+            passthru('curl -sL '.escapeshellarg($k9sUrl).' | tar -xz -C '.escapeshellarg($outDir).' k9s');
+            passthru('chmod +x '.escapeshellarg("$outDir/k9s"));
+        }
+
         if (! $isUpdate) {
             // 4. Offline k3s artifacts & larakube binary
             $this->laraKubeInfo("Downloading k3s artifacts ({$k3sVersion}) for offline install...");
@@ -219,6 +228,10 @@ class BundleBuildCommand extends Command
         passthru('curl -sL '.escapeshellarg($binaryUrl).' -o '.escapeshellarg("$outDir/larakube"));
 
         passthru('chmod +x '.escapeshellarg("$outDir/larakube"));
+
+        // Write clean-slate reset script (always included)
+        file_put_contents("$outDir/reset.sh", $this->resetScript());
+        passthru('chmod +x '.escapeshellarg("$outDir/reset.sh"));
 
         // 5. bundle.json
         $manifestData = $this->bundleManifest($config, $env, $arch, $allImages);
@@ -276,5 +289,46 @@ TXT;
         $this->laraKubeInfo("Next step: copy the bundle to the target server and run `sudo ./larakube {$cmd}`.");
 
         return 0;
+    }
+
+    private function resetScript(): string
+    {
+        return <<<'BASH'
+#!/usr/bin/env bash
+# larakube-reset — wipe k3s, swap, and k9s for a clean reinstall.
+set -euo pipefail
+
+echo "==> Stopping and removing k3s..."
+if command -v k3s-uninstall.sh &>/dev/null; then
+    k3s-uninstall.sh
+    echo "    Done."
+else
+    echo "    k3s not installed, skipping."
+fi
+
+echo "==> Removing swap..."
+if [ -f /swapfile ]; then
+    swapoff /swapfile 2>/dev/null || true
+    sed -i '/\/swapfile/d' /etc/fstab
+    rm -f /swapfile
+    echo "    Done."
+else
+    echo "    No /swapfile found, skipping."
+fi
+
+echo "==> Removing k9s..."
+if [ -f /usr/local/bin/k9s ]; then
+    rm -f /usr/local/bin/k9s
+    echo "    Done."
+else
+    echo "    k9s not installed, skipping."
+fi
+
+echo "==> Removing larakube-reset..."
+rm -f /usr/local/bin/larakube-reset
+
+echo ""
+echo "Clean slate. Re-run 'sudo ./larakube bundle:install' to reinstall."
+BASH;
     }
 }

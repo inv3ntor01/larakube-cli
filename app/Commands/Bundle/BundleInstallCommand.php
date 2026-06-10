@@ -122,6 +122,13 @@ class BundleInstallCommand extends Command
             $this->laraKubeInfo('✅ K3s is already installed. Skipping installation.');
         }
 
+        if (file_exists('./k9s')) {
+            $this->laraKubeInfo('Installing k9s terminal UI...');
+            passthru('cp k9s /usr/local/bin/k9s');
+            passthru('chmod +x /usr/local/bin/k9s');
+            $this->laraKubeInfo('✅ k9s installed at /usr/local/bin/k9s');
+        }
+
         $this->laraKubeInfo('Waiting for K3s containerd to become ready...');
         for ($i = 0; $i < 30; $i++) {
             exec('k3s ctr version >/dev/null 2>&1', $output, $code);
@@ -333,6 +340,11 @@ class BundleInstallCommand extends Command
         $niceCaPath = getcwd().'/'.$niceCaName;
         copy($certs['ca_crt'], $niceCaPath);
 
+        if (file_exists('./reset.sh')) {
+            passthru('cp reset.sh /usr/local/bin/larakube-reset');
+            passthru('chmod +x /usr/local/bin/larakube-reset');
+        }
+
         $this->newLine();
         $this->laraKubeInfo('✅ Bundle successfully installed!');
         if (isset($hosts['web'])) {
@@ -341,6 +353,8 @@ class BundleInstallCommand extends Command
         $this->newLine();
         $this->line('  <fg=gray>To secure your browser, you can install the generated Certificate Authority by running:</>');
         $this->line('  <fg=cyan>larakube trust '.$niceCaPath.'</>');
+        $this->newLine();
+        $this->line('  <fg=gray>To wipe everything and start fresh, run:</> <fg=cyan>sudo larakube-reset</>');
 
         return 0;
     }
