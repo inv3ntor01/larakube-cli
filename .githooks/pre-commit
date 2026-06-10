@@ -2,13 +2,21 @@
 
 echo "🎨 [LARAKUBE] Running Laravel Pint to clean up the code..."
 
-# Run Pint from the vendor directory
-./vendor/bin/pint
+# Get a list of staged PHP files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep "\.php$")
 
-# Check the exit code of Pint
-if [ $? -ne 0 ]; then
-    echo "❌ [LARAKUBE] Pint found issues that couldn't be automatically fixed. Commit aborted."
-    exit 1
+if [ -n "$STAGED_FILES" ]; then
+    # Run Pint only on staged files
+    ./vendor/bin/pint $STAGED_FILES
+
+    # Check the exit code of Pint
+    if [ $? -ne 0 ]; then
+        echo "❌ [LARAKUBE] Pint found issues that couldn't be automatically fixed. Commit aborted."
+        exit 1
+    fi
+
+    # Automatically re-stage the files that Pint just formatted
+    echo "$STAGED_FILES" | xargs git add
 fi
 
 echo "✅ [LARAKUBE] Code is clean! Proceeding with commit..."
