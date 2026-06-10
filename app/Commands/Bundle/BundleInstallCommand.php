@@ -124,7 +124,7 @@ class BundleInstallCommand extends Command
 
         // Make the k3s kubeconfig available at the standard path so kubectl, k9s,
         // and other tools work without needing KUBECONFIG set explicitly.
-        $homeDir = posix_getpwuid(posix_geteuid())['dir'] ?? getenv('HOME') ?: '/root';
+        $homeDir = getenv('HOME') ?: '/root';
         passthru('mkdir -p '.escapeshellarg("{$homeDir}/.kube").' && cp /etc/rancher/k3s/k3s.yaml '.escapeshellarg("{$homeDir}/.kube/config"));
 
         if (file_exists('./k9s')) {
