@@ -129,6 +129,10 @@ class BundleBuildCommand extends Command
             }
         }
 
+        if (!$this->runPreDeploymentSteps($config)) {
+            return 1;
+        }
+
         // 1. Build the app image for the TARGET arch (the customer's, not the Mac's).
         $this->laraKubeInfo("Building app image for {$platform}…");
         passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform), $code);

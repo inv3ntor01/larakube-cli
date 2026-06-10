@@ -16,6 +16,8 @@ use App\Enums\RegistryProvider;
  * The command-builders are pure (no I/O) so they're unit-testable; the
  * orchestration runs them.
  */
+use function Laravel\Prompts\spin;
+
 trait InteractsWithRemoteDeploy
 {
     /** The kube-context cloud:provision creates for a host. Pure. */
@@ -43,6 +45,68 @@ trait InteractsWithRemoteDeploy
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($image).' -f '.escapeshellarg($dockerfile).' '
             .escapeshellarg($path).' --load';
+    }
+
+    /**
+     * Executes necessary local commands (composer install, npm run build, wayfinder)
+     * before building the docker image, ensuring the local filesystem matches
+     * production standards.
+     */
+    public function runPreDeploymentSteps(ConfigData $config): bool
+    {
+        $this->laraKubeInfo('Running Pre-Deployment Build Steps...');
+        $path = $config->getPath();
+
+        $phpExec = file_exists($path . '/php') ? './php' : 'php';
+        
+        $pm = $config->getPackageManager()->value; // 'npm', 'yarn', 'pnpm', 'bun'
+        $pmExec = file_exists($path . '/' . $pm) ? './' . $pm : $pm;
+
+        // 1. Composer install
+        $this->line('  <fg=gray>📦 composer install</>');
+        $composerCmd = escapeshellarg($phpExec) . ' composer install --optimize-autoloader --no-interaction --no-progress';
+        passthru("cd " . escapeshellarg($path) . " && $composerCmd", $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Composer install failed.');
+            return false;
+        }
+
+        // 2. Node install
+        $this->line("  <fg=gray>🛠  {$pm} install</>");
+        $installCmd = $config->getPackageManager()->installCommand();
+        if (file_exists($path . '/' . $pm)) {
+            $installCmd = preg_replace('/^' . preg_quote($pm, '/') . '\b/', escapeshellarg('./' . $pm), $installCmd);
+        }
+        passthru("cd " . escapeshellarg($path) . " && $installCmd", $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Node dependencies install failed.');
+            return false;
+        }
+
+        // 3. Wayfinder
+        if ($config->usesWayfinder()) {
+            $this->line('  <fg=gray>🏎  wayfinder:generate</>');
+            passthru("cd " . escapeshellarg($path) . " && " . escapeshellarg($phpExec) . " artisan wayfinder:generate --with-form", $code);
+            if ($code !== 0) {
+                $this->laraKubeError('Wayfinder generation failed.');
+                return false;
+            }
+        }
+
+        // 4. Build assets
+        $this->line("  <fg=gray>💎 {$pm} run build</>");
+        $buildCmd = $config->getPackageManager()->buildCommand();
+        if (file_exists($path . '/' . $pm)) {
+            $buildCmd = preg_replace('/^' . preg_quote($pm, '/') . '\b/', escapeshellarg('./' . $pm), $buildCmd);
+        }
+        passthru("cd " . escapeshellarg($path) . " && $buildCmd", $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Asset compilation failed.');
+            return false;
+        }
+
+        $this->newLine();
+        return true;
     }
 
     /**
@@ -316,6 +380,10 @@ trait InteractsWithRemoteDeploy
         $dockerfile = "{$path}/Dockerfile.php";
         $ssh = $this->sshBaseCommand($cloud->user, $cloud->ip, $cloud->port, $cloud->key);
 
+        if (!$this->runPreDeploymentSteps($config)) {
+            return 1;
+        }
+
         // 1. Build the production image for the node's architecture (resolved
         //    over SSH, so an arm64 node gets a native arm64 build).
         $platform = $this->resolveDeployPlatform($cloud, $context, $ssh);
@@ -388,6 +456,10 @@ trait InteractsWithRemoteDeploy
         // In future, we could prompt for credentials.
         $this->laraKubeInfo('Verifying registry credentials...');
         // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
+
+        if (!$this->runPreDeploymentSteps($config)) {
+            return 1;
+        }
 
         // 2. Build and push the production image to registry, for the cluster's
         //    node architecture (no SSH here — read it from the nodes via kubectl).
