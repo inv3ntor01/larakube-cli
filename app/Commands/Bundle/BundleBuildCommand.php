@@ -133,10 +133,10 @@ class BundleBuildCommand extends Command
         }
 
         $isUpdate = $this->option('update');
+        $k3sVersion = 'v1.30.4+k3s1';
 
         if (! $isUpdate) {
             // 4. Offline k3s artifacts & larakube binary
-            $k3sVersion = 'v1.30.4+k3s1';
             $this->laraKubeInfo("Downloading k3s artifacts ({$k3sVersion}) for offline install...");
 
             $k3sBinaryUrl = "https://github.com/k3s-io/k3s/releases/download/{$k3sVersion}/k3s".($arch === 'arm64' ? '-arm64' : '');
