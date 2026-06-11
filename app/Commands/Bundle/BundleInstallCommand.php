@@ -317,6 +317,39 @@ class BundleInstallCommand extends Command
         }
 
         // 8. Apply manifests
+        // Rewrite the ingress-patch hostname before applying — the bundle was built
+        // with a placeholder host (e.g. airgap.local); the real domain is only known
+        // at install time after the hostname prompt.
+        $ingressPatchPath = getcwd()."/manifests/overlays/{$env}/ingress-patch.yaml";
+        if (file_exists($ingressPatchPath) && isset($hosts['web'])) {
+            $serverName = $config->getServerVariation()->getPodName($config);
+            $webHost = $hosts['web'];
+            file_put_contents($ingressPatchPath, <<<YAML
+            apiVersion: networking.k8s.io/v1
+            kind: Ingress
+            metadata:
+              name: {$serverName}
+              annotations:
+                traefik.ingress.kubernetes.io/router.tls: "true"
+                traefik.ingress.kubernetes.io/service.serversscheme: http
+            spec:
+              rules:
+                - host: {$webHost}
+                  http:
+                    paths:
+                      - path: /
+                        pathType: Prefix
+                        backend:
+                          service:
+                            name: {$serverName}
+                            port:
+                              number: 80
+              tls:
+                - hosts:
+                    - {$webHost}
+            YAML);
+        }
+
         $this->laraKubeInfo('Applying Kubernetes manifests...');
         $overlayPath = getcwd().'/manifests/overlays/'.$env;
 
