@@ -68,27 +68,20 @@ test('the registry build honours the resolved platform and defaults to amd64', f
         ->toContain('--platform linux/amd64');   // unchanged default
 });
 
-test('VITE build-args are injected into the production build command when provided', function () {
-    $r = remoteDeploy();
-
-    $cmd = $r->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj', 'linux/amd64', [
-        'VITE_APP_URL' => 'https://myapp.com',
-        'VITE_REVERB_HOST' => 'ws.myapp.com',
-        'VITE_REVERB_PORT' => '443',
-    ]);
+test('a dotenv secret path is passed as a BuildKit --secret flag when provided', function () {
+    $cmd = remoteDeploy()->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj', 'linux/amd64', '/tmp/lk_dotenv_build_xyz');
 
     expect($cmd)
-        ->toContain("--build-arg 'VITE_APP_URL=https://myapp.com'")
-        ->toContain("--build-arg 'VITE_REVERB_HOST=ws.myapp.com'")
-        ->toContain("--build-arg 'VITE_REVERB_PORT=443'")
+        ->toContain("--secret id=dotenv,src='/tmp/lk_dotenv_build_xyz'")
         ->toContain('--target deploy')
-        ->toContain('--load');
+        ->toContain('--load')
+        ->not->toContain('--build-arg');
 });
 
-test('no --build-arg flags appear when viteBuildArgs is empty', function () {
+test('no --secret flag appears when no dotenv path is given', function () {
     $cmd = remoteDeploy()->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj');
 
-    expect($cmd)->not->toContain('--build-arg');
+    expect($cmd)->not->toContain('--secret');
 });
 
 test('the sideload streams the saved image into the remote k3s containerd', function () {

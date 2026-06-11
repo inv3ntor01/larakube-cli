@@ -36,23 +36,24 @@ trait InteractsWithRemoteDeploy
      * `--load` it into the local docker so `docker save` can stream it. The
      * platform is resolved from the target node (see resolveDeployPlatform), so
      * an arm64 Pi gets a native arm64 build instead of an unrunnable amd64 one.
-     * Pure.
+     * When $dotenvPath is provided it is mounted as a BuildKit secret (id=dotenv)
+     * so VITE_* vars reach Vite without being baked into any image layer. Pure.
      */
-    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64', array $viteBuildArgs = []): string
+    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64', string $dotenvPath = ''): string
     {
+        $secret = $dotenvPath !== '' ? '--secret id=dotenv,src='.escapeshellarg($dotenvPath).' ' : '';
+
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($image).' -f '.escapeshellarg($dockerfile).' '
-            .$this->viteBuildArgsString($viteBuildArgs)
+            .$secret
             .escapeshellarg($path).' --load';
     }
 
     /**
      * Executes necessary local commands (composer install, wayfinder) before
-     * building the docker image, ensuring the local filesystem matches production
-     * standards. `npm run build` is intentionally NOT run here — the `assets`
-     * Docker stage handles it with the correct VITE_* build-args so the host's
-     * public/build/ is never touched and environment-specific hostnames are baked
-     * correctly.
+     * building the docker image. `npm run build` is intentionally NOT run here —
+     * the `assets` Docker stage handles it with the correct VITE_* values sourced
+     * from the mounted .env secret, keeping the host's public/build/ untouched.
      */
     public function runPreDeploymentSteps(ConfigData $config): bool
     {
@@ -106,9 +107,10 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
-     * Collect VITE build-arg values for a given environment from the project
-     * config. These are passed as --build-arg to the Docker assets stage so the
-     * correct hostnames are baked at build time, never sourced from the host env.
+     * Collect VITE_* key-value pairs for a given environment from the project
+     * config. Used by createDotenvBuildSecret to augment the .env file that is
+     * mounted into the Docker assets stage, ensuring the correct hostnames are
+     * baked into the JS bundle without touching the host's .env files.
      *
      * @return array<string, string>
      */
@@ -256,13 +258,39 @@ trait InteractsWithRemoteDeploy
      * Build a registry image reference command (build + push). Pure.
      * Cross-compiles for the resolved target platform (the cluster nodes' arch
      * for a managed context; defaults to linux/amd64), then pushes to registry.
+     * When $dotenvPath is provided it is mounted as a BuildKit secret (id=dotenv).
      */
-    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64', array $viteBuildArgs = []): string
+    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64', string $dotenvPath = ''): string
     {
+        $secret = $dotenvPath !== '' ? '--secret id=dotenv,src='.escapeshellarg($dotenvPath).' ' : '';
+
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($registryImage).' -f '.escapeshellarg($dockerfile).' '
-            .$this->viteBuildArgsString($viteBuildArgs)
+            .$secret
             .escapeshellarg($path).' --push';
+    }
+
+    /**
+     * Create a temporary .env file for the Docker assets stage BuildKit secret.
+     * Reads the project's .env.{environment} (APP_KEY and all runtime vars), then
+     * appends the VITE_* values derived from the project config so they are baked
+     * into the JS bundle. The caller is responsible for deleting the temp file
+     * (use a try/finally block). Returns the absolute path to the temp file.
+     */
+    public function createDotenvBuildSecret(ConfigData $config, string $environment, ?string $reverbAppKey = null): string
+    {
+        $envPath = $config->getPath().'/.env.'.$environment;
+        $content = file_exists($envPath) ? (string) file_get_contents($envPath) : '';
+
+        $viteVars = $this->collectViteBuildArgs($config, $environment, $reverbAppKey);
+        foreach ($viteVars as $key => $value) {
+            $content .= "\n{$key}={$value}";
+        }
+
+        $tmpPath = (string) tempnam(sys_get_temp_dir(), 'lk_dotenv_build_');
+        file_put_contents($tmpPath, $content);
+
+        return $tmpPath;
     }
 
     /**
@@ -286,20 +314,6 @@ trait InteractsWithRemoteDeploy
     public function dockerLoginCommand(string $registryHost, string $username, string $password): string
     {
         return 'echo '.escapeshellarg($password).' | docker login -u '.escapeshellarg($username).' --password-stdin '.escapeshellarg($registryHost);
-    }
-
-    /** Build the --build-arg string for a VITE args map. Pure. */
-    protected function viteBuildArgsString(array $args): string
-    {
-        if ($args === []) {
-            return '';
-        }
-
-        return implode(' ', array_map(
-            fn ($k, $v) => '--build-arg '.escapeshellarg("{$k}={$v}"),
-            array_keys($args),
-            array_values($args),
-        )).' ';
     }
 
     /** Resolve the rollout-triggering image tag for a project. */
@@ -431,9 +445,13 @@ trait InteractsWithRemoteDeploy
         // 1. Build the production image for the node's architecture (resolved
         //    over SSH, so an arm64 node gets a native arm64 build).
         $platform = $this->resolveDeployPlatform($cloud, $context, $ssh);
-        $viteArgs = $this->collectViteBuildArgs($config, $environment);
+        $dotenvPath = $this->createDotenvBuildSecret($config, $environment);
         $this->laraKubeInfo("Building production image '{$image}' ({$platform})...");
-        passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform, $viteArgs), $code);
+        try {
+            passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform, $dotenvPath), $code);
+        } finally {
+            @unlink($dotenvPath);
+        }
         if ($code !== 0) {
             $this->laraKubeError('Image build failed.');
 
@@ -509,9 +527,13 @@ trait InteractsWithRemoteDeploy
         // 2. Build and push the production image to registry, for the cluster's
         //    node architecture (no SSH here — read it from the nodes via kubectl).
         $platform = $this->resolveDeployPlatform($config->getCloud($environment), $context, null);
-        $viteArgs = $this->collectViteBuildArgs($config, $environment);
+        $dotenvPath = $this->createDotenvBuildSecret($config, $environment);
         $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()} ({$platform})...");
-        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform, $viteArgs), $code);
+        try {
+            passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform, $dotenvPath), $code);
+        } finally {
+            @unlink($dotenvPath);
+        }
         if ($code !== 0) {
             $this->laraKubeError('Image build/push failed. Ensure Docker credentials are configured and you have push access.');
 

@@ -147,15 +147,15 @@ class BundleBuildCommand extends Command
         }
 
         // 1. Build the app image for the TARGET arch (the customer's, not the Mac's).
-        $viteArgs = $this->collectViteBuildArgs($config, $env, $reverbAppKey);
+        //    VITE_* vars are appended to the .env secret so they are baked into the
+        //    JS bundle inside the Docker assets stage without touching public/build/.
         $this->laraKubeInfo("Building app image for {$platform}…");
-        if ($viteArgs !== []) {
-            $this->line('  <fg=gray>VITE baking:</>');
-            foreach ($viteArgs as $k => $v) {
-                $this->line("    <fg=cyan>{$k}</>=<fg=yellow>{$v}</>");
-            }
+        $dotenvPath = $this->createDotenvBuildSecret($config, $env, $reverbAppKey);
+        try {
+            passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform, $dotenvPath), $code);
+        } finally {
+            @unlink($dotenvPath);
         }
-        passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform, $viteArgs), $code);
         if ($code !== 0) {
             $this->laraKubeError('App image build failed.');
 

@@ -112,11 +112,18 @@ jobs:
         run: php artisan wayfinder:generate --with-form
 @endif
 
-@if($config->hasFeature(\App\Enums\LaravelFeature::REVERB))
-      - name: 🔑 Extract Reverb key for VITE baking
+      - name: 💎 Inject VITE vars for asset baking
         run: |
+          echo "VITE_APP_URL=https://{{ $config->getWebHost($environment) }}" >> .env
+          echo "VITE_ASSET_URL=https://{{ $config->getWebHost($environment) }}" >> .env
+@if($reverbHost = $config->getHost($environment, 'reverb'))
+@if($config->hasFeature(\App\Enums\LaravelFeature::REVERB))
+          echo "VITE_REVERB_HOST={{ $reverbHost }}" >> .env
+          echo "VITE_REVERB_PORT=443" >> .env
+          echo "VITE_REVERB_SCHEME=https" >> .env
           REVERB_APP_KEY=$(grep -E '^REVERB_APP_KEY=' .env | head -1 | cut -d= -f2-)
-          echo "REVERB_APP_KEY=$REVERB_APP_KEY" >> $GITHUB_ENV
+          echo "VITE_REVERB_APP_KEY=$REVERB_APP_KEY" >> .env
+@endif
 @endif
 
       - name: 🐳 Build & Push Application Image
@@ -127,17 +134,8 @@ jobs:
           push: true
           tags: {!! $gha['image_latest'] !!},{!! $gha['image_sha'] !!}
           target: deploy
-          build-args: |
-            VITE_APP_URL=https://{{ $config->getWebHost($environment) }}
-            VITE_ASSET_URL=https://{{ $config->getWebHost($environment) }}
-@if($reverbHost = $config->getHost($environment, 'reverb'))
-@if($config->hasFeature(\App\Enums\LaravelFeature::REVERB))
-            VITE_REVERB_HOST={{ $reverbHost }}
-            VITE_REVERB_PORT=443
-            VITE_REVERB_SCHEME=https
-            VITE_REVERB_APP_KEY=$@{{ env.REVERB_APP_KEY }}
-@endif
-@endif
+          secret-files: |
+            dotenv=.env
 
       - name: 🏗 Prepare Manifests & Deploy
         run: |
