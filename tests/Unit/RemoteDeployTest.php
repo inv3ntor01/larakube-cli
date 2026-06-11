@@ -81,8 +81,8 @@ test('VITE build-args are injected into the production build command when provid
         ->toContain("--build-arg 'VITE_APP_URL=https://myapp.com'")
         ->toContain("--build-arg 'VITE_REVERB_HOST=ws.myapp.com'")
         ->toContain("--build-arg 'VITE_REVERB_PORT=443'")
-        ->toContain("--target deploy")
-        ->toContain("--load");
+        ->toContain('--target deploy')
+        ->toContain('--load');
 });
 
 test('no --build-arg flags appear when viteBuildArgs is empty', function () {
