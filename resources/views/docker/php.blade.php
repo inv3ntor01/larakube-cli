@@ -59,6 +59,11 @@ USER root
 FROM node:lts-alpine AS assets
 WORKDIR /app
 COPY . .
+# @laravel/vite-plugin-wayfinder calls `php artisan wayfinder:generate` during
+# npm run build. Wayfinder was already run on the host before this stage; its
+# generated route types are in the COPY context. Provide a no-op php stub so the
+# plugin call exits cleanly without trying to re-run it (no PHP in this image).
+RUN printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/php && chmod +x /usr/local/bin/php
 ARG VITE_APP_URL=
 ARG VITE_ASSET_URL=
 ARG VITE_REVERB_HOST=
