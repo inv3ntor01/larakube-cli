@@ -265,16 +265,23 @@ class BundleInstallCommand extends Command
         // Split for K8s ConfigMap (public) vs Secret (secret)
         ['public' => $public, 'secret' => $secret] = $this->splitEnvForK8s($mergedLines, $knownSecrets);
 
-        // 5. promptForHosts for the hostname
-        $components = $config->getComponents($env);
-        $webDefault = $config->getWebHost($env); // The default FQDN from the blueprint
+        // 5. Resolve hostnames — use values already stored in .larakube.json when
+        //    available (set during `larakube env airgap --offline` on the dev machine).
+        //    Only fall back to interactive prompts when no host has been configured.
+        $webDefault = $config->getWebHost($env);
 
-        $this->laraKubeInfo('Configuring hostnames...');
-        $hosts = $this->promptForHosts($env, $components, $webDefault);
-
-        // Update ConfigData with the chosen hosts
-        foreach ($hosts as $service => $host) {
-            $config->setHost($service, $host, $env);
+        if (! empty($webDefault)) {
+            $this->laraKubeInfo('Using configured hostnames from bundle...');
+            $hosts = array_filter([
+                'web' => $webDefault,
+                'reverb' => $config->getHost($env, 'reverb'),
+            ]);
+        } else {
+            $this->laraKubeInfo('Configuring hostnames...');
+            $hosts = $this->promptForHosts($env, $config->getComponents($env), $webDefault);
+            foreach ($hosts as $service => $host) {
+                $config->setHost($service, $host, $env);
+            }
         }
 
         // APP_URL / ASSET_URL / VITE_REVERB_* were computed before the hostname
