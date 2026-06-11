@@ -271,6 +271,39 @@ class BundleInstallCommand extends Command
             $config->setHost($service, $host, $env);
         }
 
+        // APP_URL / ASSET_URL / VITE_REVERB_* were computed before the hostname
+        // prompt ran and still hold blueprint placeholders. Override them now and
+        // re-split so the ConfigMap gets the real domains.
+        $urlOverrides = [];
+
+        if (isset($hosts['web'])) {
+            $appUrl = 'https://'.$hosts['web'];
+            $urlOverrides['APP_URL'] = $appUrl;
+            $urlOverrides['ASSET_URL'] = $appUrl;
+        }
+
+        if (isset($hosts['reverb'])) {
+            // REVERB_HOST stays as the internal cluster FQDN for PHP server-side.
+            // The browser connects to the external host — inject it as VITE_REVERB_HOST
+            // so apps that resolve it at runtime (rather than baking via Vite) get the
+            // right value.
+            $urlOverrides['VITE_REVERB_HOST'] = $hosts['reverb'];
+            $urlOverrides['VITE_REVERB_PORT'] = '443';
+            $urlOverrides['VITE_REVERB_SCHEME'] = 'https';
+            $urlOverrides['VITE_REVERB_APP_KEY'] = $finalEnv['REVERB_APP_KEY'] ?? ($finalEnv['VITE_REVERB_APP_KEY'] ?? '');
+        }
+
+        if ($urlOverrides !== []) {
+            foreach ($urlOverrides as $k => $v) {
+                $finalEnv[$k] = $v;
+            }
+            $mergedLines = [];
+            foreach ($finalEnv as $k => $v) {
+                $mergedLines[] = "{$k}={$v}";
+            }
+            ['public' => $public, 'secret' => $secret] = $this->splitEnvForK8s($mergedLines, $knownSecrets);
+        }
+
         // 6. Generate CA+cert + wire Traefik TLSStore
         $this->laraKubeInfo('Generating secure local CA and TLS certificates...');
         $certDir = sys_get_temp_dir().'/larakube-certs-'.time();
