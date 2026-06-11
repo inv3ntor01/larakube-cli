@@ -38,17 +38,21 @@ trait InteractsWithRemoteDeploy
      * an arm64 Pi gets a native arm64 build instead of an unrunnable amd64 one.
      * Pure.
      */
-    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
+    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64', array $viteBuildArgs = []): string
     {
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($image).' -f '.escapeshellarg($dockerfile).' '
+            .$this->viteBuildArgsString($viteBuildArgs)
             .escapeshellarg($path).' --load';
     }
 
     /**
-     * Executes necessary local commands (composer install, npm run build, wayfinder)
-     * before building the docker image, ensuring the local filesystem matches
-     * production standards.
+     * Executes necessary local commands (composer install, wayfinder) before
+     * building the docker image, ensuring the local filesystem matches production
+     * standards. `npm run build` is intentionally NOT run here — the `assets`
+     * Docker stage handles it with the correct VITE_* build-args so the host's
+     * public/build/ is never touched and environment-specific hostnames are baked
+     * correctly.
      */
     public function runPreDeploymentSteps(ConfigData $config): bool
     {
@@ -67,10 +71,9 @@ trait InteractsWithRemoteDeploy
             return false;
         }
 
-        // 2. Node install
+        // 2. Node install (needed so node_modules exist for the Docker COPY context)
         $this->line("  <fg=gray>🛠  {$pm} install</>");
         $installCmd = $config->getPackageManager()->installCommand();
-        // Since installCmd might be "npm ci" or "yarn install --immutable", we replace the tool name with "$bin <tool>"
         $installCmdStr = preg_replace('/^([a-z]+)\b/', "$bin $1", $installCmd);
         passthru($installCmdStr, $code);
         if ($code !== 0) {
@@ -79,7 +82,8 @@ trait InteractsWithRemoteDeploy
             return false;
         }
 
-        // 3. Wayfinder
+        // 3. Wayfinder — generates TypeScript route types that Vite needs before
+        //    npm run build. Must run on the host (requires PHP + artisan).
         if ($config->usesWayfinder()) {
             $this->line('  <fg=gray>🏎  wayfinder:generate</>');
             passthru("$bin php artisan wayfinder:generate --with-form", $code);
@@ -90,20 +94,48 @@ trait InteractsWithRemoteDeploy
             }
         }
 
-        // 4. Build assets
-        $this->line("  <fg=gray>💎 {$pm} run build</>");
-        $buildCmd = $config->getPackageManager()->buildCommand();
-        $buildCmdStr = preg_replace('/^([a-z]+)\b/', "$bin $1", $buildCmd);
-        passthru($buildCmdStr, $code);
-        if ($code !== 0) {
-            $this->laraKubeError('Asset compilation failed.');
-
-            return false;
-        }
+        // 4. npm run build is intentionally skipped here. The `assets` Docker
+        //    stage runs it with the correct per-environment VITE_* build-args
+        //    (passed via --build-arg), so the right hostnames are always baked
+        //    and the developer's local public/build/ is left untouched.
+        $this->line("  <fg=gray>💎 {$pm} run build → deferred to Docker assets stage</>");
 
         $this->newLine();
 
         return true;
+    }
+
+    /**
+     * Collect VITE build-arg values for a given environment from the project
+     * config. These are passed as --build-arg to the Docker assets stage so the
+     * correct hostnames are baked at build time, never sourced from the host env.
+     *
+     * @return array<string, string>
+     */
+    public function collectViteBuildArgs(ConfigData $config, string $environment, ?string $reverbAppKey = null): array
+    {
+        $webHost = $config->getWebHost($environment);
+        if (empty($webHost)) {
+            return [];
+        }
+
+        $appUrl = 'https://'.$webHost;
+        $args = [
+            'VITE_APP_URL' => $appUrl,
+            'VITE_ASSET_URL' => $appUrl,
+        ];
+
+        $reverbHost = $config->getHost($environment, 'reverb');
+        if ($reverbHost && $config->hasFeature(\App\Enums\LaravelFeature::REVERB, $environment)) {
+            $args['VITE_REVERB_HOST'] = $reverbHost;
+            $args['VITE_REVERB_PORT'] = '443';
+            $args['VITE_REVERB_SCHEME'] = 'https';
+            if ($reverbAppKey !== null && $reverbAppKey !== '') {
+                $args['VITE_REVERB_APP_KEY'] = $reverbAppKey;
+            }
+        }
+
+        return $args;
     }
 
     /**
@@ -225,10 +257,11 @@ trait InteractsWithRemoteDeploy
      * Cross-compiles for the resolved target platform (the cluster nodes' arch
      * for a managed context; defaults to linux/amd64), then pushes to registry.
      */
-    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
+    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64', array $viteBuildArgs = []): string
     {
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($registryImage).' -f '.escapeshellarg($dockerfile).' '
+            .$this->viteBuildArgsString($viteBuildArgs)
             .escapeshellarg($path).' --push';
     }
 
@@ -253,6 +286,20 @@ trait InteractsWithRemoteDeploy
     public function dockerLoginCommand(string $registryHost, string $username, string $password): string
     {
         return 'echo '.escapeshellarg($password).' | docker login -u '.escapeshellarg($username).' --password-stdin '.escapeshellarg($registryHost);
+    }
+
+    /** Build the --build-arg string for a VITE args map. Pure. */
+    protected function viteBuildArgsString(array $args): string
+    {
+        if ($args === []) {
+            return '';
+        }
+
+        return implode(' ', array_map(
+            fn ($k, $v) => '--build-arg '.escapeshellarg("{$k}={$v}"),
+            array_keys($args),
+            array_values($args),
+        )).' ';
     }
 
     /** Resolve the rollout-triggering image tag for a project. */
@@ -384,8 +431,9 @@ trait InteractsWithRemoteDeploy
         // 1. Build the production image for the node's architecture (resolved
         //    over SSH, so an arm64 node gets a native arm64 build).
         $platform = $this->resolveDeployPlatform($cloud, $context, $ssh);
+        $viteArgs = $this->collectViteBuildArgs($config, $environment);
         $this->laraKubeInfo("Building production image '{$image}' ({$platform})...");
-        passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform), $code);
+        passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform, $viteArgs), $code);
         if ($code !== 0) {
             $this->laraKubeError('Image build failed.');
 
@@ -461,8 +509,9 @@ trait InteractsWithRemoteDeploy
         // 2. Build and push the production image to registry, for the cluster's
         //    node architecture (no SSH here — read it from the nodes via kubectl).
         $platform = $this->resolveDeployPlatform($config->getCloud($environment), $context, null);
+        $viteArgs = $this->collectViteBuildArgs($config, $environment);
         $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()} ({$platform})...");
-        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform), $code);
+        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform, $viteArgs), $code);
         if ($code !== 0) {
             $this->laraKubeError('Image build/push failed. Ensure Docker credentials are configured and you have push access.');
 

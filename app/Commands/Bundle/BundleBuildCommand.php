@@ -2,10 +2,12 @@
 
 namespace App\Commands\Bundle;
 
+use App\Enums\LaravelFeature;
 use App\Traits\AssemblesBundle;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
+use Illuminate\Support\Str;
 use LaravelZero\Framework\Commands\Command;
 
 /**
@@ -131,13 +133,29 @@ class BundleBuildCommand extends Command
             }
         }
 
+        // Pre-generate REVERB_APP_KEY now so it can be baked into the JS assets
+        // via the Docker assets stage --build-arg. The same key is written to
+        // bundle.json and used by bundle:install — this is the only way to keep
+        // the baked VITE_REVERB_APP_KEY and the runtime REVERB_APP_KEY in sync.
+        $reverbAppKey = null;
+        if ($config->hasFeature(LaravelFeature::REVERB, $env)) {
+            $reverbAppKey = Str::random(32);
+        }
+
         if (! $this->runPreDeploymentSteps($config)) {
             return 1;
         }
 
         // 1. Build the app image for the TARGET arch (the customer's, not the Mac's).
+        $viteArgs = $this->collectViteBuildArgs($config, $env, $reverbAppKey);
         $this->laraKubeInfo("Building app image for {$platform}…");
-        passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform), $code);
+        if ($viteArgs !== []) {
+            $this->line('  <fg=gray>VITE baking:</>');
+            foreach ($viteArgs as $k => $v) {
+                $this->line("    <fg=cyan>{$k}</>=<fg=yellow>{$v}</>");
+            }
+        }
+        passthru($this->buildProductionImageCommand($images['app'], $config->getPath().'/Dockerfile.php', $config->getPath(), $platform, $viteArgs), $code);
         if ($code !== 0) {
             $this->laraKubeError('App image build failed.');
 
@@ -236,6 +254,9 @@ class BundleBuildCommand extends Command
         // 5. bundle.json
         $manifestData = $this->bundleManifest($config, $env, $arch, $allImages);
         $manifestData['k3sVersion'] = $k3sVersion;
+        if ($reverbAppKey !== null) {
+            $manifestData['reverbAppKey'] = $reverbAppKey;
+        }
         file_put_contents(
             "$outDir/bundle.json",
             json_encode($manifestData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n",

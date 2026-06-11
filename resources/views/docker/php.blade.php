@@ -49,6 +49,25 @@ FROM base AS ci
 USER root
 
 ############################################
+# Assets Build Stage
+# Runs `npm run build` INSIDE Docker so the compiled JS always reflects the
+# correct per-environment VITE_* values (hostname, WebSocket host, etc.).
+# This stage is used by the `deploy` target; pass env-specific values via
+# --build-arg so the baked assets are never poisoned by the developer's local
+# .env, and the host's public/build/ directory is never touched.
+############################################
+FROM node:lts-alpine AS assets
+WORKDIR /app
+COPY . .
+ARG VITE_APP_URL=
+ARG VITE_ASSET_URL=
+ARG VITE_REVERB_HOST=
+ARG VITE_REVERB_PORT=443
+ARG VITE_REVERB_SCHEME=https
+ARG VITE_REVERB_APP_KEY=
+RUN npm ci && npm run build
+
+############################################
 # Production Image
 ############################################
 FROM base AS deploy
@@ -65,6 +84,9 @@ RUN apk add --no-cache nodejs npm
 
 # Copy application files
 COPY --chown=www-data:www-data . /var/www/html
+
+# Overlay assets built inside Docker (correct VITE_* baking, no host pollution)
+COPY --from=assets --chown=www-data:www-data /app/public/build /var/www/html/public/build
 
 # Ensure storage and bootstrap are owned by www-data
 # Sub-paths will be handled by K8s volume mounts

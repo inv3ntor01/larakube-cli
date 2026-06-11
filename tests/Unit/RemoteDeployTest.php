@@ -68,6 +68,29 @@ test('the registry build honours the resolved platform and defaults to amd64', f
         ->toContain('--platform linux/amd64');   // unchanged default
 });
 
+test('VITE build-args are injected into the production build command when provided', function () {
+    $r = remoteDeploy();
+
+    $cmd = $r->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj', 'linux/amd64', [
+        'VITE_APP_URL' => 'https://myapp.com',
+        'VITE_REVERB_HOST' => 'ws.myapp.com',
+        'VITE_REVERB_PORT' => '443',
+    ]);
+
+    expect($cmd)
+        ->toContain("--build-arg 'VITE_APP_URL=https://myapp.com'")
+        ->toContain("--build-arg 'VITE_REVERB_HOST=ws.myapp.com'")
+        ->toContain("--build-arg 'VITE_REVERB_PORT=443'")
+        ->toContain("--target deploy")
+        ->toContain("--load");
+});
+
+test('no --build-arg flags appear when viteBuildArgs is empty', function () {
+    $cmd = remoteDeploy()->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj');
+
+    expect($cmd)->not->toContain('--build-arg');
+});
+
 test('the sideload streams the saved image into the remote k3s containerd', function () {
     $r = remoteDeploy();
     $ssh = $r->sshBaseCommand('larakube', '159.223.43.95', 22, '/home/me/.ssh/id_rsa');

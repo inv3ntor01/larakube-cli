@@ -195,6 +195,12 @@ class BundleInstallCommand extends Command
             }
         }
 
+        // If bundle:build pre-generated REVERB_APP_KEY to bake into JS assets,
+        // re-use that same key here so the runtime value matches the baked one.
+        if (isset($bundleManifest['reverbAppKey']) && ! isset($existingSecrets['REVERB_APP_KEY'])) {
+            $existingSecrets['REVERB_APP_KEY'] = $bundleManifest['reverbAppKey'];
+        }
+
         $this->laraKubeInfo('Generating secure install secrets...');
         $mergedEnv = $this->generateInstallSecrets($config, $env, $existingSecrets);
 

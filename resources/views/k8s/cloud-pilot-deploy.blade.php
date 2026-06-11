@@ -112,8 +112,12 @@ jobs:
         run: php artisan wayfinder:generate --with-form
 @endif
 
-      - name: 💎 Build production assets
-        run: {!! $config->getPackageManager()->buildCommand() !!}
+@if($config->hasFeature(\App\Enums\LaravelFeature::REVERB))
+      - name: 🔑 Extract Reverb key for VITE baking
+        run: |
+          REVERB_APP_KEY=$(grep -E '^REVERB_APP_KEY=' .env | head -1 | cut -d= -f2-)
+          echo "REVERB_APP_KEY=$REVERB_APP_KEY" >> $GITHUB_ENV
+@endif
 
       - name: 🐳 Build & Push Application Image
         uses: docker/build-push-action@v5
@@ -123,6 +127,17 @@ jobs:
           push: true
           tags: {!! $gha['image_latest'] !!},{!! $gha['image_sha'] !!}
           target: deploy
+          build-args: |
+            VITE_APP_URL=https://{{ $config->getWebHost($environment) }}
+            VITE_ASSET_URL=https://{{ $config->getWebHost($environment) }}
+@if($reverbHost = $config->getHost($environment, 'reverb'))
+@if($config->hasFeature(\App\Enums\LaravelFeature::REVERB))
+            VITE_REVERB_HOST={{ $reverbHost }}
+            VITE_REVERB_PORT=443
+            VITE_REVERB_SCHEME=https
+            VITE_REVERB_APP_KEY=$@{{ env.REVERB_APP_KEY }}
+@endif
+@endif
 
       - name: 🏗 Prepare Manifests & Deploy
         run: |
