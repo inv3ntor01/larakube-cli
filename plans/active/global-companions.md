@@ -12,6 +12,7 @@ Planned companion URLs:
 ```
 phpmyadmin.kube        → phpMyAdmin (arbitrary server mode)
 redisinsight.kube      → RedisInsight
+mailpit.kube           → Mailpit (catches all outbound mail from every local app)
 mongo-express.kube     → Mongo Express
 typesense-dashboard.kube → Typesense Dashboard (if applicable)
 ```
@@ -92,13 +93,21 @@ New static manifests (rendered once during `cluster:setup`, not templated per-pr
 - Image: `phpmyadmin:latest`
 - Env: `PMA_ARBITRARY=1` (enables arbitrary server mode)
 - Ingress host: `phpmyadmin.kube`
-- No per-project configuration
+- No per-project configuration; user types `mysql.{appname}.svc.cluster.local` as host at login
 
 ### RedisInsight
 
 - Image: `redis/redisinsight:latest`
 - Ingress host: `redisinsight.kube`
 - User adds connections manually (hostname: `redis.{appname}.svc.cluster.local`)
+
+### Mailpit
+
+- Image: `axllent/mailpit:latest`
+- Ingress host: `mailpit.kube`
+- All local apps point `MAIL_HOST` / `SMTP_HOST` at `mailpit.larakube-system.svc.cluster.local`
+- One inbox catches every local app's outbound mail — no per-project mail server, no per-project Mailpit
+- LaraKube injects the correct `MAIL_HOST` into each app's ConfigMap automatically (same as it does for DB/Redis connection vars)
 
 ---
 
@@ -122,7 +131,8 @@ New static manifests (rendered once during `cluster:setup`, not templated per-pr
 | `ConfigData::$withCompanions` | Remove field |
 | `GathersInfrastructureConfig` | Remove companion prompt |
 | `UpCommand` | Remove `--companions` / `--no-companions` flags |
-| `LaravelFeature` (Mailpit, Monitoring) | Unaffected — these stay per-project |
+| `LaravelFeature` (Mailpit) | Moves to global; `MAIL_HOST` auto-injected as service connection var |
+| `LaravelFeature` (Monitoring) | Stays per-project |
 | `larakube heal` | Remove stale companion manifests |
 | New: `resources/views/k8s/system/companions.blade.php` | Static companions manifest for `larakube-system` |
 
@@ -130,7 +140,6 @@ New static manifests (rendered once during `cluster:setup`, not templated per-pr
 
 ## Open Questions
 
-- **Mailpit**: currently gated by `withCompanions`. Should it also go global? It's more of a dev tool (catches all outbound mail). Could make sense as `mailpit.kube` — one inbox, all projects' mail. Decide before implementing.
 - **Mongo Express**: same pattern as phpMyAdmin (`ME_CONFIG_MONGODB_SERVER` can be set at runtime). Include?
 - **Typesense Dashboard**: currently in its own ingress template. Fold into global companions?
 - **`--companions` flag on `UpCommand`**: remove entirely or repurpose as "deploy/skip global companion setup"?
