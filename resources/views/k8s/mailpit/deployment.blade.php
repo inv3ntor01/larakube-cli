@@ -56,7 +56,6 @@ metadata:
   name: {{ $feature->getPodName($config) }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: mailpit-{{ $config->getName() }}.dev.test
@@ -69,6 +68,3 @@ spec:
                 name: {{ $feature->getPodName($config) }}
                 port:
                   number: 8025
-  tls:
-    - hosts:
-        - mailpit-{{ $config->getName() }}.dev.test

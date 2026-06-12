@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - mongodb-test.dev.test
 
 
 --- FILE: base/mongodb-statefulset.yaml ---
@@ -290,7 +287,6 @@ metadata:
   name: mongodb-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: mongodb-mongodb-test.dev.test
@@ -303,9 +299,6 @@ spec:
                 name: mongodb-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - mongodb-mongodb-test.dev.test
 
 
 --- FILE: overlays/local/mongodb-companion.yaml ---
@@ -448,10 +441,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - mongodb-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

@@ -78,21 +78,48 @@ class TrustCommand extends Command
         if ($this->isWsl()) {
             $this->info('  🪟 WSL2 detected. Installing to the Windows current-user trust store...');
 
-            // Persist the CA where Windows can read it (the temp file is unlinked,
-            // and the bundled CA lives inside the PHAR), so both certutil and the
-            // manual fallback below can reference the same path.
+            // Persist the CA where the WSL2 Linux side can reference it (for
+            // curl/wget trust) and where certutil.exe can actually read it.
             $home = getenv('HOME') ?: sys_get_temp_dir();
             @mkdir($home.'/.larakube', 0755, true);
-            $caFile = $home.'/.larakube/larakube-local-ca.crt';
-            file_put_contents($caFile, $caContent);
-            @unlink($tempCa);
+            $linuxCa = $home.'/.larakube/larakube-local-ca.crt';
+            file_put_contents($linuxCa, $caContent);
 
-            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
+            // certutil.exe cannot read files under \\wsl.localhost\ (the WSL2
+            // virtual filesystem). Write a copy to the Windows side of the mount
+            // so certutil gets a normal NTFS path.
+
+            // LOCALAPPDATA is often unset in WSL2, and `wslpath -u ""` returns "."
+            // (the current directory), which wslpath -w then converts to a
+            // \\wsl.localhost\… UNC path that certutil can't read. We need a real
+            // /mnt/c/… Windows path.
+            $winTempDir = null;
+            $localAppData = getenv('LOCALAPPDATA');
+            if (! empty($localAppData)) {
+                $candidate = trim((string) shell_exec('wslpath -u '.escapeshellarg($localAppData).' 2>/dev/null'));
+                if (str_starts_with($candidate, '/mnt/') && is_dir($candidate)) {
+                    $winTempDir = $candidate;
+                }
+            }
+
+            // Fallback: use the Windows user's AppData/Local directly
+            if ($winTempDir === null) {
+                $winTempDir = '/mnt/c/Windows/Temp';
+            }
+
+            @mkdir($winTempDir, 0755, true);
+            $winCaPath = $winTempDir.'/larakube-local-ca.crt';
+            file_put_contents($winCaPath, $caContent);
+
+            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($winCaPath).' 2>/dev/null'));
 
             // -user → the CURRENT USER's Root store: trusted by Chrome/Edge, needs
             // NO admin/UAC. This replaces the old `-addstore Root` (machine store)
             // that required elevation and just flashed a window and failed.
             passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $trustCode);
+
+            // Clean up the Windows-side copy (no longer needed)
+            @unlink($winCaPath);
 
             $this->line('');
             if ($trustCode !== 0) {
@@ -107,6 +134,25 @@ class TrustCommand extends Command
             $this->laraKubeInfo('✅ LaraKube Local CA trusted (Windows current-user store). Restart your browser.');
             $this->line('  <fg=gray>Note: Firefox uses its own trust store — import the CA there separately if you use Firefox.</>');
 
+            // Also install into WSL2 Linux trust store so curl/wget inside WSL
+            // accept *.dev.test without `-k`.
+            if (file_exists('/usr/local/share/ca-certificates/')) {
+                $this->info('  🔒 Installing CA into WSL2 Linux trust store...');
+                $target = '/usr/local/share/ca-certificates/larakube-local-ca.crt';
+                passthru('sudo cp '.escapeshellarg($linuxCa).' '.escapeshellarg($target));
+                // Ensure world-readable so update-ca-certificates can process it.
+                passthru('sudo chmod 644 '.escapeshellarg($target));
+                passthru('sudo update-ca-certificates');
+            } elseif (file_exists('/etc/pki/ca-trust/source/anchors/')) {
+                $this->info('  🔒 Installing CA into WSL2 Linux trust store...');
+                $target = '/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt';
+                passthru('sudo cp '.escapeshellarg($linuxCa).' '.escapeshellarg($target));
+                passthru('sudo chmod 644 '.escapeshellarg($target));
+                passthru('sudo update-ca-trust extract');
+            }
+
+            @unlink($tempCa);
+
             return 0;
         }
 
@@ -118,11 +164,13 @@ class TrustCommand extends Command
                 $this->info('  🔒 Linux (Debian/Ubuntu) detected. Installing to ca-certificates...');
                 $target = '/usr/local/share/ca-certificates/larakube-local-ca.crt';
                 passthru('sudo cp '.escapeshellarg($tempCa).' '.escapeshellarg($target));
+                passthru('sudo chmod 644 '.escapeshellarg($target));
                 passthru('sudo update-ca-certificates');
             } elseif (file_exists('/etc/pki/ca-trust/source/anchors/')) {
                 $this->info('  🔒 Linux (Fedora/RHEL) detected. Installing to ca-trust...');
                 $target = '/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt';
                 passthru('sudo cp '.escapeshellarg($tempCa).' '.escapeshellarg($target));
+                passthru('sudo chmod 644 '.escapeshellarg($target));
                 passthru('sudo update-ca-trust extract');
             }
         } else {

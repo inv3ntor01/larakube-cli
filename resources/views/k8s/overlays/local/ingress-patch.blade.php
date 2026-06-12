@@ -4,7 +4,4 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - {{ $config->getName() }}.dev.test
+spec: {}

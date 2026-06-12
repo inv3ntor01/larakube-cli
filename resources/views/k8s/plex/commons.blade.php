@@ -421,7 +421,6 @@ metadata:
     larakube.io/component: plex
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: {{ $spec['services']['seaweedfs']['host'] }}
@@ -434,9 +433,6 @@ spec:
                 name: seaweedfs
                 port:
                   number: {{ $spec['services']['seaweedfs']['port'] }}
-  tls:
-    - hosts:
-        - {{ $spec['services']['seaweedfs']['host'] }}
 @endif
 @endif
 @if(($spec['services']['minio']['enabled'] ?? false))
@@ -543,7 +539,6 @@ metadata:
     larakube.io/component: plex
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: {{ $spec['services']['minio']['host'] }}
@@ -556,8 +551,5 @@ spec:
                 name: minio
                 port:
                   number: {{ $spec['services']['minio']['port'] }}
-  tls:
-    - hosts:
-        - {{ $spec['services']['minio']['host'] }}
 @endif
 @endif

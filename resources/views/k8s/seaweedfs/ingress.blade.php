@@ -4,7 +4,6 @@ metadata:
   name: seaweedfs
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: s3-{{ $config->getName() }}.dev.test
@@ -27,7 +26,3 @@ spec:
                 name: seaweedfs
                 port:
                   number: 9333
-  tls:
-    - hosts:
-        - s3-{{ $config->getName() }}.dev.test
-        - s3-admin-{{ $config->getName() }}.dev.test

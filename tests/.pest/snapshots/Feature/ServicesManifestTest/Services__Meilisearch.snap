@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - meilisearch-test.dev.test
 
 
 --- FILE: base/meilisearch-deployment.yaml ---
@@ -318,7 +315,6 @@ metadata:
   name: meilisearch
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: meilisearch-meilisearch-test.dev.test
@@ -331,9 +327,6 @@ spec:
                 name: meilisearch
                 port:
                   number: 7700
-  tls:
-    - hosts:
-        - meilisearch-meilisearch-test.dev.test
 
 
 --- FILE: overlays/local/meilisearch-volumes.yaml ---
@@ -465,10 +458,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - meilisearch-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

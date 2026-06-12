@@ -157,13 +157,23 @@ spec:
 ---
 
 apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: traefik.io/ingress-controller
+
+---
+
+apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: traefik-dashboard
   namespace: traefik
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: traefik.dev.test
@@ -176,6 +186,3 @@ spec:
                 name: traefik
                 port:
                   number: 8080
-  tls:
-    - hosts:
-        - traefik.dev.test

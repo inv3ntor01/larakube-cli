@@ -237,9 +237,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - garage-test.dev.test
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -278,7 +275,6 @@ metadata:
   name: garage
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: s3-garage-test.dev.test
@@ -301,10 +297,6 @@ spec:
                 name: garage
                 port:
                   number: 3902
-  tls:
-    - hosts:
-        - s3-garage-test.dev.test
-        - s3-web-garage-test.dev.test
 
 
 --- FILE: overlays/local/garage-volumes.yaml ---
@@ -505,10 +497,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - garage-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

@@ -62,7 +62,6 @@ metadata:
   name: node
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: vite-{{ $config->getName() }}.dev.test
@@ -75,6 +74,3 @@ spec:
                 name: node
                 port:
                   number: 5173
-  tls:
-    - hosts:
-        - vite-{{ $config->getName() }}.dev.test

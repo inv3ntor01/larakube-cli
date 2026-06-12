@@ -4,7 +4,6 @@ metadata:
   name: {{ $driver->getPodName($config) }}-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: {{ $driver->getPodName($config) }}-{{ $config->getName() }}.dev.test
@@ -17,6 +16,3 @@ spec:
                 name: {{ $driver->getPodName($config) }}-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - {{ $driver->getPodName($config) }}-{{ $config->getName() }}.dev.test

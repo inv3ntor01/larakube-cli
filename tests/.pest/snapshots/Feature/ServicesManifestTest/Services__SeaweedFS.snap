@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - seaweed-test.dev.test
 
 
 --- FILE: base/seaweedfs-deployment.yaml ---
@@ -412,10 +409,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - seaweed-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/local/seaweedfs-ingress.yaml ---
@@ -425,7 +419,6 @@ metadata:
   name: seaweedfs
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: s3-seaweed-test.dev.test
@@ -448,10 +441,6 @@ spec:
                 name: seaweedfs
                 port:
                   number: 9333
-  tls:
-    - hosts:
-        - s3-seaweed-test.dev.test
-        - s3-admin-seaweed-test.dev.test
 
 
 --- FILE: overlays/local/seaweedfs-volumes.yaml ---

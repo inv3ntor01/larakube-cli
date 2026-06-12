@@ -141,9 +141,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - apache-sqlite.dev.test
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -339,10 +336,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - apache-sqlite.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

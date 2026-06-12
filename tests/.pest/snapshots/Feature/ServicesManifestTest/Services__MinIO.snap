@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - minio-test.dev.test
 
 
 --- FILE: base/minio-deployment.yaml ---
@@ -323,7 +320,6 @@ metadata:
   name: minio
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: s3-minio-test.dev.test
@@ -346,10 +342,6 @@ spec:
                 name: minio
                 port:
                   number: 9001
-  tls:
-    - hosts:
-        - s3-minio-test.dev.test
-        - s3-console-minio-test.dev.test
 
 
 --- FILE: overlays/local/minio-volumes.yaml ---
@@ -481,10 +473,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - minio-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

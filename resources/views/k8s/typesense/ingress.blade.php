@@ -4,7 +4,6 @@ metadata:
   name: typesense
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: typesense-{{ $config->getName() }}.dev.test
@@ -17,6 +16,3 @@ spec:
                 name: typesense
                 port:
                   number: 8108
-  tls:
-    - hosts:
-        - typesense-{{ $config->getName() }}.dev.test

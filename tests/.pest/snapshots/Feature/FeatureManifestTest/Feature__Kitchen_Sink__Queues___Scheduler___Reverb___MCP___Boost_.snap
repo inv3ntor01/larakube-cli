@@ -144,9 +144,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - kitchen-sink.dev.test
 
 
 --- FILE: base/queues-deployment.yaml ---
@@ -842,10 +839,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - kitchen-sink.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

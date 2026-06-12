@@ -143,9 +143,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - typesense-test.dev.test
 
 
 --- FILE: base/typesense-companion-deployment.yaml ---
@@ -443,10 +440,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - typesense-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/local/typesense-companion-ingress.yaml ---
@@ -456,7 +450,6 @@ metadata:
   name: typesense-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: typesense-typesense-test.dev.test
@@ -469,9 +462,6 @@ spec:
                 name: typesense-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - typesense-typesense-test.dev.test
 
 
 --- FILE: overlays/local/typesense-ingress.yaml ---
@@ -481,7 +471,6 @@ metadata:
   name: typesense
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: typesense-typesense-test.dev.test
@@ -494,9 +483,6 @@ spec:
                 name: typesense
                 port:
                   number: 8108
-  tls:
-    - hosts:
-        - typesense-typesense-test.dev.test
 
 
 --- FILE: overlays/local/typesense-volumes.yaml ---

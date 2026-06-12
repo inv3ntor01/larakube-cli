@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - mysql-test.dev.test
 
 
 --- FILE: base/mysql-deployment.yaml ---
@@ -312,7 +309,6 @@ metadata:
   name: mysql-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: mysql-mysql-test.dev.test
@@ -325,9 +321,6 @@ spec:
                 name: mysql-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - mysql-mysql-test.dev.test
 
 
 --- FILE: overlays/local/mysql-companion.yaml ---
@@ -516,10 +509,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - mysql-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

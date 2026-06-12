@@ -141,9 +141,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - ssr-test.dev.test
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -308,7 +305,6 @@ metadata:
   name: node
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: vite-ssr-test.dev.test
@@ -321,9 +317,6 @@ spec:
                 name: node
                 port:
                   number: 5173
-  tls:
-    - hosts:
-        - vite-ssr-test.dev.test
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -444,10 +437,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - ssr-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

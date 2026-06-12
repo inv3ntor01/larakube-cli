@@ -21,6 +21,3 @@ spec:
                 name: {{ $config->getServerVariation()->getPodName($config) }}
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - {{ $config->getName() }}.dev.test

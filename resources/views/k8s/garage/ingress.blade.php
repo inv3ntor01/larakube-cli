@@ -4,7 +4,6 @@ metadata:
   name: garage
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: s3-{{ $config->getName() }}.dev.test
@@ -27,7 +26,3 @@ spec:
                 name: garage
                 port:
                   number: 3902
-  tls:
-    - hosts:
-        - s3-{{ $config->getName() }}.dev.test
-        - s3-web-{{ $config->getName() }}.dev.test

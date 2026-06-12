@@ -147,9 +147,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - redis-test.dev.test
 
 
 --- FILE: base/redis-deployment.yaml ---
@@ -392,10 +389,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - redis-test.dev.test
+spec: {}
 
 
 --- FILE: overlays/local/redis-companion-ingress.yaml ---
@@ -405,7 +399,6 @@ metadata:
   name: redis-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: redis-redis-test.dev.test
@@ -418,9 +411,6 @@ spec:
                 name: redis-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - redis-redis-test.dev.test
 
 
 --- FILE: overlays/local/redis-companion.yaml ---

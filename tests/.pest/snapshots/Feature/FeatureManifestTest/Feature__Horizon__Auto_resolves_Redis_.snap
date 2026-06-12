@@ -226,9 +226,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - horizon-auto-redis.dev.test
 
 
 --- FILE: base/redis-deployment.yaml ---
@@ -558,10 +555,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - horizon-auto-redis.dev.test
+spec: {}
 
 
 --- FILE: overlays/local/redis-companion-ingress.yaml ---
@@ -571,7 +565,6 @@ metadata:
   name: redis-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: redis-horizon-auto-redis.dev.test
@@ -584,9 +577,6 @@ spec:
                 name: redis-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - redis-horizon-auto-redis.dev.test
 
 
 --- FILE: overlays/local/redis-companion.yaml ---

@@ -136,7 +136,6 @@ metadata:
   namespace: larakube-system
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: console.dev.test
@@ -149,6 +148,3 @@ spec:
                 name: larakube-dashboard
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - console.dev.test

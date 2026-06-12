@@ -142,9 +142,6 @@ spec:
                 name: web
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - franken-postgres.dev.test
 
 
 --- FILE: base/postgres-deployment.yaml ---
@@ -392,10 +389,7 @@ metadata:
   name: web
   annotations:
     cert-manager.io/cluster-issuer: null
-spec:
-  tls:
-    - hosts:
-        - franken-postgres.dev.test
+spec: {}
 
 
 --- FILE: overlays/local/postgres-companion-ingress.yaml ---
@@ -405,7 +399,6 @@ metadata:
   name: postgres-companion
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
     - host: postgres-franken-postgres.dev.test
@@ -418,9 +411,6 @@ spec:
                 name: postgres-companion
                 port:
                   number: 80
-  tls:
-    - hosts:
-        - postgres-franken-postgres.dev.test
 
 
 --- FILE: overlays/local/postgres-companion.yaml ---
