@@ -4,7 +4,7 @@ namespace App\Traits;
 
 trait InteractsWithTraefik
 {
-    use LaraKubeOutput;
+    use LaraKubeOutput, ManagesLocalCa;
 
     /**
      * Ensure Traefik and its dependencies are installed and configured.
@@ -51,14 +51,15 @@ trait InteractsWithTraefik
 
         shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
 
-        // 2. Create Secret for SSL certificates
-        $certDir = base_path('resources/views/traefik/certificates');
-        $tmpDevPem = sys_get_temp_dir().'/local-dev.pem';
-        $tmpDevKeyPem = sys_get_temp_dir().'/local-dev-key.pem';
-        file_put_contents($tmpDevPem, file_get_contents("{$certDir}/local-dev.pem"));
-        file_put_contents($tmpDevKeyPem, file_get_contents("{$certDir}/local-dev-key.pem"));
+        // 2. Generate (or reuse) the locally-owned wildcard cert and inject as a Secret
+        $this->ensureLocalDevCertExists();
 
-        shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
+        shell_exec(
+            "kubectl create secret generic traefik-certificates -n {$namespace}"
+            .' --from-file=local-dev.pem='.escapeshellarg($this->getLocalDevCertPath())
+            .' --from-file=local-dev-key.pem='.escapeshellarg($this->getLocalDevKeyPath())
+            .' --dry-run=client -o yaml | kubectl apply -f -'
+        );
 
         // Force Traefik to restart to pick up changes (ONLY if it exists)
         $exists = shell_exec("kubectl get deployment traefik -n {$namespace} 2>/dev/null");
@@ -67,8 +68,6 @@ trait InteractsWithTraefik
         }
 
         @unlink($tmpCertsYml);
-        @unlink($tmpDevPem);
-        @unlink($tmpDevKeyPem);
     }
 
     /**

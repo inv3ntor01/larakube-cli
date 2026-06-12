@@ -11,7 +11,6 @@ trait InteractsWithSslTrust
      */
     protected function isSslTrusted(): bool
     {
-        // Safety Guard: Don't run inside a container
         if (file_exists('/.dockerenv')) {
             return false;
         }
@@ -19,19 +18,18 @@ trait InteractsWithSslTrust
         $os = PHP_OS_FAMILY;
 
         if ($this->isWsl()) {
-            $output = shell_exec('certutil.exe -verifystore Root "Server Side Up CA" 2>&1');
+            $output = shell_exec('certutil.exe -verifystore Root "LaraKube Local CA" 2>&1');
 
-            return str_contains($output, 'Certificate is valid') || str_contains($output, 'CertUtil: -verifystore command completed successfully');
+            return str_contains((string) $output, 'Certificate is valid') || str_contains((string) $output, 'CertUtil: -verifystore command completed successfully');
         }
 
         if ($os === 'Darwin') {
-            $output = shell_exec('security find-certificate -c "Server Side Up CA" 2>/dev/null');
+            $output = shell_exec('security find-certificate -c "LaraKube Local CA" 2>/dev/null');
 
             return ! empty($output);
         }
 
         if ($os === 'Linux') {
-            // Check common locations for the CA file we install
             $paths = [
                 '/usr/local/share/ca-certificates/larakube-local-ca.crt',
                 '/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt',

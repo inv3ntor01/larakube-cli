@@ -13,6 +13,7 @@ use Symfony\Component\Yaml\Yaml;
 
 trait GeneratesProjectInfrastructure
 {
+    use ManagesLocalCa;
     use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
 
     public function hardenViteConfig(ConfigData $config): void
@@ -298,10 +299,10 @@ trait GeneratesProjectInfrastructure
         // 0. Copy certificates for local development (e.g. for Vite HTTPS)
         $projectCertsPath = $config->getPath().'/.infrastructure/traefik/certificates';
         @mkdir($projectCertsPath, 0755, true);
-        $cliCertsPath = base_path('resources/views/traefik/certificates');
-        @copy("$cliCertsPath/local-dev.pem", "$projectCertsPath/local-dev.pem");
-        @copy("$cliCertsPath/local-dev-key.pem", "$projectCertsPath/local-dev-key.pem");
-        @copy("$cliCertsPath/local-ca.pem", "$projectCertsPath/local-ca.pem");
+        $this->ensureLocalDevCertExists();
+        @copy($this->getLocalDevCertPath(), "$projectCertsPath/local-dev.pem");
+        @copy($this->getLocalDevKeyPath(), "$projectCertsPath/local-dev-key.pem");
+        @copy($this->getLocalCaCertPath(), "$projectCertsPath/local-ca.pem");
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');
 
