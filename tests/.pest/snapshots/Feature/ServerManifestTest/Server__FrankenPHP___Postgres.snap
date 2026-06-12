@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: franken-postgres.dev.test
+    - host: franken-postgres.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-postgres.dev.test
+        - franken-postgres.kube
 
 
 --- FILE: base/postgres-deployment.yaml ---
@@ -395,7 +395,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - franken-postgres.dev.test
+        - franken-postgres.kube
 
 
 --- FILE: overlays/local/postgres-companion-ingress.yaml ---
@@ -408,7 +408,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: postgres-franken-postgres.dev.test
+    - host: postgres.franken-postgres.kube
       http:
         paths:
           - path: /
@@ -420,7 +420,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - postgres-franken-postgres.dev.test
+        - postgres.franken-postgres.kube
 
 
 --- FILE: overlays/local/postgres-companion.yaml ---
@@ -575,7 +575,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: franken-postgres.dev.test
+    - host: franken-postgres.kube
       http:
         paths:
           - path: /
@@ -587,7 +587,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-postgres.dev.test
+        - franken-postgres.kube
       secretName: franken-postgres-tls
 
 

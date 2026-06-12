@@ -13,8 +13,8 @@ use Symfony\Component\Yaml\Yaml;
 
 trait GeneratesProjectInfrastructure
 {
-    use ManagesLocalCa;
     use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
+    use ManagesLocalCa;
 
     public function hardenViteConfig(ConfigData $config): void
     {
@@ -53,8 +53,8 @@ trait GeneratesProjectInfrastructure
             if (! str_contains($content, 'server: {')) {
                 $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
             } else {
-                $content = preg_replace("/origin:\s*['\"].*?\.dev\.test['\"]/", "origin: 'https://{$viteHost}'", $content);
-                $content = preg_replace("/host:\s*['\"].*?\.dev\.test['\"]/", "host: '{$viteHost}'", $content);
+                $content = preg_replace("/origin:\s*['\"].*?(?:\.dev\.test|\.kube)['\"]/", "origin: 'https://{$viteHost}'", $content);
+                $content = preg_replace("/host:\s*['\"].*?(?:\.dev\.test|\.kube)['\"]/", "host: '{$viteHost}'", $content);
             }
 
             file_put_contents($viteFile, $content);
@@ -75,8 +75,8 @@ trait GeneratesProjectInfrastructure
 
     /**
      * Pure: rewrite ASSET_URL to $target only when it's empty or a local
-     * "*.dev.test" value. Leaves a real asset host (CDN) or an absent ASSET_URL
-     * untouched. Kept side-effect-free so the policy is unit-testable.
+     * "*.dev.test" or "*.kube" value. Leaves a real asset host (CDN) or an absent
+     * ASSET_URL untouched. Kept side-effect-free so the policy is unit-testable.
      */
     public function alignAssetUrlValue(string $content, string $target): string
     {
@@ -85,7 +85,7 @@ trait GeneratesProjectInfrastructure
         }
 
         $current = trim($m[1]);
-        if ($current !== '' && ! str_contains($current, '.dev.test')) {
+        if ($current !== '' && ! str_contains($current, '.dev.test') && ! str_contains($current, '.kube')) {
             return $content; // deliberate non-local value — don't clobber
         }
 
@@ -134,11 +134,10 @@ trait GeneratesProjectInfrastructure
      * production, staging, …) with that environment's web domain. Laravel's
      *
      * @vite prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test"
-     * value sends the deployed assets to the dev host (404 / unstyled page).
-     * Rewrites ONLY an empty or "*.dev.test" value — never a deliberate CDN/asset
-     * host — and is a no-op when ASSET_URL is absent (assets then resolve
-     * relative to APP_URL, which is fine). Skips local, which is meant to use the
-     * .dev.test host. Narrow on purpose, like the APP_URL sync.
+     * or "*.kube" value sends the deployed assets to the dev host (404 / unstyled).
+     * Rewrites ONLY an empty or local value — never a deliberate CDN/asset host —
+     * and is a no-op when ASSET_URL is absent (assets then resolve relative to
+     * APP_URL, which is fine). Skips local. Narrow on purpose, like the APP_URL sync.
      */
     protected function alignEnvironmentAssetUrl(string $projectPath, string $environment, ?string $webHost): void
     {
@@ -299,9 +298,9 @@ trait GeneratesProjectInfrastructure
         // 0. Copy certificates for local development (e.g. for Vite HTTPS)
         $projectCertsPath = $config->getPath().'/.infrastructure/traefik/certificates';
         @mkdir($projectCertsPath, 0755, true);
-        $this->ensureLocalDevCertExists();
-        @copy($this->getLocalDevCertPath(), "$projectCertsPath/local-dev.pem");
-        @copy($this->getLocalDevKeyPath(), "$projectCertsPath/local-dev-key.pem");
+        $this->ensureAppCertExists($config->getName());
+        @copy($this->getAppCertPath($config->getName()), "$projectCertsPath/local-dev.pem");
+        @copy($this->getAppKeyPath($config->getName()), "$projectCertsPath/local-dev-key.pem");
         @copy($this->getLocalCaCertPath(), "$projectCertsPath/local-ca.pem");
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');

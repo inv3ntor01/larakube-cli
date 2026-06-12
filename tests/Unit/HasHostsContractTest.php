@@ -28,7 +28,7 @@ test('every host-publishing component declares its overrideable services', funct
 });
 
 test('local-console components opt out of host overrides via empty getHostServices', function () {
-    // DB and Cache consoles are local-only with baked-in dev.test pattern;
+    // DB and Cache consoles are local-only with baked-in .kube domains;
     // they MUST NOT show up in the env wizard's host-override prompts.
     expect(DatabaseDriver::MYSQL->getHostServices())->toBe([])
         ->and(DatabaseDriver::POSTGRESQL->getHostServices())->toBe([])
@@ -49,12 +49,12 @@ test('database consoles do not leak into non-local ingress (the latent bug fix)'
     ]);
 
     // Local still gets the console (developer ergonomics).
-    expect($config->getAllHosts('local'))->toHaveKey('mysql-demo.dev.test');
+    expect($config->getAllHosts('local'))->toHaveKey('mysql.demo.kube');
 
     // Production must NOT include the MySQL console — exposing admin UIs
     // through cloud ingress is a security smell.
     $prodHosts = $config->getAllHosts('production');
-    expect(array_keys($prodHosts))->not->toContain('mysql-demo.dev.test')
+    expect(array_keys($prodHosts))->not->toContain('mysql.demo.kube')
         ->and(array_keys($prodHosts))->not->toContain('mysql-example.com');
 });
 

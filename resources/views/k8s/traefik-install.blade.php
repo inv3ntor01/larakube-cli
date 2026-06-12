@@ -166,7 +166,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: traefik.dev.test
+    - host: traefik.kube
       http:
         paths:
           - path: /
@@ -178,4 +178,4 @@ spec:
                   number: 8080
   tls:
     - hosts:
-        - traefik.dev.test
+        - traefik.kube

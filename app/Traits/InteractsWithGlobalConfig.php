@@ -21,13 +21,22 @@ trait InteractsWithGlobalConfig
 
     protected function getGhCommand(?string $workDir = null, bool $interactive = false): string
     {
-        // 1. Check for local 'gh' installation (robust check)
-        $localGh = trim(shell_exec('command -v gh 2>/dev/null') ?? '');
-        if ($localGh && @is_executable($localGh)) {
-            return $localGh;
+        // command -v uses the non-interactive shell PATH which may miss tools
+        // installed by Homebrew or similar. Check common locations as a fallback.
+        $candidates = array_filter([
+            trim(shell_exec('command -v gh 2>/dev/null') ?? ''),
+            '/usr/local/bin/gh',
+            '/opt/homebrew/bin/gh',
+            '/home/linuxbrew/.linuxbrew/bin/gh',
+        ]);
+
+        foreach ($candidates as $path) {
+            if ($path !== '' && @is_executable($path)) {
+                return $path;
+            }
         }
 
-        // 2. Fallback to Docker
+        // Fall back to running gh inside a throw-away Docker container.
         return $this->getGhDockerCommand($workDir, $interactive);
     }
 
@@ -66,7 +75,7 @@ trait InteractsWithGlobalConfig
 
     protected function getDefaultEmail(): string
     {
-        return 'admin@larakube.dev.test';
+        return 'admin@example.com';
     }
 
     protected function setEmail(string $email): void

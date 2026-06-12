@@ -219,7 +219,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function getPublicEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
-        $s3Host = $config ? $config->getServiceHost('s3', $environment) : 's3.dev.test';
+        $s3Host = $config ? $config->getServiceHost('s3', $environment) : 's3.kube';
 
         $envs = [
             'FILESYSTEM_DISK' => 's3',

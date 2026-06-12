@@ -131,7 +131,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: nginx-sqlite.dev.test
+    - host: nginx-sqlite.kube
       http:
         paths:
           - path: /
@@ -143,7 +143,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - nginx-sqlite.dev.test
+        - nginx-sqlite.kube
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -342,7 +342,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - nginx-sqlite.dev.test
+        - nginx-sqlite.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -413,7 +413,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: nginx-sqlite.dev.test
+    - host: nginx-sqlite.kube
       http:
         paths:
           - path: /
@@ -425,7 +425,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - nginx-sqlite.dev.test
+        - nginx-sqlite.kube
       secretName: nginx-sqlite-tls
 
 

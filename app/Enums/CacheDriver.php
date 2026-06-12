@@ -273,8 +273,8 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         $appName = $config->getName();
 
         return match ($this) {
-            self::REDIS => ["redis-{$appName}.dev.test" => 'Redis Console'],
-            self::MEMCACHED => ["memcached-{$appName}.dev.test" => 'Memcached Console'],
+            self::REDIS => ["redis.{$appName}.kube" => 'Redis Console'],
+            self::MEMCACHED => ["memcached.{$appName}.kube" => 'Memcached Console'],
             default => [],
         };
     }

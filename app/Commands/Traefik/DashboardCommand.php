@@ -38,9 +38,9 @@ class DashboardCommand extends Command
         $this->laraKubeInfo('Opening Traefik Network Dashboard...');
 
         // 🛡 Automated Host Mapping & SSL Trust
-        $this->ensureHostsAreSet(['traefik.dev.test'], 'larakube-system');
+        $this->ensureHostsAreSet(['traefik.kube'], 'larakube-system');
 
-        $url = 'https://traefik.dev.test/dashboard/';
+        $url = 'https://traefik.kube/dashboard/';
 
         if (! $this->isSslTrusted()) {
             $this->newLine();

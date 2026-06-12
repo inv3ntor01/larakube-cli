@@ -23,7 +23,7 @@ function configWithEnvs(array $names): ConfigData
 test('syncEnvFile targets .env.<environment> for ANY cloud env (e.g. staging)', function () {
     $dir = sys_get_temp_dir().'/envsync-staging-'.uniqid();
     mkdir($dir, 0755, true);
-    file_put_contents($dir.'/.env', "APP_NAME=Test\nASSET_URL=https://app.dev.test\n");
+    file_put_contents($dir.'/.env', "APP_NAME=Test\nASSET_URL=https://app.kube\n");
 
     (new EnvSyncHelper(configWithEnvs(['local', 'staging'])))
         ->sync($dir, ['APP_URL' => 'https://staging.app.com'], false, 'staging');

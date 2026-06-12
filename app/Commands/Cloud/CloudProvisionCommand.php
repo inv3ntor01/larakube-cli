@@ -98,7 +98,7 @@ class CloudProvisionCommand extends Command
         if (! $email) {
             $email = text(
                 label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
-                placeholder: 'admin@larakube.dev.test',
+                placeholder: 'admin@example.com',
                 required: true,
                 validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
             );

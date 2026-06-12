@@ -351,7 +351,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         // Database admin consoles only publish in local — exposing them
         // through cloud ingress would be a security disaster, and the
-        // dev.test pattern doesn't make sense outside k3d anyway.
+        // local .kube domains don't make sense outside k3d anyway.
         if ($environment !== 'local') {
             return [];
         }
@@ -359,10 +359,10 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         $appName = $config->getName();
 
         return match ($this) {
-            self::MYSQL => ["mysql-{$appName}.dev.test" => 'MySQL Console'],
-            self::MARIADB => ["mariadb-{$appName}.dev.test" => 'MariaDB Console'],
-            self::POSTGRESQL => ["postgres-{$appName}.dev.test" => 'PostgreSQL Console'],
-            self::MONGODB => ["mongodb-{$appName}.dev.test" => 'MongoDB Console'],
+            self::MYSQL => ["mysql.{$appName}.kube" => 'MySQL Console'],
+            self::MARIADB => ["mariadb.{$appName}.kube" => 'MariaDB Console'],
+            self::POSTGRESQL => ["postgres.{$appName}.kube" => 'PostgreSQL Console'],
+            self::MONGODB => ["mongodb.{$appName}.kube" => 'MongoDB Console'],
             self::SQLITE => [],
             default => [],
         };
@@ -370,7 +370,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     /**
      * Database consoles aren't user-overrideable — they're either the
-     * baked-in local dev.test pattern or absent (in cloud envs).
+     * baked-in local .kube domains or absent (in cloud envs).
      */
     public function getHostServices(): array
     {

@@ -137,10 +137,11 @@ class CloudProvisionDoksCommand extends Command
         // Managed target + storageClass — no provider prompt, we know it's DOKS.
         $config = $this->recordManagedTarget($config, $environment, $projectPath, $context, ManagedProvider::DOKS);
 
-        // Web domain — skip the {name}.com placeholder and any local .dev.test host.
+        // Web domain — skip the {name}.com placeholder and any local .kube host.
         $currentHost = $config->getHost($environment, 'web');
         $isPlaceholder = ! $currentHost
             || $currentHost === "{$config->getName()}.com"
+            || str_contains((string) $currentHost, '.kube')
             || str_contains((string) $currentHost, '.dev.test');
 
         $host = text(

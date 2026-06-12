@@ -216,7 +216,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: horizon-auto-redis.dev.test
+    - host: horizon-auto-redis.kube
       http:
         paths:
           - path: /
@@ -228,7 +228,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - horizon-auto-redis.dev.test
+        - horizon-auto-redis.kube
 
 
 --- FILE: base/redis-deployment.yaml ---
@@ -561,7 +561,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - horizon-auto-redis.dev.test
+        - horizon-auto-redis.kube
 
 
 --- FILE: overlays/local/redis-companion-ingress.yaml ---
@@ -574,7 +574,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: redis-horizon-auto-redis.dev.test
+    - host: redis.horizon-auto-redis.kube
       http:
         paths:
           - path: /
@@ -586,7 +586,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-horizon-auto-redis.dev.test
+        - redis.horizon-auto-redis.kube
 
 
 --- FILE: overlays/local/redis-companion.yaml ---
@@ -722,7 +722,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: horizon-auto-redis.dev.test
+    - host: horizon-auto-redis.kube
       http:
         paths:
           - path: /
@@ -734,7 +734,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - horizon-auto-redis.dev.test
+        - horizon-auto-redis.kube
       secretName: horizon-auto-redis-tls
 
 

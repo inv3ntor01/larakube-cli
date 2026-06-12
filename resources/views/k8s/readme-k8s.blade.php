@@ -5,7 +5,7 @@ This project was crafted using **LaraKube**. it provides an opinionated, profess
 ## 🚀 Quick Start
 
 1. **Trust** the LaraKube Local CA: `larakube trust` (Once per machine).
-2. **Setup** your `/etc/hosts` file for `https://{{ $config->getName() }}.dev.test`.
+2. **Setup** your `/etc/hosts` file for `https://{{ $config->getWebHost('local') }}`.
 3. **Deploy** the application: `larakube up`.
 
 ## 🛠 Available Commands

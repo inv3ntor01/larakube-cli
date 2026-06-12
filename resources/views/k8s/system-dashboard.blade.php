@@ -78,9 +78,9 @@ spec:
             - containerPort: 8080
           env:
             - name: APP_URL
-              value: https://console.dev.test
+              value: https://console.kube
             - name: ASSET_URL
-              value: https://console.dev.test
+              value: https://console.kube
             - name: APP_ENV
               value: production
             - name: APP_DEBUG
@@ -139,7 +139,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: console.dev.test
+    - host: console.kube
       http:
         paths:
           - path: /
@@ -151,4 +151,4 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - console.dev.test
+        - console.kube

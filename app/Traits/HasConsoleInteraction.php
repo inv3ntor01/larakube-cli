@@ -28,7 +28,7 @@ trait HasConsoleInteraction
         try {
             return Http::timeout(5)
                 ->withoutVerifying()
-                ->post('https://console.dev.test/api/projects/register', $projectData)
+                ->post('https://console.kube/api/projects/register', $projectData)
                 ->successful();
         } catch (Throwable) {
             return false;

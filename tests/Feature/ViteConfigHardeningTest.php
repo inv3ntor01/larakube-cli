@@ -38,8 +38,8 @@ TS;
     expect($result)->toContain('wayfinder');
 
     // Verify K8s config is injected
-    expect($result)->toContain("origin: 'https://vite-test-app.dev.test'");
-    expect($result)->toContain("host: 'vite-test-app.dev.test'");
+    expect($result)->toContain("origin: 'https://vite.test-app.kube'");
+    expect($result)->toContain("host: 'vite.test-app.kube'");
     expect($result)->toContain('cors: true');
 
     exec('rm -rf '.escapeshellarg($tempDir));

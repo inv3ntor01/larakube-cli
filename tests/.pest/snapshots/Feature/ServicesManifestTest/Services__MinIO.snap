@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: minio-test.dev.test
+    - host: minio-test.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
 
 
 --- FILE: base/minio-deployment.yaml ---
@@ -326,7 +326,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3-minio-test.dev.test
+    - host: s3.minio-test.kube
       http:
         paths:
           - path: /
@@ -336,7 +336,7 @@ spec:
                 name: minio
                 port:
                   number: 9000
-    - host: s3-console-minio-test.dev.test
+    - host: s3-console.minio-test.kube
       http:
         paths:
           - path: /
@@ -348,8 +348,8 @@ spec:
                   number: 9001
   tls:
     - hosts:
-        - s3-minio-test.dev.test
-        - s3-console-minio-test.dev.test
+        - s3.minio-test.kube
+        - s3-console.minio-test.kube
 
 
 --- FILE: overlays/local/minio-volumes.yaml ---
@@ -484,7 +484,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -555,7 +555,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: minio-test.dev.test
+    - host: minio-test.kube
       http:
         paths:
           - path: /
@@ -567,7 +567,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
       secretName: minio-test-tls
 
 

@@ -7,7 +7,7 @@ use Throwable;
 
 class DashboardConnector
 {
-    protected string $baseUrl = 'https://console.dev.test';
+    protected string $baseUrl = 'https://console.kube';
 
     public function isUp(): bool
     {

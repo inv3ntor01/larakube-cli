@@ -69,9 +69,9 @@ trait ConfiguresCloudEnvironment
 
         // 🌐 Ensure Web Domain is set for this env (fires for any non-local env).
         // Re-prompt when the host is missing, the {name}.com placeholder, OR a
-        // local .dev.test host — which must never ship to a remote environment.
+        // local .kube host — which must never ship to a remote environment.
         $currentHost = $config->getHost($environment, 'web');
-        if (! $currentHost || $currentHost === "{$config->getName()}.com" || str_contains((string) $currentHost, '.dev.test')) {
+        if (! $currentHost || $currentHost === "{$config->getName()}.com" || str_contains((string) $currentHost, '.kube') || str_contains((string) $currentHost, '.dev.test')) {
             $this->newLine();
             $this->info(' 🌐 ARCHITECTURAL ALIGNMENT');
             $this->line("   Remote deployments require a real web domain for '{$environment}'.");

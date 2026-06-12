@@ -703,13 +703,13 @@ class ConfigData extends Data
 
     /**
      * Resolved web hostname for an environment — the env's configured `web`
-     * host, or the local dev.test fallback. Used by ingress generation so
+     * host, or the local .kube fallback. Used by ingress generation so
      * every environment routes to its own domain.
      */
     public function getWebHost(string $environment): string
     {
         return $this->getEnvironment($environment)?->hosts['web']
-            ?? "{$this->getName()}.dev.test";
+            ?? "{$this->getName()}.kube";
     }
 
     public function getProductionHost(): string
@@ -1210,7 +1210,7 @@ class ConfigData extends Data
             return "https://{$webHost}";
         }
 
-        return "https://{$this->getName()}.dev.test";
+        return "https://{$this->getName()}.kube";
     }
 
     /**
@@ -1220,9 +1220,9 @@ class ConfigData extends Data
      *   1. Per-service explicit host on EnvironmentData (e.g. reverb
      *      lives on its own subdomain like ws.example.com that does NOT
      *      share the web host's prefix scheme).
-     *   2. Local env always uses the `{service}-{name}.dev.test` pattern.
+     *   2. Local env uses the `{service}.{name}.kube` pattern.
      *   3. Non-local env with a web host → `{service}-{webHost}` prefix.
-     *   4. Fallback: `{service}-{name}.dev.test` (so a cloud env without
+     *   4. Fallback: `{service}.{name}.kube` (so a cloud env without
      *      hosts configured still produces something usable for previews).
      */
     public function getServiceHost(string $service, string $environment = 'local'): string
@@ -1234,14 +1234,14 @@ class ConfigData extends Data
         }
 
         if ($environment === 'local') {
-            return "{$service}-{$this->getName()}.dev.test";
+            return "{$service}.{$this->getName()}.kube";
         }
 
         if ($envData && isset($envData->hosts['web'])) {
             return "{$service}-{$envData->hosts['web']}";
         }
 
-        return "{$service}-{$this->getName()}.dev.test";
+        return "{$service}.{$this->getName()}.kube";
     }
 
     public function getPhpImage(bool $isCli = false): string

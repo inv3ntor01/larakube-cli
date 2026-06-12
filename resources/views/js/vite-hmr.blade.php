@@ -3,7 +3,7 @@
         strictPort: true,
         port: 5173,
         hmr: {
-            host: 'vite-{{ $appName }}.dev.test',
+            host: 'vite.{{ $appName }}.kube',
             clientPort: 443,
             protocol: 'wss',
         },

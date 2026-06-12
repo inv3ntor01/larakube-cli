@@ -137,7 +137,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: redis-test.dev.test
+    - host: redis-test.kube
       http:
         paths:
           - path: /
@@ -149,7 +149,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-test.dev.test
+        - redis-test.kube
 
 
 --- FILE: base/redis-deployment.yaml ---
@@ -395,7 +395,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - redis-test.dev.test
+        - redis-test.kube
 
 
 --- FILE: overlays/local/redis-companion-ingress.yaml ---
@@ -408,7 +408,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: redis-redis-test.dev.test
+    - host: redis.redis-test.kube
       http:
         paths:
           - path: /
@@ -420,7 +420,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-redis-test.dev.test
+        - redis.redis-test.kube
 
 
 --- FILE: overlays/local/redis-companion.yaml ---
@@ -529,7 +529,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: redis-test.dev.test
+    - host: redis-test.kube
       http:
         paths:
           - path: /
@@ -541,7 +541,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-test.dev.test
+        - redis-test.kube
       secretName: redis-test-tls
 
 

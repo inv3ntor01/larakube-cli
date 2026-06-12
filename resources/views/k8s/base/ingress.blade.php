@@ -11,7 +11,7 @@ metadata:
 @endif
 spec:
   rules:
-    - host: {{ $config->getName() }}.dev.test
+    - host: {{ $config->getWebHost('local') }}
       http:
         paths:
           - path: /
@@ -23,4 +23,4 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - {{ $config->getName() }}.dev.test
+        - {{ $config->getWebHost('local') }}

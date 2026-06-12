@@ -16,6 +16,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ManagesLocalCa;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
@@ -24,7 +25,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {
-    use EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
+    use EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesLocalCa;
 
     /**
      * The name and signature of the console command.
@@ -241,6 +242,7 @@ class UpCommand extends Command
 
         $appName = $config->getName() ?? basename($projectPath);
         $path = ".infrastructure/k8s/overlays/{$environment}";
+
         $namespace = $this->getNamespace($environment, $appName);
 
         if (! is_dir(getcwd().'/'.$path)) {
@@ -271,6 +273,14 @@ class UpCommand extends Command
                     $this->setupTraefik();
                 }
             }
+
+            // Sync this app's .kube cert into the Traefik pool after any install — the
+            // traefik namespace is now guaranteed to exist (or the user declined install).
+            $this->withSpin('Syncing local TLS certificates...', function () use ($appName) {
+                $this->refreshTraefikCerts($appName);
+
+                return true;
+            });
         }
 
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
@@ -337,18 +347,19 @@ class UpCommand extends Command
                         continue;
                     }
 
-                    // LOCAL only: filter to service connection variables (others read from .env mount).
-                    // REMOTE: include all non-secret variables (no .env mount exists).
-                    if ($environment === 'local' && ! in_array($key, $serviceConnectionNames, true)) {
-                        continue;
-                    }
-
                     // HEURISTIC GUARD: Is it a known secret OR does it look like one?
                     $isSecret = in_array($key, $knownSecrets) ||
                                 str_contains($key, 'PASSWORD') ||
                                 str_contains($key, 'SECRET') ||
                                 str_contains($key, 'KEY') ||
                                 str_contains($key, 'TOKEN');
+
+                    // LOCAL only: public (non-secret) vars are filtered to service connection
+                    // variables — the rest come from the .env file mount. Secret vars always
+                    // pass through so laravel-secrets is always created (pods require it).
+                    if ($environment === 'local' && ! $isSecret && ! in_array($key, $serviceConnectionNames, true)) {
+                        continue;
+                    }
 
                     $literal = ' --from-literal='.escapeshellarg("$key=$value");
 

@@ -32,7 +32,7 @@ class DestroyCommand extends Command
 
         if (! $this->option('force')) {
             $this->laraKubeError('WARNING: This will completely REMOVE the networking stack from your cluster.');
-            $this->warn('  ● All local .dev.test domains will become unreachable.');
+            $this->warn('  ● All local .kube domains will become unreachable.');
             $this->line('');
 
             if (! confirm('Are you absolutely sure you want to destroy Traefik?', false)) {

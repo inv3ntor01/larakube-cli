@@ -64,11 +64,11 @@ data:
     [s3_api]
     s3_region = "us-east-1"
     api_bind_addr = "[::]:3900"
-    root_domain = ".s3-garage-test.dev.test"
+    root_domain = ".s3.garage-test.kube"
 
     [s3_web]
     bind_addr = "[::]:3902"
-    root_domain = ".s3-garage-test.dev.test"
+    root_domain = ".s3.garage-test.kube"
     index = "index.html"
 
     [admin]
@@ -227,7 +227,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: garage-test.dev.test
+    - host: garage-test.kube
       http:
         paths:
           - path: /
@@ -239,7 +239,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - garage-test.dev.test
+        - garage-test.kube
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -281,7 +281,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3-garage-test.dev.test
+    - host: s3.garage-test.kube
       http:
         paths:
           - path: /
@@ -291,7 +291,7 @@ spec:
                 name: garage
                 port:
                   number: 3900
-    - host: s3-web-garage-test.dev.test
+    - host: s3-web.garage-test.kube
       http:
         paths:
           - path: /
@@ -303,8 +303,8 @@ spec:
                   number: 3902
   tls:
     - hosts:
-        - s3-garage-test.dev.test
-        - s3-web-garage-test.dev.test
+        - s3.garage-test.kube
+        - s3-web.garage-test.kube
 
 
 --- FILE: overlays/local/garage-volumes.yaml ---
@@ -508,7 +508,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - garage-test.dev.test
+        - garage-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -592,7 +592,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: garage-test.dev.test
+    - host: garage-test.kube
       http:
         paths:
           - path: /
@@ -604,7 +604,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - garage-test.dev.test
+        - garage-test.kube
       secretName: garage-test-tls
 
 

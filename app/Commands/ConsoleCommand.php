@@ -63,7 +63,7 @@ class ConsoleCommand extends Command
         // Default behavior: Ask the user or promote K9s
         $this->info('  LaraKube offers two ways to monitor your cluster:');
         $this->line('  1. <fg=cyan;options=bold>K9s</> (Recommended) - Powerful, real-time terminal UI.');
-        $this->line('  2. <fg=yellow;options=bold>Web UI</> - Clean, web-based management at console.dev.test.');
+        $this->line('  2. <fg=yellow;options=bold>Web UI</> - Clean, web-based management at console.kube.');
         $this->newLine();
 
         $choice = $this->choice('Which would you like to open?', [
@@ -91,7 +91,7 @@ class ConsoleCommand extends Command
         $this->newLine();
 
         // 🛡 Automated Host Mapping & SSL Trust
-        $this->ensureHostsAreSet(['console.dev.test', 'traefik.dev.test'], 'larakube-system');
+        $this->ensureHostsAreSet(['console.kube', 'traefik.kube'], 'larakube-system');
 
         if (! $this->isSslTrusted()) {
             $this->newLine();
@@ -126,7 +126,7 @@ class ConsoleCommand extends Command
             }
         }
 
-        $url = 'https://console.dev.test';
+        $url = 'https://console.kube';
 
         $this->laraKubeInfo("Opening: {$url}");
 

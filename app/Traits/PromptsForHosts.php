@@ -25,7 +25,7 @@ trait PromptsForHosts
     {
         $hosts = [];
 
-        // Web host: optional. Empty = no host configured (env still works on internal/dev.test domains).
+        // Web host: optional. Empty = no host configured (env still works on internal .kube domains).
         $webHost = text(
             label: "Web host for {$envName} (optional, e.g. staging.example.com)",
             placeholder: 'leave blank to skip',

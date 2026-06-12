@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: mongodb-test.dev.test
+    - host: mongodb-test.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mongodb-test.dev.test
+        - mongodb-test.kube
 
 
 --- FILE: base/mongodb-statefulset.yaml ---
@@ -293,7 +293,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: mongodb-mongodb-test.dev.test
+    - host: mongodb.mongodb-test.kube
       http:
         paths:
           - path: /
@@ -305,7 +305,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mongodb-mongodb-test.dev.test
+        - mongodb.mongodb-test.kube
 
 
 --- FILE: overlays/local/mongodb-companion.yaml ---
@@ -451,7 +451,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - mongodb-test.dev.test
+        - mongodb-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -522,7 +522,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: mongodb-test.dev.test
+    - host: mongodb-test.kube
       http:
         paths:
           - path: /
@@ -534,7 +534,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mongodb-test.dev.test
+        - mongodb-test.kube
       secretName: mongodb-test-tls
 
 

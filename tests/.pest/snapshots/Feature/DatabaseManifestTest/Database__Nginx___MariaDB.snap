@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: mariadb-test.dev.test
+    - host: mariadb-test.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mariadb-test.dev.test
+        - mariadb-test.kube
 
 
 --- FILE: base/mariadb-deployment.yaml ---
@@ -315,7 +315,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: mariadb-mariadb-test.dev.test
+    - host: mariadb.mariadb-test.kube
       http:
         paths:
           - path: /
@@ -327,7 +327,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mariadb-mariadb-test.dev.test
+        - mariadb.mariadb-test.kube
 
 
 --- FILE: overlays/local/mariadb-companion.yaml ---
@@ -519,7 +519,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - mariadb-test.dev.test
+        - mariadb-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -590,7 +590,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: mariadb-test.dev.test
+    - host: mariadb-test.kube
       http:
         paths:
           - path: /
@@ -602,7 +602,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - mariadb-test.dev.test
+        - mariadb-test.kube
       secretName: mariadb-test-tls
 
 

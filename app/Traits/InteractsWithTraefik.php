@@ -39,35 +39,57 @@ trait InteractsWithTraefik
 
     /**
      * Create the ConfigMap and Secret required for Traefik local SSL.
+     * Called once when Traefik is first installed.
      */
     protected function createTraefikInfrastructure(): void
     {
         $namespace = 'traefik';
         shell_exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
 
-        // 1. Create ConfigMap for Traefik dynamic configuration
+        $this->ensureSystemCertExists();
+        $this->applyTraefikCertResources($namespace);
+    }
+
+    /**
+     * Ensure this app's cert is in the Traefik cert pool.
+     * Called on every `larakube up` so new apps join automatically.
+     */
+    protected function refreshTraefikCerts(string $appName): void
+    {
+        $this->ensureAppCertExists($appName);
+        $this->applyTraefikCertResources('traefik');
+    }
+
+    /**
+     * Rebuild traefik-config ConfigMap and traefik-certificates Secret from all
+     * locally-generated certs, then restart Traefik to pick up changes.
+     */
+    protected function applyTraefikCertResources(string $namespace): void
+    {
+        // 1. ConfigMap — dynamic YAML listing all cert pairs
         $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
-        file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
+        file_put_contents($tmpCertsYml, $this->buildTraefikCertsYml());
+        // Server-side apply avoids storing base64 cert blobs in the
+        // last-applied-configuration annotation (256 KB limit overflows with multiple certs).
+        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply --server-side --field-manager=larakube --force-conflicts -f -");
+        @unlink($tmpCertsYml);
 
-        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+        // 2. Secret — all cert files from ~/.larakube/certificates/
+        $fromFiles = ' --from-file=system-dev.pem='.escapeshellarg($this->getSystemCertPath())
+            .' --from-file=system-dev-key.pem='.escapeshellarg($this->getSystemKeyPath());
 
-        // 2. Generate (or reuse) the locally-owned wildcard cert and inject as a Secret
-        $this->ensureLocalDevCertExists();
+        foreach ($this->getAllLocalAppCerts() as $appName => $paths) {
+            $fromFiles .= ' --from-file='.escapeshellarg("{$appName}-dev.pem={$paths['crt']}");
+            $fromFiles .= ' --from-file='.escapeshellarg("{$appName}-dev-key.pem={$paths['key']}");
+        }
 
-        shell_exec(
-            "kubectl create secret generic traefik-certificates -n {$namespace}"
-            .' --from-file=local-dev.pem='.escapeshellarg($this->getLocalDevCertPath())
-            .' --from-file=local-dev-key.pem='.escapeshellarg($this->getLocalDevKeyPath())
-            .' --dry-run=client -o yaml | kubectl apply -f -'
-        );
+        shell_exec("kubectl create secret generic traefik-certificates -n {$namespace}{$fromFiles} --dry-run=client -o yaml | kubectl apply --server-side --field-manager=larakube --force-conflicts -f -");
 
-        // Force Traefik to restart to pick up changes (ONLY if it exists)
+        // 3. Restart Traefik to pick up changes (only if it exists)
         $exists = shell_exec("kubectl get deployment traefik -n {$namespace} 2>/dev/null");
         if ($exists) {
             shell_exec("kubectl rollout restart deployment traefik -n {$namespace}");
         }
-
-        @unlink($tmpCertsYml);
     }
 
     /**

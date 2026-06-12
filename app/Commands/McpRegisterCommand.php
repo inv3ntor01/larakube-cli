@@ -68,7 +68,7 @@ class McpRegisterCommand extends Command
                     'args' => ['mcp:start', 'mcp'],
                 ],
                 'larakube-console' => [
-                    'url' => 'https://console.dev.test/mcp',
+                    'url' => 'https://console.kube/mcp',
                 ],
             ],
         ]);
@@ -90,7 +90,7 @@ class McpRegisterCommand extends Command
                     'args' => ['mcp:start', 'mcp'],
                 ],
                 'larakube-console' => [
-                    'url' => 'https://console.dev.test/mcp',
+                    'url' => 'https://console.kube/mcp',
                 ],
             ],
         ]);

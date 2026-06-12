@@ -65,7 +65,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: vite-{{ $config->getName() }}.dev.test
+    - host: vite.{{ $config->getName() }}.kube
       http:
         paths:
           - path: /
@@ -77,4 +77,4 @@ spec:
                   number: 5173
   tls:
     - hosts:
-        - vite-{{ $config->getName() }}.dev.test
+        - vite.{{ $config->getName() }}.kube

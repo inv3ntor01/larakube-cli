@@ -137,7 +137,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: memcached-test.dev.test
+    - host: memcached-test.kube
       http:
         paths:
           - path: /
@@ -149,7 +149,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
 
 
 --- FILE: base/memcached-deployment.yaml ---
@@ -393,7 +393,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -464,7 +464,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: memcached-test.dev.test
+    - host: memcached-test.kube
       http:
         paths:
           - path: /
@@ -476,7 +476,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
       secretName: memcached-test-tls
 
 

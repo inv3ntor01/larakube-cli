@@ -39,11 +39,11 @@ class LocalHealthCheckTool extends Tool
         }
 
         // 3. Check Traefik
-        $traefikCheck = shell_exec('curl -sk --connect-timeout 2 https://console.dev.test > /dev/null 2>&1; echo $?');
+        $traefikCheck = shell_exec('curl -sk --connect-timeout 2 https://console.kube > /dev/null 2>&1; echo $?');
         if (trim($traefikCheck) === '0') {
-            $report[] = '- ✅ **Networking:** Traefik ingress is routing console.dev.test.';
+            $report[] = '- ✅ **Networking:** Traefik ingress is routing console.kube.';
         } else {
-            $report[] = '- ⚠️ **Networking:** Local domains (dev.test) might not be resolved or Traefik is down.';
+            $report[] = '- ⚠️ **Networking:** Local domains (.kube) might not be resolved or Traefik is down.';
         }
 
         return Response::text(implode("\n", $report));

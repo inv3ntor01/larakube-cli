@@ -40,6 +40,12 @@ trait InteractsWithHosts
             return;
         }
 
+        // If dnsmasq is wildcarding *.kube already, individual /etc/hosts entries
+        // are redundant — skip the prompt entirely.
+        if ($this->dnsmasqCoversKube()) {
+            return;
+        }
+
         // 🪟 WSL: the Windows browser can't see WSL's /etc/hosts, so also sync
         // the Windows hosts file. Done first/independently of the Linux sync.
         if ($this->isWsl()) {
@@ -215,6 +221,29 @@ trait InteractsWithHosts
         $stripped = $stripped ?? $current;
 
         return rtrim($stripped)."\n\n{$blockIdentifier}\n{$entryLine}\n";
+    }
+
+    /**
+     * True when dnsmasq is already wildcarding *.kube → 127.0.0.1 locally,
+     * meaning individual /etc/hosts entries would be redundant.
+     */
+    protected function dnsmasqCoversKube(): bool
+    {
+        if (PHP_OS_FAMILY === 'Darwin') {
+            if (! file_exists('/etc/resolver/kube')) {
+                return false;
+            }
+            $result = shell_exec('dscacheutil -q host -a name larakube-probe.kube 2>/dev/null');
+
+            return $result !== null && str_contains((string) $result, '127.0.0.1');
+        }
+
+        if (! file_exists('/etc/dnsmasq.d/larakube.conf')) {
+            return false;
+        }
+        $result = shell_exec('getent hosts larakube-probe.kube 2>/dev/null');
+
+        return $result !== null && str_contains((string) $result, '127.0.0.1');
     }
 
     /**
