@@ -57,7 +57,6 @@ trait InteractsWithDocker
      */
     protected function getDockerCommand(string $path, string $type = 'php', string $envs = ''): string
     {
-
         $appName = basename($path);
         $localImage = "$appName:local";
 
@@ -67,7 +66,9 @@ trait InteractsWithDocker
 
         $baseEnvs = '-e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 -e COMPOSER_IGNORE_PLATFORM_REQS=1';
 
-        return "docker run --rm --init -v $path:/var/www/html -w /var/www/html --user root $baseEnvs $envs {$image} ";
+        // Disable IPv6 inside the container to avoid Composer DNS timeouts
+        // when the Docker bridge has no IPv6 routing (common on WSL2).
+        return "docker run --rm --init --sysctl net.ipv6.conf.all.disable_ipv6=1 -v $path:/var/www/html -w /var/www/html --user root $baseEnvs $envs {$image} ";
     }
 
     protected function imageExists(string $image): bool

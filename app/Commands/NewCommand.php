@@ -263,8 +263,10 @@ class NewCommand extends Command
         $pkgCommand = $this->getNodeInstallationCommand($image);
         $baseDir = dirname($projectPath);
 
-        $cmd = 'docker run --rm -it -v '.$baseDir.":/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
-               "sh -c '$pkgCommand && composer global require laravel/installer && $(composer global config bin-dir --absolute)/laravel new $appName $extraFlags && chown -R $uid:$gid {$appName}'";
+        // Disable IPv6 inside the container to avoid Composer DNS timeouts
+        // when the Docker bridge has no IPv6 routing (common on WSL2).
+        $cmd = 'docker run --rm -it --sysctl net.ipv6.conf.all.disable_ipv6=1 -v '.$baseDir.":/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
+               "sh -c '$pkgCommand && composer global require laravel/installer && \$(composer global config bin-dir --absolute)/laravel new $appName $extraFlags && chown -R $uid:$gid {$appName}'";
 
         passthru($cmd);
     }
