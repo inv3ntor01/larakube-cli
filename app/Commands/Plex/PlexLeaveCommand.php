@@ -49,7 +49,7 @@ class PlexLeaveCommand extends Command
         }
 
         $appName = $config->getName();
-        $tenant = $this->plexTenantIdentifier($appName);
+        $tenant = $this->plexTenantIdentifier($appName, $env);
 
         // Target the env's own Commons context (no switching); fall back to the
         // current context if no deploy target is recorded.

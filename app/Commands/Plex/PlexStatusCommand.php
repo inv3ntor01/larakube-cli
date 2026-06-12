@@ -86,7 +86,7 @@ class PlexStatusCommand extends Command
         // Tenants from the registry (highlight this app if it's one).
         $tenants = $this->getRegistry()['tenants'] ?? [];
         // Highlight "this app" only when run inside a project.
-        $self = $config !== null ? $this->plexTenantIdentifier($config->getName()) : null;
+        $self = $config !== null ? $this->plexTenantIdentifier($config->getName(), (string) $this->argument('environment')) : null;
 
         $this->laraKubeNewLine();
         if (empty($tenants)) {

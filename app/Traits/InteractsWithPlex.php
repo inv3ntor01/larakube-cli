@@ -54,12 +54,12 @@ trait InteractsWithPlex
         // version stays in lockstep with ScoutDriver instead of a stale literal).
         $defaults = [
             'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'mysql' => ['image' => DatabaseDriver::MYSQL->getDockerImage(), 'port' => DatabaseDriver::MYSQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'mariadb' => ['image' => DatabaseDriver::MARIADB->getDockerImage(), 'port' => DatabaseDriver::MARIADB->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
-            'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
-            'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(), 'port' => StorageDriver::SEAWEEDFS->port(), 'storage' => '10Gi'],
-            'minio' => ['image' => StorageDriver::MINIO->getDockerImage(), 'port' => StorageDriver::MINIO->port(), 'storage' => '10Gi'],
+            'mysql' => ['image' => DatabaseDriver::MYSQL->getDockerImage(),       'port' => DatabaseDriver::MYSQL->dbPort(),       'storage' => '10Gi', 'memory' => '1Gi'],
+            'mariadb' => ['image' => DatabaseDriver::MARIADB->getDockerImage(),     'port' => DatabaseDriver::MARIADB->dbPort(),     'storage' => '10Gi', 'memory' => '1Gi'],
+            'redis' => ['image' => CacheDriver::REDIS->getDockerImage(),          'port' => CacheDriver::REDIS->dbPort(),                               'memory' => '128Mi'],
+            'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(),    'port' => ScoutDriver::MEILISEARCH->port(),      'storage' => '5Gi',  'memory' => '512Mi'],
+            'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(),    'port' => StorageDriver::SEAWEEDFS->port(),      'storage' => '10Gi', 'memory' => '512Mi'],
+            'minio' => ['image' => StorageDriver::MINIO->getDockerImage(),        'port' => StorageDriver::MINIO->port(),          'storage' => '10Gi', 'memory' => '512Mi'],
         ];
 
         $given = $spec['services'] ?? [];
@@ -160,10 +160,14 @@ trait InteractsWithPlex
     }
 
     /**
-     * Turn an app name into a safe SQL identifier reused for the tenant's
-     * database AND login role (e.g. "app-one" → "app_one"). Pure.
+     * Turn an app name (+ optional env) into a safe SQL identifier reused for
+     * the tenant's database AND login role (e.g. "app-one" → "app_one").
+     * For non-production envs the env is appended so the same app can join the
+     * Commons under two separate environments (e.g. "app_one_staging"). The
+     * production env keeps the un-suffixed form for backwards compatibility with
+     * existing single-env Plex setups. Pure.
      */
-    public function plexTenantIdentifier(string $appName): string
+    public function plexTenantIdentifier(string $appName, string $env = 'production'): string
     {
         $id = strtolower(trim($appName));
         $id = (string) preg_replace('/[^a-z0-9]+/', '_', $id);
@@ -172,6 +176,13 @@ trait InteractsWithPlex
         // SQL identifiers must start with a letter; prefix if not.
         if ($id === '' || ! preg_match('/^[a-z]/', $id)) {
             $id = 'app_'.$id;
+        }
+
+        // Non-production envs get an env suffix so staging/develop/etc. each
+        // get their own isolated DB, Redis slot, and S3 bucket on the Commons.
+        if ($env !== 'production') {
+            $suffix = '_'.preg_replace('/[^a-z0-9]+/', '_', strtolower(trim($env)));
+            $id = substr($id, 0, 63 - strlen($suffix)).$suffix;
         }
 
         return substr($id, 0, 63); // Postgres identifier length cap.

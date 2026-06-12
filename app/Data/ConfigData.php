@@ -43,7 +43,7 @@ class ConfigData extends Data
 
     /** Conservative default pod resources, applied to every app pod and overridable per env/component. */
     const array DEFAULT_RESOURCES = [
-        'requests' => ['cpu' => '100m', 'memory' => '256Mi'],
+        'requests' => ['cpu' => '50m', 'memory' => '128Mi'],
         'limits' => ['cpu' => '1', 'memory' => '1Gi'],
     ];
 

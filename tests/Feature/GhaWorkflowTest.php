@@ -39,6 +39,7 @@ test('GHA workflow generation uses correct literal injection syntax', function (
             'e_data' => '${{ env.E_DATA }}',
             'image_latest' => '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:latest',
             'image_sha' => '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}',
+            'composer_cache_key' => "composer-\${{ hashFiles('composer.lock') }}",
             'dockerhub_user' => '${{ secrets.DOCKERHUB_USERNAME }}',
             'dockerhub_token' => '${{ secrets.DOCKERHUB_TOKEN }}',
         ],

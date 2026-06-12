@@ -146,9 +146,9 @@ spec:
           ports:
             - containerPort: {{ $spec['services'][$engine]['port'] }}
           env:
-            # MySQL's root creds ARE the admin login the CLI uses to provision
-            # tenant DBs (commonsAdminClient). MariaDB honours MYSQL_ROOT_PASSWORD
-            # too, so the in-pod client command stays identical across engines.
+            # Root creds the CLI uses to provision tenant DBs (commonsAdminClient).
+            # MariaDB 11+ uses the `mariadb` binary; MySQL uses `mysql`. Both
+            # engines honour MYSQL_ROOT_PASSWORD as the root password env var.
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -226,7 +226,7 @@ spec:
               memory: "32Mi"
               cpu: "50m"
             limits:
-              memory: "128Mi"
+              memory: "{{ $spec['services']['redis']['memory'] }}"
               cpu: "250m"
           readinessProbe:
             exec:
@@ -310,7 +310,7 @@ spec:
               memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "{{ $spec['services']['meilisearch']['memory'] }}"
               cpu: "500m"
           volumeMounts:
             - name: data
@@ -384,7 +384,7 @@ spec:
               memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "{{ $spec['services']['seaweedfs']['memory'] }}"
               cpu: "500m"
           volumeMounts:
             - name: data
@@ -500,7 +500,7 @@ spec:
               memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "{{ $spec['services']['minio']['memory'] }}"
               cpu: "500m"
           readinessProbe:
             httpGet:

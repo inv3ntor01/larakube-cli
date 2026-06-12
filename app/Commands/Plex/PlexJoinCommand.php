@@ -52,7 +52,7 @@ class PlexJoinCommand extends Command
         }
 
         $appName = $config->getName();
-        $tenant = $this->plexTenantIdentifier($appName);
+        $tenant = $this->plexTenantIdentifier($appName, $env);
 
         // 1. Which of this app's services are Commons-eligible?
         $services = $this->resolveTenantServices($config);
@@ -464,7 +464,7 @@ class PlexJoinCommand extends Command
         $this->laraKubeInfo('✅ Joined the Commons.');
         $this->line('  Next:');
         $this->line('    1. <fg=yellow>git add . && git commit</> (blueprint + regenerated manifests now target the Commons)');
-        $this->line("    2. <fg=yellow>larakube gha:configure {$env}</> (re-upload the .env.{$env} secret)");
+        $this->line("    2. <fg=yellow>larakube cloud:configure:gha {$env}</> (re-upload the .env.{$env} secret)");
         $this->line('    3. Deploy as usual — the app now uses the Commons, not its own pods.');
     }
 }

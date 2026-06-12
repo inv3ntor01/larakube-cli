@@ -17,13 +17,13 @@ test('getResources merges code default <- env default <- component override', fu
 
     // web: code-default cpu, env-default memory.
     expect($config->getResources('production', 'web'))->toBe([
-        'requests' => ['cpu' => '100m', 'memory' => '512Mi'],
+        'requests' => ['cpu' => '50m', 'memory' => '512Mi'],
         'limits' => ['cpu' => '1', 'memory' => '1Gi'],
     ]);
 
     // horizon: inherits the env default, overrides only its memory limit.
     expect($config->getResources('production', 'horizon'))->toBe([
-        'requests' => ['cpu' => '100m', 'memory' => '512Mi'],
+        'requests' => ['cpu' => '50m', 'memory' => '512Mi'],
         'limits' => ['cpu' => '1', 'memory' => '2Gi'],
     ]);
 
