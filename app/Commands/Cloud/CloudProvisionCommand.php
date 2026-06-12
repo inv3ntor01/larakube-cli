@@ -187,7 +187,10 @@ class CloudProvisionCommand extends Command
     grep -qxF 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
 
     echo "Installing K3s..."
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={$k3sVersion} sh -s - --disable=traefik --write-kubeconfig-mode 644
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={$k3sVersion} sh -s - \
+      --disable=traefik \
+      --write-kubeconfig-mode 644 \
+      --kubelet-arg=fail-swap-on=false
     BASH;
 
         $this->runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand);

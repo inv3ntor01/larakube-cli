@@ -148,7 +148,7 @@ trait ResolvesEnvironmentContext
         ];
         ConfigData::from($data)->saveToFile($projectPath);
 
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future commands won't ask again.");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud) — future commands won't ask again.");
 
         return $this->getProjectConfig($projectPath);
     }
@@ -192,7 +192,7 @@ trait ResolvesEnvironmentContext
         ];
 
         ConfigData::from($data)->saveToFile($projectPath);
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future commands won't ask again.");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud) — future commands won't ask again.");
 
         return $this->getProjectConfig($projectPath);
     }
@@ -227,7 +227,7 @@ trait ResolvesEnvironmentContext
         }
 
         ConfigData::from($data)->saveToFile($projectPath);
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud).");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud).");
 
         return $this->getProjectConfig($projectPath);
     }

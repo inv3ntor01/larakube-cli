@@ -587,7 +587,8 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return match ($this) {
             self::POSTGRESQL => 'psql -U postgres -v ON_ERROR_STOP=1',
-            self::MYSQL, self::MARIADB => 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            self::MYSQL => 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            self::MARIADB => 'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD"',
             default => '',
         };
     }
@@ -601,7 +602,8 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return match ($this) {
             self::POSTGRESQL => "pg_dump -U postgres --no-owner {$db}",
-            self::MYSQL, self::MARIADB => "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            self::MYSQL => "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            self::MARIADB => "mariadb-dump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
             default => '',
         };
     }

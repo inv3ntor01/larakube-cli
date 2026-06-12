@@ -62,7 +62,60 @@ class AboutCommand extends Command
 
         table(['Property', 'Configuration'], $dnaRows);
 
-        // 2. Live Cluster Status
+        // 2. Environments Overview
+        $this->newLine();
+        $this->laraKubeInfo('Environments');
+
+        $envRows = [];
+        foreach ($config->getEnvironments() as $env) {
+            $envData = $config->getEnvironment($env);
+            $cloud = $envData?->cloud;
+
+            if ($env === 'local') {
+                $type = 'Local';
+            } elseif ($cloud?->isManaged()) {
+                $provider = strtoupper($cloud->provider ?? 'Managed');
+                $type = $cloud->context ? "{$provider} ({$cloud->context})" : $provider;
+            } elseif ($cloud?->ip) {
+                $type = "VPS ({$cloud->ip})";
+            } else {
+                $type = '<fg=gray>—</>';
+            }
+
+            $strategy = $config->getStrategy($env);
+            $strategyLabel = match ($strategy->value) {
+                'single-node' => 'Single-Node',
+                'multi-node-ha' => 'Multi-Node HA',
+                default => $strategy->value,
+            };
+
+            $ingress = $config->getIngress($env);
+
+            $registry = $envData?->registry;
+            $registryLabel = $registry
+                ? match ($registry->provider->value) {
+                    'ghcr' => 'GHCR',
+                    'dockerhub' => 'Docker Hub',
+                    default => $registry->provider->value,
+                }
+            : '<fg=gray>—</>';
+
+            $hostCount = count($envData?->hosts ?? []);
+            $hostsLabel = $hostCount > 0 ? (string) $hostCount : '<fg=gray>—</>';
+
+            $envRows[] = [
+                $env === $environment ? "<options=bold>{$env}</>" : $env,
+                $type,
+                $strategyLabel,
+                $ingress->getLabel(),
+                $registryLabel,
+                $hostsLabel,
+            ];
+        }
+
+        table(['Env', 'Type', 'Strategy', 'Ingress', 'Registry', 'Hosts'], $envRows);
+
+        // 3. Live Cluster Status
         $this->newLine();
         $this->laraKubeInfo("Live Cluster Status ($environment)");
 
@@ -92,7 +145,7 @@ class AboutCommand extends Command
             table(['Service', 'Status', 'Restarts', 'Age'], $statusRows);
         }
 
-        // 3. Project URLs
+        // 4. Project URLs
         $this->newLine();
         $this->laraKubeInfo('Active Service Links');
         $hosts = $config->getAllHosts($environment);
