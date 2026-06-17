@@ -1,7 +1,5 @@
 <?php
 
-use Laravel\Prompts\Prompt;
-
 function portableProject(): string
 {
     $tmp = sys_get_temp_dir().'/larakube-portable-'.uniqid();
@@ -83,8 +81,10 @@ test('portable command keeps an existing file when the user declines', function 
     chdir($tmp);
 
     try {
-        Prompt::fallbackUsing(fn () => false);
+        // Set env var to auto-decline prompts (enables subprocess testing)
+        putenv('LARAKUBE_TEST_SKIP_PROMPTS=1');
         $this->artisan('portable')->assertExitCode(0);
+        putenv('LARAKUBE_TEST_SKIP_PROMPTS'); // clear
 
         // The customized script is preserved...
         expect(file_get_contents("$tmp/larakube.sh"))->toContain('# my customized version');
@@ -94,7 +94,7 @@ test('portable command keeps an existing file when the user declines', function 
         chdir($original);
         exec('rm -rf '.escapeshellarg($tmp));
     }
-})->skip('Prompt in subprocess needs stdin fixture');
+});
 
 test('portable command --force overwrites an existing script', function () {
     $original = getcwd();
