@@ -48,7 +48,9 @@ class PortableCommand extends Command
             $dest = "{$projectPath}/{$name}";
 
             if (File::exists($dest) && ! $this->option('force')) {
-                if (! confirm("{$name} already exists. Overwrite it?", default: false)) {
+                // Auto-decline in CI/test environments to enable non-interactive testing
+                $autoDecline = getenv('LARAKUBE_TEST_SKIP_PROMPTS') || app()->runningUnitTests();
+                if ($autoDecline || ! confirm("{$name} already exists. Overwrite it?", default: false)) {
                     $this->laraKubeInfo("Skipped {$name} (kept your version).");
 
                     continue;
