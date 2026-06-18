@@ -53,6 +53,9 @@ USER root
 ############################################
 FROM base AS deploy
 
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:80/health || exit 1
+
 # Switch to root to fix permissions
 USER root
 @if($config->hasFeature(\App\Enums\LaravelFeature::SSR))
