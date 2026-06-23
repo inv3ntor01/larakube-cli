@@ -4,6 +4,7 @@ namespace App\Commands;
 
 use App\Contracts\HasReloadCommand;
 use App\Data\ConfigData;
+use App\Traits\DeploysMonitoringExporters;
 use App\Traits\EnsuresHostDependencies;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\HasConsoleInteraction;
@@ -16,6 +17,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ManagesCompanions;
 use App\Traits\ManagesLocalCa;
 
 use function Laravel\Prompts\confirm;
@@ -25,7 +27,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {
-    use EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesLocalCa;
+    use DeploysMonitoringExporters, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
 
     /**
      * The name and signature of the console command.
@@ -274,13 +276,12 @@ class UpCommand extends Command
                 }
             }
 
-            // Sync this app's .kube cert into the Traefik pool after any install — the
-            // traefik namespace is now guaranteed to exist (or the user declined install).
-            $this->withSpin('Syncing local TLS certificates...', function () use ($appName) {
-                $this->refreshTraefikCerts($appName);
-
-                return true;
-            });
+            // Re-apply every cluster-wide, TLD-carrying shared artifact (certs +
+            // the SharedClusterService registry: Traefik dashboard, Mailpit,
+            // Console, Grafana) so a config:tld change propagates. Each step is
+            // internally guarded + idempotent. Add new shared globals to the
+            // SharedClusterService enum — this call site never changes.
+            $this->reconcileSharedCluster($config);
         }
 
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
@@ -420,6 +421,13 @@ class UpCommand extends Command
 
         passthru("kubectl apply -k $path");
 
+        // 5a. If monitoring is active, deploy service-level exporters into this namespace
+        if ($this->isMonitoringActive()) {
+            $this->withSpin('Wiring monitoring exporters...', function () use ($config, $namespace) {
+                $this->ensureMonitoringExporters($config, $namespace);
+            });
+        }
+
         // 5. Restart deployments to pick up new ConfigMap/Secret changes
         $this->laraKubeInfo('Restarting deployments to apply potential configuration changes...');
         passthru("kubectl rollout restart deployment -n $namespace");
@@ -440,6 +448,15 @@ class UpCommand extends Command
         }
 
         $this->renderHotReloadTip($config, $environment);
+
+        if ($environment === 'local') {
+            $this->ensureProjectCompanions($config, $appName);
+        }
+
+        $this->newLine();
+        $this->showServiceLinks($config, $environment);
+
+        $this->showCompanionAccess($config, $appName, $environment);
 
         $this->renderStarPrompt();
 

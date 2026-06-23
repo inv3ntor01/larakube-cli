@@ -2,11 +2,14 @@
 
 namespace App\Traits;
 
+use App\Data\GlobalConfigData;
+use App\Enums\CompanionDriver;
+
 trait ManagesLocalCa
 {
     protected function getLocalCaDir(): string
     {
-        return ((string) (getenv('HOME') ?: sys_get_temp_dir())).'/.larakube/certificates';
+        return home_path('.larakube/certificates');
     }
 
     protected function getLocalCaCertPath(): string
@@ -32,6 +35,24 @@ trait ManagesLocalCa
     protected function getAppKeyPath(string $appName): string
     {
         return $this->getAppCertsDir()."/{$appName}-dev.key";
+    }
+
+    protected function getAppCertTldPath(string $appName): string
+    {
+        return $this->getAppCertsDir()."/{$appName}-dev.tld";
+    }
+
+    /**
+     * The TLD an app's local cert was actually issued for — read from the sidecar
+     * written alongside it, so diagnostics (trust:check) can verify a per-project
+     * TLD override correctly instead of assuming every app uses the global TLD.
+     * Falls back to the global default for certs generated before this existed.
+     */
+    protected function getAppCertTld(string $appName): string
+    {
+        $path = $this->getAppCertTldPath($appName);
+
+        return file_exists($path) ? trim((string) file_get_contents($path)) : GlobalConfigData::load()->getLocalTld();
     }
 
     protected function getSystemCertPath(): string
@@ -71,31 +92,39 @@ trait ManagesLocalCa
     }
 
     /**
-     * Ensure the per-app cert exists for {appName}.kube + *.{appName}.kube.
+     * Ensure the per-app cert exists for {appName}.{tld} + *.{appName}.{tld}.
      * Regenerates if missing, expiring within 30 days, or covering the wrong TLD
      * (e.g. an old .dev.test cert from Phase 1 that needs upgrading to .kube).
+     * $tld defaults to the developer's global TLD; pass the project's own
+     * getLocalTld() so a project-pinned TLD override gets a matching cert.
      */
-    protected function ensureAppCertExists(string $appName): void
+    protected function ensureAppCertExists(string $appName, ?string $tld = null): void
     {
         $this->ensureLocalCaExists();
         @mkdir($this->getAppCertsDir(), 0700, true);
 
+        $tld = $tld ?? GlobalConfigData::load()->getLocalTld();
         $crt = $this->getAppCertPath($appName);
         $key = $this->getAppKeyPath($appName);
 
         if (file_exists($crt) && file_exists($key)
             && $this->certIsValid($crt)
-            && $this->certCoversHost($crt, "{$appName}.kube")) {
+            && $this->certCoversHost($crt, "{$appName}.{$tld}")) {
+            // Refresh the sidecar even when the cert itself didn't need
+            // regenerating, so trust:check stays accurate for certs generated
+            // before this was tracked.
+            file_put_contents($this->getAppCertTldPath($appName), $tld);
+
             return;
         }
 
-        $this->generateAppCert($appName);
+        $this->generateAppCert($appName, $tld);
     }
 
     /**
-     * Ensure the system cert exists covering console.kube, traefik.kube, and
-     * future global companion hosts. Regenerates if missing, expiring, or covering
-     * the wrong TLD.
+     * Ensure the system cert exists covering console.{tld}, traefik.{tld},
+     * mailpit.{tld}, grafana.{tld}, and the global companion hosts. Regenerates
+     * if missing, expiring, or covering the wrong TLD.
      */
     protected function ensureSystemCertExists(): void
     {
@@ -107,19 +136,20 @@ trait ManagesLocalCa
 
         if (file_exists($crt) && file_exists($key)
             && $this->certIsValid($crt)
-            && $this->certCoversHost($crt, 'console.kube')) {
+            && $this->certCoversHost($crt, 'console.'.GlobalConfigData::load()->getLocalTld())) {
             return;
         }
 
         $this->generateSystemCert();
     }
 
-    protected function generateAppCert(string $appName): void
+    protected function generateAppCert(string $appName, ?string $tld = null): void
     {
         $dir = $this->getAppCertsDir();
         $csr = "{$dir}/{$appName}-dev.csr";
         $cnf = "{$dir}/{$appName}-dev.cnf";
 
+        $tld = $tld ?? GlobalConfigData::load()->getLocalTld();
         $cnfContent = <<<CNF
 [req]
 distinguished_name = req_distinguished_name
@@ -127,15 +157,16 @@ req_extensions     = v3_req
 prompt             = no
 
 [req_distinguished_name]
-CN = {$appName}.kube
+CN = {$appName}.{$tld}
 
 [v3_req]
 basicConstraints = CA:FALSE
 keyUsage         = nonRepudiation, digitalSignature, keyEncipherment
-subjectAltName   = DNS:{$appName}.kube,DNS:*.{$appName}.kube
+subjectAltName   = DNS:{$appName}.{$tld},DNS:*.{$appName}.{$tld}
 CNF;
 
         $this->writeCert($cnf, $cnfContent, $csr, $this->getAppKeyPath($appName), $this->getAppCertPath($appName));
+        file_put_contents($this->getAppCertTldPath($appName), $tld);
     }
 
     protected function generateSystemCert(): void
@@ -144,10 +175,13 @@ CNF;
         $csr = "{$dir}/system-dev.csr";
         $cnf = "{$dir}/system-dev.cnf";
 
-        $sans = implode(',', array_map(
-            fn ($h) => "DNS:{$h}",
-            ['console.kube', 'traefik.kube', 'phpmyadmin.kube', 'mailpit.kube', 'redisinsight.kube'],
-        ));
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $companionHosts = array_map(fn ($c) => "{$c->value}.{$tld}", CompanionDriver::cases());
+        // mailpit.{tld} (shared catch-all SMTP UI) and grafana.{tld} (shared
+        // monitoring dashboard) are global hosts in larakube-shared, like
+        // console/traefik, so the default cert must cover them.
+        $systemHosts = ["console.{$tld}", "traefik.{$tld}", "mailpit.{$tld}", "grafana.{$tld}", ...$companionHosts];
+        $sans = implode(',', array_map(fn ($h) => "DNS:{$h}", $systemHosts));
 
         $cnfContent = <<<CNF
 [req]
@@ -156,7 +190,7 @@ req_extensions     = v3_req
 prompt             = no
 
 [req_distinguished_name]
-CN = console.kube
+CN = console.{$tld}
 
 [v3_req]
 basicConstraints = CA:FALSE
@@ -224,20 +258,52 @@ CNF;
 
     protected function certIsValid(string $crtPath): bool
     {
-        $expiry = shell_exec('openssl x509 -enddate -noout -in '.escapeshellarg($crtPath).' 2>/dev/null');
-        if (! $expiry) {
-            return false;
-        }
-        $expiryTs = strtotime(str_replace('notAfter=', '', trim($expiry)));
+        $parsed = $this->parseCert($crtPath);
 
-        return $expiryTs !== false && $expiryTs > time() + (30 * 86400);
+        return $parsed !== null && $parsed['validTo_time_t'] > time() + (30 * 86400);
+    }
+
+    /** Cert expiry as a Unix timestamp, or null if the cert can't be read/parsed. */
+    protected function getCertExpiry(string $crtPath): ?int
+    {
+        return $this->parseCert($crtPath)['validTo_time_t'] ?? null;
     }
 
     protected function certCoversHost(string $crtPath, string $host): bool
     {
-        $text = shell_exec('openssl x509 -text -noout -in '.escapeshellarg($crtPath).' 2>/dev/null');
+        $parsed = $this->parseCert($crtPath);
+        if ($parsed === null) {
+            return false;
+        }
 
-        return $text !== null && str_contains($text, $host);
+        if (($parsed['subject']['CN'] ?? null) === $host) {
+            return true;
+        }
+
+        $san = $parsed['extensions']['subjectAltName'] ?? '';
+
+        return str_contains($san, "DNS:{$host}");
+    }
+
+    /**
+     * Parse a cert in-process via PHP's openssl extension instead of shelling out
+     * to the openssl CLI. trust:check inspects every locally-issued cert (one per
+     * project), and forking a subprocess per check doesn't scale with the number
+     * of projects — it also makes the check needlessly sensitive to transient
+     * subprocess/fork pressure on a busy machine.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function parseCert(string $crtPath): ?array
+    {
+        $contents = @file_get_contents($crtPath);
+        if (! $contents) {
+            return null;
+        }
+
+        $parsed = @openssl_x509_parse($contents);
+
+        return $parsed ?: null;
     }
 
     private function writeCert(string $cnf, string $cnfContent, string $csr, string $keyPath, string $crtPath): void

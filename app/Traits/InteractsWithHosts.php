@@ -2,11 +2,13 @@
 
 namespace App\Traits;
 
+use App\Data\GlobalConfigData;
+
 use function Laravel\Prompts\confirm;
 
 trait InteractsWithHosts
 {
-    use DetectsWsl, InteractsWithProjectConfig, LaraKubeOutput;
+    use DetectsWsl, InteractsWithOs, InteractsWithProjectConfig, InteractsWithTrust, LaraKubeOutput;
 
     /**
      * Check and optionally update the hosts file(s) based on project context.
@@ -20,6 +22,7 @@ trait InteractsWithHosts
     {
         $projectPath = getcwd();
         $appName = $customAppName ?? basename($projectPath);
+        $config = null;
 
         if (empty($customHosts)) {
             $config = $this->getProjectConfig($projectPath);
@@ -40,9 +43,24 @@ trait InteractsWithHosts
             return;
         }
 
-        // If dnsmasq is wildcarding *.kube already, individual /etc/hosts entries
-        // are redundant — skip the prompt entirely.
-        if ($this->dnsmasqCoversKube()) {
+        // If dnsmasq is already wildcarding this project's TLD (its own pinned
+        // override, or the developer's global default), individual /etc/hosts
+        // entries are redundant — skip the prompt entirely.
+        $tld = $config?->getLocalTld() ?? GlobalConfigData::load()->getLocalTld();
+
+        if ($this->dnsmasqCoversKube($tld)) {
+            return;
+        }
+
+        // dnsmasq is set up but doesn't know about this TLD yet (e.g. this project
+        // pinned a different TLD than the global default) — offer to extend it
+        // instead of falling straight to /etc/hosts. Additive only: the TLDs it
+        // already covers stay covered.
+        if ($this->isDnsmasqInstalled()
+            && confirm("dnsmasq is set up but doesn't cover .{$tld} yet — extend it to cover this project too? (requires sudo)")
+        ) {
+            $this->configureDnsmasq($tld);
+
             return;
         }
 
@@ -55,7 +73,7 @@ trait InteractsWithHosts
         // 🛡 SMART IP DETECTION
         // On Mac and Windows, Docker Desktop/OrbStack maps published ports to 127.0.0.1.
         // On Linux, we use the actual LoadBalancer IP because it's natively routable.
-        $isLinux = PHP_OS_FAMILY === 'Linux';
+        $isLinux = $this->isLinux();
         $externalIp = '127.0.0.1';
 
         if ($isLinux) {
@@ -224,16 +242,18 @@ trait InteractsWithHosts
     }
 
     /**
-     * True when dnsmasq is already wildcarding *.kube → 127.0.0.1 locally,
+     * True when dnsmasq is already wildcarding *.{tld} → 127.0.0.1 locally,
      * meaning individual /etc/hosts entries would be redundant.
      */
-    protected function dnsmasqCoversKube(): bool
+    protected function dnsmasqCoversKube(?string $tld = null): bool
     {
-        if (PHP_OS_FAMILY === 'Darwin') {
-            if (! file_exists('/etc/resolver/kube')) {
+        $tld = $tld ?? GlobalConfigData::load()->getLocalTld();
+
+        if ($this->isDarwin()) {
+            if (! file_exists('/etc/resolver/'.$tld)) {
                 return false;
             }
-            $result = shell_exec('dscacheutil -q host -a name larakube-probe.kube 2>/dev/null');
+            $result = shell_exec('dscacheutil -q host -a name larakube-probe.'.$tld.' 2>/dev/null');
 
             return $result !== null && str_contains((string) $result, '127.0.0.1');
         }
@@ -241,7 +261,7 @@ trait InteractsWithHosts
         if (! file_exists('/etc/dnsmasq.d/larakube.conf')) {
             return false;
         }
-        $result = shell_exec('getent hosts larakube-probe.kube 2>/dev/null');
+        $result = shell_exec('getent hosts larakube-probe.'.$tld.' 2>/dev/null');
 
         return $result !== null && str_contains((string) $result, '127.0.0.1');
     }

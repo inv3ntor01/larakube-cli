@@ -2,9 +2,11 @@
 
 namespace App\Traits;
 
+use App\Data\ConfigData;
 use App\State;
 use Illuminate\Support\Carbon;
 
+use function Laravel\Prompts\table;
 use function Termwind\render;
 
 trait LaraKubeOutput
@@ -106,6 +108,33 @@ trait LaraKubeOutput
                 <span class="ml-1 text-blue-500">{$message}</span>
             </div>
         HTML);
+    }
+
+    /**
+     * Render the project's external service URLs ("Active Service Links") as a
+     * Prompts table — the same view `about` shows. Lets `larakube up` (and any
+     * other caller) surface vanity URLs inline so users don't have to run a
+     * second command. Returns false (rendering nothing) when the environment
+     * has no hosts, so callers can supply their own empty-state message.
+     */
+    protected function showServiceLinks(ConfigData $config, string $environment): bool
+    {
+        $hosts = $config->getAllHosts($environment);
+
+        if ($hosts === []) {
+            return false;
+        }
+
+        $this->laraKubeInfo('Active Service Links');
+
+        $rows = [];
+        foreach ($hosts as $host => $label) {
+            $rows[] = [$label, "<fg=blue>https://{$host}</>"];
+        }
+
+        table(['Service', 'URL'], $rows);
+
+        return true;
     }
 
     /**

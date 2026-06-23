@@ -27,7 +27,10 @@ class BundleBuildCommand extends Command
                             {--update : Build a lightweight update bundle (skips K3s and dependency images)}
                             {--tar : Compress the bundle into a .tar.gz file after assembly}
                             {--k9s : Bundle the k9s terminal UI alongside the kit}
-                            {--dry-run : Show the plan (images, layout) without building or saving anything}';
+                            {--dry-run : Show the plan (images, layout) without building or saving anything}
+                            {--ca-cert= : Path to company CA certificate (.crt/.pem) — installs company CA on the target server}
+                            {--ca-key= : Path to company CA private key — enables full-sign mode (server cert signed by company CA)}
+                            {--tunnel : Bundle cloudflared for Cloudflare Tunnel — exposes a home/CGNAT server without port-forwarding}';
 
     protected $description = 'Assemble a self-contained air-gapped install kit (images + manifests) for an on-prem customer';
 
@@ -107,6 +110,42 @@ class BundleBuildCommand extends Command
             $this->line('    • <fg=cyan>'.$img.'</>  <fg=gray>→ images/'.$this->imageTarName($img).'</>');
         }
         $this->newLine();
+
+        // Validate company CA options before doing any real work.
+        $caCertPath = (string) $this->option('ca-cert');
+        $caKeyPath = (string) $this->option('ca-key');
+
+        if ($caKeyPath !== '' && $caCertPath === '') {
+            $this->laraKubeError('--ca-key requires --ca-cert to be provided as well.');
+
+            return 1;
+        }
+
+        if ($caCertPath !== '' && ! file_exists($caCertPath)) {
+            $this->laraKubeError("CA certificate not found: {$caCertPath}");
+
+            return 1;
+        }
+
+        if ($caKeyPath !== '' && ! file_exists($caKeyPath)) {
+            $this->laraKubeError("CA private key not found: {$caKeyPath}");
+
+            return 1;
+        }
+
+        $caMode = match (true) {
+            $caCertPath !== '' && $caKeyPath !== '' => 'full_sign',
+            $caCertPath !== '' => 'trust_only',
+            default => null,
+        };
+
+        if ($caMode !== null) {
+            $modeLabel = $caMode === 'full_sign' ? 'full-sign (server cert signed by company CA)' : 'trust-only (company CA installed on target)';
+            $this->laraKubeInfo("Company CA mode: {$modeLabel}");
+            if ($caMode === 'full_sign') {
+                $this->line('  <fg=yellow>⚠  The bundle will contain your company CA private key. Treat this archive as sensitive.</>');
+            }
+        }
 
         if ($this->option('dry-run')) {
             $this->laraKubeInfo('Dry run — nothing built or saved.');
@@ -247,15 +286,38 @@ class BundleBuildCommand extends Command
 
         passthru('chmod +x '.escapeshellarg("$outDir/larakube"));
 
+        if ($this->option('tunnel')) {
+            $this->laraKubeInfo("Downloading cloudflared for Cloudflare Tunnel ({$arch})...");
+            $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{$arch}";
+            passthru('curl -sL '.escapeshellarg($cloudflaredUrl).' -o '.escapeshellarg("$outDir/cloudflared"));
+            passthru('chmod +x '.escapeshellarg("$outDir/cloudflared"));
+        }
+
         // Write clean-slate reset script (always included)
         file_put_contents("$outDir/reset.sh", $this->resetScript());
         passthru('chmod +x '.escapeshellarg("$outDir/reset.sh"));
+
+        // 5a. Company CA — copy into ca/ so bundle:install can find it without flags.
+        if ($caMode !== null) {
+            @mkdir("$outDir/ca", 0700, true);
+            copy($caCertPath, "$outDir/ca/company-ca.crt");
+            if ($caMode === 'full_sign') {
+                copy($caKeyPath, "$outDir/ca/company-ca.key");
+                passthru('chmod 600 '.escapeshellarg("$outDir/ca/company-ca.key"));
+            }
+        }
 
         // 5. bundle.json
         $manifestData = $this->bundleManifest($config, $env, $arch, $allImages);
         $manifestData['k3sVersion'] = $k3sVersion;
         if ($reverbAppKey !== null) {
             $manifestData['reverbAppKey'] = $reverbAppKey;
+        }
+        if ($caMode !== null) {
+            $manifestData['caMode'] = $caMode;
+        }
+        if ($this->option('tunnel')) {
+            $manifestData['tunnelEnabled'] = true;
         }
         file_put_contents(
             "$outDir/bundle.json",
@@ -344,6 +406,16 @@ if [ -f /usr/local/bin/k9s ]; then
 else
     echo "    k9s not installed, skipping."
 fi
+
+echo "==> Removing cloudflared tunnel..."
+if systemctl is-active --quiet cloudflared 2>/dev/null; then
+    systemctl stop cloudflared
+fi
+systemctl disable cloudflared 2>/dev/null || true
+rm -f /etc/systemd/system/cloudflared.service
+rm -f /usr/local/bin/cloudflared
+systemctl daemon-reload 2>/dev/null || true
+echo "    Done."
 
 echo "==> Removing larakube-reset..."
 rm -f /usr/local/bin/larakube-reset

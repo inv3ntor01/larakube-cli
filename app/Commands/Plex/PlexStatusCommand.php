@@ -34,11 +34,7 @@ class PlexStatusCommand extends Command
             $this->plexContext = (string) $this->option('context');
         } elseif ($config !== null) {
             $env = (string) $this->argument('environment');
-            if ($env === 'local') {
-                $this->laraKubeError('Plex is a cloud topology — pick a cloud environment.');
-
-                return 1;
-            }
+            // Local → null context = current kubectl context (K3D). No error; status works.
             $this->plexContext = $this->environmentContextOrCurrent($config, $env);
         } else {
             // Outside a project (no env config to map): pick the cluster, like plex:init.

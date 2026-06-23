@@ -2,13 +2,14 @@
 
 namespace App\Commands\Traefik;
 
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class SetupCommand extends Command
 {
-    use InteractsWithTraefik, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithTraefik, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -26,6 +27,13 @@ class SetupCommand extends Command
     public function handle(): int
     {
         $this->renderHeader();
+
+        if (! $this->confirmLocalOnlyAction('Traefik + the shared Mailpit companion')) {
+            $this->laraKubeInfo('Setup cancelled.');
+
+            return 0;
+        }
+
         $this->setupTraefik();
         $this->laraKubeInfo('✅ Traefik setup complete.');
 

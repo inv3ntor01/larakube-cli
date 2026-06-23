@@ -92,21 +92,6 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
                 file_put_contents("$k8sPath/{$dest}", $patch);
             }
         }
-
-        // Write companion manifests (Local only)
-        if ($this->hasCompanion() && $config->withCompanions) {
-            $compDest = "overlays/local/{$this->value}-companion.yaml";
-            if (! $config->isLocked(".infrastructure/k8s/{$compDest}")) {
-                $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
-                file_put_contents("$k8sPath/{$compDest}", $content);
-            }
-
-            $ingressDest = "overlays/local/{$this->value}-companion-ingress.yaml";
-            if (! $config->isLocked(".infrastructure/k8s/{$ingressDest}")) {
-                $ingress = view('k8s.companion.ingress', ['config' => $config, 'driver' => $this])->render();
-                file_put_contents("$k8sPath/{$ingressDest}", $ingress);
-            }
-        }
     }
 
     public function getWorkloadViewName(): ?string
@@ -174,11 +159,6 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             default => [],
         };
 
-        if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
-            $manifests['local'][] = "{$this->value}-companion.yaml";
-            $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
-        }
-
         return $manifests;
     }
 
@@ -200,27 +180,6 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
             self::MEMCACHED => 'memcached:1.6-alpine',
             default => '',
         };
-    }
-
-    public function getCompanionDockerImage(): ?string
-    {
-        return match ($this) {
-            self::REDIS => 'rediscommander/redis-commander:latest',
-            default => null,
-        };
-    }
-
-    public function getCompanionPort(): int
-    {
-        return match ($this) {
-            self::REDIS => 8081,
-            default => 80,
-        };
-    }
-
-    public function hasCompanion(): bool
-    {
-        return ! is_null($this->getCompanionDockerImage());
     }
 
     public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
@@ -264,19 +223,11 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
 
     public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
-        // Cache admin consoles only publish in local — same reasoning as
-        // DatabaseDriver: don't leak admin UIs through cloud ingress.
-        if ($environment !== 'local') {
-            return [];
-        }
-
-        $appName = $config->getName();
-
-        return match ($this) {
-            self::REDIS => ["redis.{$appName}.kube" => 'Redis Console'],
-            self::MEMCACHED => ["memcached.{$appName}.kube" => 'Memcached Console'],
-            default => [],
-        };
+        // Caches publish no ingress host of their own. Admin consoles are no
+        // longer per-project — they're the shared CompanionDriver apps in
+        // larakube-system (redisinsight.kube, etc.), surfaced via
+        // ManagesCompanions, not a `redis.<project>.kube` route here.
+        return [];
     }
 
     public function getHostServices(): array
@@ -368,6 +319,22 @@ enum CacheDriver: string implements AsDependency, HasArtisanCommands, HasCommand
         // The Commons service name IS the driver value — no remapping. The
         // database-backed cache runs in the app's own DB, so it's not shareable.
         return $this === self::DATABASE ? null : $this->value;
+    }
+
+    public function exporterImage(): ?string
+    {
+        return match ($this) {
+            self::REDIS => 'oliver006/redis_exporter:v1.63.0',
+            default => null,
+        };
+    }
+
+    public function exporterPort(): int
+    {
+        return match ($this) {
+            self::REDIS => 9121,
+            default => 0,
+        };
     }
 
     case REDIS = 'redis';

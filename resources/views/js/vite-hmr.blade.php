@@ -3,9 +3,9 @@
         strictPort: true,
         port: 5173,
         hmr: {
-            host: 'vite.{{ $appName }}.kube',
-            clientPort: 443,
-            protocol: 'wss',
+            host: process.env.VITE_HMR_HOST || 'vite.{{ $appName }}.{{ $localTld }}',
+            clientPort: parseInt(process.env.VITE_HMR_CLIENT_PORT || '443'),
+            protocol: process.env.VITE_HMR_PROTOCOL || 'wss',
         },
         cors: true,
     },

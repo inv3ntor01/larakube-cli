@@ -2,23 +2,31 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $feature->getPodName($config) }}
+  name: mailpit
+  namespace: larakube-shared
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: {{ $feature->getPodName($config) }}
+      app: mailpit
   template:
     metadata:
       labels:
-        app: {{ $feature->getPodName($config) }}
+        app: mailpit
     spec:
       containers:
         - name: mailpit
-          image: axllent/mailpit
+          image: axllent/mailpit:latest
           ports:
             - containerPort: 8025
+              name: ui
             - containerPort: 1025
+              name: smtp
+          env:
+            - name: MP_SMTP_BIND_ADDR
+              value: "0.0.0.0:1025"
+            - name: MP_UI_BIND_ADDR
+              value: "0.0.0.0:8025"
           readinessProbe:
             httpGet:
               path: /
@@ -35,12 +43,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $feature->getPodName($config) }}
+  name: mailpit
+  namespace: larakube-shared
 spec:
   selector:
-    app: {{ $feature->getPodName($config) }}
+    app: mailpit
   ports:
-    - name: dashboard
+    - name: ui
       protocol: TCP
       port: 8025
       targetPort: 8025
@@ -53,22 +62,23 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ $feature->getPodName($config) }}
+  name: mailpit
+  namespace: larakube-shared
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: mailpit.{{ $config->getName() }}.kube
+    - host: {{ $host }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ $feature->getPodName($config) }}
+                name: mailpit
                 port:
                   number: 8025
   tls:
     - hosts:
-        - mailpit.{{ $config->getName() }}.kube
+        - {{ $host }}

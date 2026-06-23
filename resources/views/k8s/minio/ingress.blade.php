@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3.{{ $config->getName() }}.kube
+    - host: s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -17,7 +17,7 @@ spec:
                 name: minio
                 port:
                   number: 9000
-    - host: s3-console.{{ $config->getName() }}.kube
+    - host: s3-console.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -29,5 +29,5 @@ spec:
                   number: 9001
   tls:
     - hosts:
-        - s3.{{ $config->getName() }}.kube
-        - s3-console.{{ $config->getName() }}.kube
+        - s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
+        - s3-console.{{ $config->getName() }}.{{ $config->getLocalTld() }}

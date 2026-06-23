@@ -2,6 +2,8 @@
 
 namespace App\Commands;
 
+use App\Data\GlobalConfigData;
+use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 use Illuminate\Support\Facades\File;
 use LaravelZero\Framework\Commands\Command;
@@ -9,10 +11,9 @@ use Phar;
 
 class McpRegisterCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithOs, LaraKubeOutput;
 
-    protected $signature = 'mcp:register 
-                            {--gemini : Register the CLI MCP with Gemini CLI}
+    protected $signature = 'mcp:register
                             {--claude : Register the CLI MCP with Claude Desktop}
                             {--all : Register with all supported AI tools}';
 
@@ -22,11 +23,10 @@ class McpRegisterCommand extends Command
     {
         $this->renderHeader();
 
-        $gemini = $this->option('gemini') || $this->option('all');
         $claude = $this->option('claude') || $this->option('all');
 
-        if (! $gemini && ! $claude) {
-            $this->error('  Please specify a tool to register with (--gemini, --claude, or --all).');
+        if (! $claude) {
+            $this->error('  Please specify a tool to register with (--claude or --all).');
 
             return 1;
         }
@@ -45,10 +45,6 @@ class McpRegisterCommand extends Command
             return 1;
         }
 
-        if ($gemini) {
-            $this->registerWithGemini($binaryPath);
-        }
-
         if ($claude) {
             $this->registerWithClaude($binaryPath);
         }
@@ -56,30 +52,11 @@ class McpRegisterCommand extends Command
         return 0;
     }
 
-    protected function registerWithGemini(string $binaryPath): void
-    {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-        $configPath = $home.'/.gemini/settings.json';
-
-        $this->updateJsonConfig($configPath, 'Gemini CLI', [
-            'mcpServers' => [
-                'larakube-cli' => [
-                    'command' => $binaryPath,
-                    'args' => ['mcp:start', 'mcp'],
-                ],
-                'larakube-console' => [
-                    'url' => 'https://console.kube/mcp',
-                ],
-            ],
-        ]);
-    }
-
     protected function registerWithClaude(string $binaryPath): void
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-        $os = PHP_OS_FAMILY;
+        $home = home_path();
 
-        $configPath = $os === 'Darwin'
+        $configPath = $this->isDarwin()
             ? $home.'/Library/Application Support/Claude/claude_desktop_config.json'
             : $home.'/.config/Claude/claude_desktop_config.json';
 
@@ -90,7 +67,7 @@ class McpRegisterCommand extends Command
                     'args' => ['mcp:start', 'mcp'],
                 ],
                 'larakube-console' => [
-                    'url' => 'https://console.kube/mcp',
+                    'url' => 'https://console.'.GlobalConfigData::load()->getLocalTld().'/mcp',
                 ],
             ],
         ]);

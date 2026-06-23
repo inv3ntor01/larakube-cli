@@ -15,6 +15,7 @@ use App\Enums\OperatingSystem;
 use App\Enums\PhpVersion;
 use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
+use App\Enums\SharedClusterService;
 use App\Enums\StorageDriver;
 use Tests\TestCase;
 
@@ -271,6 +272,57 @@ class ConfigDataTest extends TestCase
         $this->assertSame('https://example.com', $config->getAppUrl('main'));
     }
 
+    public function test_get_shared_service_host_honours_a_larakube_json_override()
+    {
+        // A cloud Grafana host lives in the env hosts map like web/reverb/s3.
+        $config = ConfigData::from([
+            'name' => 'demo',
+            'environments' => [
+                'production' => [
+                    'hosts' => [
+                        'web' => 'app.example.com',
+                        'grafana' => 'metrics.example.com',
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(
+            'metrics.example.com',
+            $config->getSharedServiceHost(SharedClusterService::GRAFANA, 'production'),
+        );
+    }
+
+    public function test_get_shared_service_host_derives_from_web_host_on_cloud_without_override()
+    {
+        $config = ConfigData::from([
+            'name' => 'demo',
+            'environments' => [
+                'production' => ['hosts' => ['web' => 'app.example.com']],
+            ],
+        ]);
+
+        // Name-less global host, derived off the web host like other services —
+        // no project-name segment, unlike getServiceHost().
+        $this->assertSame(
+            'grafana-app.example.com',
+            $config->getSharedServiceHost(SharedClusterService::GRAFANA, 'production'),
+        );
+    }
+
+    public function test_get_shared_service_host_uses_global_tld_locally_without_project_name()
+    {
+        $config = ConfigData::from(['name' => 'demo', 'localTld' => 'test']);
+
+        // Shared cluster hosts are name-less and follow the GLOBAL dev TLD, not
+        // the project's localTld override (they're shared across all projects).
+        $globalTld = \App\Data\GlobalConfigData::load()->getLocalTld();
+        $host = $config->getSharedServiceHost(SharedClusterService::GRAFANA, 'local');
+
+        $this->assertSame("grafana.{$globalTld}", $host);
+        $this->assertStringNotContainsString('demo', $host);
+    }
+
     public function test_get_manageable_services_lists_all_externalizable_backing_services()
     {
         $config = ConfigData::from([
@@ -463,5 +515,56 @@ class ConfigDataTest extends TestCase
         $config = ConfigData::from(['provisionTestDb' => true]);
 
         $this->assertTrue($config->getProvisionTestDb());
+    }
+
+    public function test_local_tld_defaults_to_global_when_project_has_no_override()
+    {
+        $config = ConfigData::from(['name' => 'demo']);
+
+        $this->assertFalse($config->hasLocalTld());
+        $this->assertSame('kube', $config->getLocalTld());
+    }
+
+    public function test_local_tld_override_wins_over_the_global_default()
+    {
+        $config = ConfigData::from(['name' => 'demo', 'localTld' => 'test']);
+
+        $this->assertTrue($config->hasLocalTld());
+        $this->assertSame('test', $config->getLocalTld());
+        $this->assertSame('https://demo.test', $config->getAppUrl('local'));
+        $this->assertSame('vite.demo.test', $config->getServiceHost('vite', 'local'));
+    }
+
+    public function test_set_local_tld_normalizes_and_can_be_cleared()
+    {
+        $config = ConfigData::from(['name' => 'demo']);
+
+        $config->setLocalTld('.TEST');
+        $this->assertSame('test', $config->getLocalTld());
+
+        $config->setLocalTld(null);
+        $this->assertFalse($config->hasLocalTld());
+        $this->assertSame('kube', $config->getLocalTld());
+    }
+
+    public function test_add_additional_extension_appends_uniquely()
+    {
+        $config = ConfigData::from(['name' => 'demo']);
+
+        $config->addAdditionalExtension('imagick');
+        $config->addAdditionalExtension('gd');
+        $config->addAdditionalExtension('imagick'); // duplicate — must not double up
+
+        $this->assertSame(['imagick', 'gd'], $config->getAdditionalExtensions());
+    }
+
+    public function test_remove_additional_extension_drops_and_reindexes()
+    {
+        $config = ConfigData::from(['name' => 'demo', 'additionalExtensions' => ['imagick', 'gd', 'redis']]);
+
+        $config->removeAdditionalExtension('gd');
+        $config->removeAdditionalExtension('missing'); // no-op — must not error
+
+        $this->assertSame(['imagick', 'redis'], $config->getAdditionalExtensions());
     }
 }

@@ -17,45 +17,6 @@ spec:
           image: {{ $driver->getCompanionDockerImage() }}
           ports:
             - containerPort: {{ $driver->getCompanionPort() }}
-@if($driver instanceof \App\Enums\DatabaseDriver)
-          env:
-@if($driver === \App\Enums\DatabaseDriver::MYSQL || $driver === \App\Enums\DatabaseDriver::MARIADB)
-            - name: PMA_HOST
-              value: {{ $driver->getPodName($config) }}
-            - name: PMA_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: laravel-config
-                  key: DB_USERNAME
-            - name: PMA_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: laravel-secrets
-                  key: DB_PASSWORD
-@elseif($driver === \App\Enums\DatabaseDriver::POSTGRESQL)
-            - name: ADMINER_DEFAULT_SERVER
-              value: {{ $driver->getPodName($config) }}
-@elseif($driver === \App\Enums\DatabaseDriver::MONGODB)
-            - name: ME_CONFIG_MONGODB_SERVER
-              value: {{ $driver->getPodName($config) }}
-            - name: ME_CONFIG_MONGODB_ADMINUSERNAME
-              valueFrom:
-                configMapKeyRef:
-                  name: laravel-config
-                  key: DB_USERNAME
-            - name: ME_CONFIG_MONGODB_ADMINPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: laravel-secrets
-                  key: DB_PASSWORD
-@endif
-@elseif($driver instanceof \App\Enums\CacheDriver)
-@if($driver === \App\Enums\CacheDriver::REDIS)
-          env:
-            - name: REDIS_HOSTS
-              value: local:{{ $driver->getPodName($config) }}:6379
-@endif
-@endif
 ---
 apiVersion: v1
 kind: Service

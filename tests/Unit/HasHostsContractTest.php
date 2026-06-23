@@ -14,10 +14,6 @@ use App\Enums\StorageDriver;
 test('every host-publishing component declares its overrideable services', function () {
     // Cloud-overrideable components — must have entries in getHostServices.
     expect(LaravelFeature::REVERB->getHostServices())->toHaveKey('reverb')
-        ->and(LaravelFeature::MAILPIT->getHostServices())->toHaveKey('mailpit')
-        ->and(LaravelFeature::MONITORING->getHostServices())
-        ->toHaveKey('grafana')
-        ->toHaveKey('prometheus')
         ->and(ScoutDriver::MEILISEARCH->getHostServices())->toHaveKey('meilisearch')
         ->and(ScoutDriver::TYPESENSE->getHostServices())
         ->toHaveKey('typesense')
@@ -38,7 +34,7 @@ test('local-console components opt out of host overrides via empty getHostServic
         ->and(Blueprint::FILAMENT->getHostServices())->toBe([]);
 });
 
-test('database consoles do not leak into non-local ingress (the latent bug fix)', function () {
+test('databases publish no ingress host — consoles are shared companions, not per-project routes', function () {
     $config = ConfigData::from([
         'name' => 'demo',
         'databases' => ['mysql'],
@@ -48,14 +44,14 @@ test('database consoles do not leak into non-local ingress (the latent bug fix)'
         ],
     ]);
 
-    // Local still gets the console (developer ergonomics).
-    expect($config->getAllHosts('local'))->toHaveKey('mysql.demo.kube');
+    // The DB console moved to the shared CompanionDriver apps (phpmyadmin.kube
+    // in larakube-system); the driver itself no longer publishes a host in any env.
+    expect(DatabaseDriver::MYSQL->getHosts($config, 'local'))->toBe([])
+        ->and(DatabaseDriver::MYSQL->getHosts($config, 'production'))->toBe([]);
 
-    // Production must NOT include the MySQL console — exposing admin UIs
-    // through cloud ingress is a security smell.
-    $prodHosts = $config->getAllHosts('production');
-    expect(array_keys($prodHosts))->not->toContain('mysql.demo.kube')
-        ->and(array_keys($prodHosts))->not->toContain('mysql-example.com');
+    // ...so nothing DB-shaped leaks into the merged host map either.
+    expect(array_keys($config->getAllHosts('local')))->not->toContain('mysql.demo.kube');
+    expect(array_keys($config->getAllHosts('production')))->not->toContain('mysql.demo.kube');
 });
 
 test('DerivesHostsFromServices trait honours per-env overrides through getServiceHost', function () {
@@ -130,6 +126,20 @@ test('storage driver skips its manifests in envs where it is externally managed'
         ->and($files)->not->toHaveKey('production');
 });
 
+test('database and cache consoles never appear in getAllHosts — shared companions own them now', function () {
+    $config = ConfigData::from([
+        'name' => 'demo',
+        'databases' => ['mysql'],
+        'cacheDriver' => 'redis',
+        'environments' => ['local' => []],
+    ]);
+
+    $hosts = array_keys($config->getAllHosts('local'));
+
+    expect($hosts)->not->toContain('mysql.demo.kube')
+        ->and($hosts)->not->toContain('redis.demo.kube');
+});
+
 test('only client-facing endpoints are promptable for custom hosts', function () {
     // Reverb (ws) and S3 are worth a vanity subdomain prompt...
     expect(LaravelFeature::REVERB)->toBeInstanceOf(HasPromptableHosts::class)
@@ -146,17 +156,12 @@ test('only client-facing endpoints are promptable for custom hosts', function ()
     expect(ScoutDriver::MEILISEARCH)->not->toBeInstanceOf(HasPromptableHosts::class)
         ->and(ScoutDriver::TYPESENSE)->not->toBeInstanceOf(HasPromptableHosts::class);
 
-    // Mailpit and monitoring dashboards belong to LaravelFeature (which does
-    // implement the interface) but expose no promptable services.
-    expect(LaravelFeature::MAILPIT->getPromptableHostServices())->toBe([])
-        ->and(LaravelFeature::MONITORING->getPromptableHostServices())->toBe([]);
 });
 
 test('all HasHosts implementers conform to the new contract', function () {
     // Catches future enums that implement HasHosts but forget getHostServices.
     $implementers = [
         LaravelFeature::REVERB,
-        LaravelFeature::MAILPIT,
         ScoutDriver::DATABASE,
         StorageDriver::GARAGE,
         DatabaseDriver::SQLITE,

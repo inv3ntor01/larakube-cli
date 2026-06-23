@@ -177,5 +177,11 @@ class EnvironmentData extends Data
          * remote server never depends on its host kubectl version.
          */
         public bool $offline = false,
+        /**
+         * Persistent tunnel configuration for environments behind CGNAT or
+         * without open inbound ports. Null = no tunnel (direct ingress only).
+         * Configure with `larakube cloud:configure:tunnel <env>`.
+         */
+        public ?TunnelData $tunnel = null,
     ) {}
 }

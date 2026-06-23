@@ -21,7 +21,7 @@ class ContextRestoreCommand extends Command
     {
         $this->renderHeader();
 
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $home = home_path();
         $config = $home.'/.kube/config';
 
         // Our dated snapshots + the legacy auto-backups (cloud:provision / context:import).

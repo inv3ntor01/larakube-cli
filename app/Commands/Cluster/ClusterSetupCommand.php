@@ -2,6 +2,7 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\confirm;
@@ -11,7 +12,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithOs, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -34,7 +35,7 @@ class ClusterSetupCommand extends Command
         // 1. Select engine. Native k3s is the lightest option and the default on
         //    Linux; k3d (k3s-in-Docker) pays a container/VM tax on top of k3s and
         //    is the only choice on macOS/Windows (no native Linux kernel there).
-        if (PHP_OS_FAMILY === 'Linux') {
+        if ($this->isLinux()) {
             $engine = select(
                 label: 'Which Kubernetes engine would you like to use?',
                 options: [
@@ -120,7 +121,7 @@ class ClusterSetupCommand extends Command
         // --- 🛡️ UNIVERSAL WORKSPACE BRIDGE ---
         // Instead of asking for a specific folder, we mount the entire user root
         // so that projects can be located anywhere (Desktop, Codes, etc.)
-        $userRoot = PHP_OS_FAMILY === 'Darwin' ? '/Users' : '/home';
+        $userRoot = $this->isDarwin() ? '/Users' : '/home';
 
         $this->laraKubeInfo('Creating LaraKube local cluster...');
         $this->info("  🛡 Universal workspace bridge: {$userRoot}");
@@ -149,7 +150,7 @@ class ClusterSetupCommand extends Command
 
     protected function installK3s(): int
     {
-        if (PHP_OS_FAMILY !== 'Linux') {
+        if (! $this->isLinux()) {
             $this->laraKubeError('Native k3s installation is only supported on Linux. Please use k3d instead.');
 
             return 1;
@@ -234,8 +235,8 @@ class ClusterSetupCommand extends Command
         $raw = preg_replace('/^(\s*user: )default$/m', '${1}'.$contextName, $raw);
         $raw = preg_replace('/^(current-context: )default$/m', '${1}'.$contextName, $raw);
 
-        $home = getenv('HOME') ?: '';
-        if ($home === '') {
+        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        if (! $home) {
             $this->laraKubeWarn('Could not determine your home directory; skipping kubeconfig merge.');
 
             return;

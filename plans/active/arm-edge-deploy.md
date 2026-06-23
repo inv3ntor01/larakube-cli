@@ -126,8 +126,12 @@ No router access, no ISP cooperation, no static IP purchase.
 2. **Pi quickstart docs** — `deployment/raspberry-pi.md`: cgroups note,
    bundle-path walkthrough, LAN vs internet, Cloudflare Tunnel for CGNAT,
    and the "move to DOKS" upgrade path.
-3. **Cloudflare Tunnel integration** — `--tunnel` on `bundle:build`, cloudflared
-   setup in `bundle:install`, skip self-signed CA, update `larakube-reset`.
+3. **Cloudflare Tunnel integration** ✅ BUILT — `--tunnel` on `bundle:build`
+   downloads cloudflared for target arch + sets `tunnelEnabled: true` in
+   `bundle.json`; `bundle:install` prompts for token, installs
+   `/usr/local/bin/cloudflared`, writes `/etc/systemd/system/cloudflared.service`,
+   runs `systemctl enable --now cloudflared`; `larakube-reset` stops/removes it.
+   Manual test §21 in `plans/manual-test-guide.md`.
 
 ## ✅ Verification
 

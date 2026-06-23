@@ -26,7 +26,7 @@ class ContextImportCommand extends Command
             return 1;
         }
 
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $home = home_path();
         $local = $home.'/.kube/config';
 
         // Which context are we importing? (Deterministic name → re-import is idempotent.)

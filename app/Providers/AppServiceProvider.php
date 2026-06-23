@@ -17,6 +17,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Note: the dev TLD is deliberately NOT View::share()'d. A CLI is a
+        // long-lived process and `config:tld` mutates the global TLD then chains
+        // `larakube up` in the SAME process, so a boot-time snapshot would render
+        // stale (the old TLD) during that reapply. Templates that need the TLD are
+        // passed it explicitly, resolved fresh from GlobalConfigData::load() at the
+        // point of use (see ManagesCompanions::deployCompanion(), the
+        // SharedClusterService reconcile, etc.).
+
         // Ensure view cache directory exists
         $viewCachePath = config('view.compiled');
         if ($viewCachePath && ! is_dir($viewCachePath)) {

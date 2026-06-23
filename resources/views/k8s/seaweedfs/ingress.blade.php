@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3.{{ $config->getName() }}.kube
+    - host: s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -17,7 +17,7 @@ spec:
                 name: seaweedfs
                 port:
                   number: 8333
-    - host: s3-admin.{{ $config->getName() }}.kube
+    - host: s3-admin.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -29,5 +29,5 @@ spec:
                   number: 9333
   tls:
     - hosts:
-        - s3.{{ $config->getName() }}.kube
-        - s3-admin.{{ $config->getName() }}.kube
+        - s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
+        - s3-admin.{{ $config->getName() }}.{{ $config->getLocalTld() }}

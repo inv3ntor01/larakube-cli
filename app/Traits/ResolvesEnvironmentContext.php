@@ -137,7 +137,7 @@ trait ResolvesEnvironmentContext
         $user = text(label: 'SSH user', default: 'larakube', required: true);
         $port = (int) text(label: 'SSH port', default: '22', required: true);
         $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+        $key = str_replace('~', home_path(), $key);
 
         $data = $config->toArray();
         $data['environments'][$environment]['cloud'] = [
@@ -182,7 +182,7 @@ trait ResolvesEnvironmentContext
         $user = text(label: 'SSH user', default: 'larakube', required: true);
         $port = (int) text(label: 'SSH port', default: '22', required: true);
         $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+        $key = str_replace('~', home_path(), $key);
 
         $data['environments'][$environment]['cloud'] = [
             'ip' => $m[1],

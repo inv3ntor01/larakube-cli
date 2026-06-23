@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: {{ $driver->getPodName($config) }}.{{ $config->getName() }}.kube
+    - host: {{ $driver->getPodName($config) }}.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -19,4 +19,4 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - {{ $driver->getPodName($config) }}.{{ $config->getName() }}.kube
+        - {{ $driver->getPodName($config) }}.{{ $config->getName() }}.{{ $config->getLocalTld() }}

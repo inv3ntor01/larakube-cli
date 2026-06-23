@@ -2,6 +2,7 @@
 
 namespace App\Commands\Trust;
 
+use App\Data\GlobalConfigData;
 use App\Traits\InteractsWithTrust;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
@@ -41,7 +42,8 @@ class CheckCommand extends Command
         $this->newLine();
 
         // ── DNS ─────────────────────────────────────────────────────────────
-        $this->line('  <fg=cyan>DNS (*.kube → 127.0.0.1)</>');
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $this->line('  <fg=cyan>DNS (*.'.$tld.' → 127.0.0.1)</>');
 
         $dnsmasq = $this->isDnsmasqConfigured();
         if ($dnsmasq) {
@@ -58,7 +60,7 @@ class CheckCommand extends Command
         $this->newLine();
 
         // ── System cert ──────────────────────────────────────────────────────
-        $this->line('  <fg=cyan>System cert (console.kube, traefik.kube, …)</>');
+        $this->line('  <fg=cyan>System cert (console.'.$tld.', traefik.'.$tld.', …)</>');
 
         $sysCrt = $this->getSystemCertPath();
         $sysKey = $this->getSystemKeyPath();
@@ -71,7 +73,7 @@ class CheckCommand extends Command
             $this->checkLine(false, 'System cert expired or expiring within 30 days');
             $this->line('    <fg=gray>→ Run: larakube trust:reset</>');
             $issues++;
-        } elseif (! $this->certCoversHost($sysCrt, 'console.kube')) {
+        } elseif (! $this->certCoversHost($sysCrt, 'console.'.$tld)) {
             $this->checkLine(false, 'System cert covers wrong TLD (needs regeneration)');
             $this->line('    <fg=gray>→ Run: larakube trust:reset</>');
             $issues++;
@@ -90,16 +92,20 @@ class CheckCommand extends Command
 
             foreach ($appCerts as $appName => $paths) {
                 $crt = $paths['crt'];
+                // Each app's own pinned TLD (sidecar written alongside its cert),
+                // not the global $tld — a project with a `config:tld --project`
+                // override legitimately uses a different TLD than this machine's default.
+                $appTld = $this->getAppCertTld($appName);
 
                 if (! $this->certIsValid($crt)) {
                     $this->checkLine(false, sprintf('  %-18s expired or expiring — run: larakube up', $appName));
                     $issues++;
-                } elseif (! $this->certCoversHost($crt, "{$appName}.kube")) {
+                } elseif (! $this->certCoversHost($crt, "{$appName}.{$appTld}")) {
                     $this->checkLine(false, sprintf('  %-18s wrong TLD — run: larakube up (in that project)', $appName));
                     $issues++;
                 } else {
                     $expiry = $this->certExpiry($crt);
-                    $this->checkLine(true, sprintf('  %-18s valid until %s', $appName, $expiry));
+                    $this->checkLine(true, sprintf('  %-18s valid until %s (.%s)', $appName, $expiry, $appTld));
                 }
             }
 
@@ -125,11 +131,7 @@ class CheckCommand extends Command
 
     private function certExpiry(string $crtPath): string
     {
-        $raw = shell_exec('openssl x509 -enddate -noout -in '.escapeshellarg($crtPath).' 2>/dev/null');
-        if (! $raw) {
-            return 'unknown';
-        }
-        $ts = strtotime(str_replace('notAfter=', '', trim($raw)));
+        $ts = $this->getCertExpiry($crtPath);
 
         return $ts ? date('Y-m-d', $ts) : 'unknown';
     }

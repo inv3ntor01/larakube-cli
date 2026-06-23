@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: meilisearch.{{ $config->getName() }}.kube
+    - host: meilisearch.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -19,4 +19,4 @@ spec:
                   number: 7700
   tls:
     - hosts:
-        - meilisearch.{{ $config->getName() }}.kube
+        - meilisearch.{{ $config->getName() }}.{{ $config->getLocalTld() }}
