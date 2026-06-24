@@ -82,7 +82,7 @@ class CloudHardenCommand extends Command
 
     /**
      * SSH connection details — from a project env's cloud config when present,
-     * else prompted (so the command also works standalone, like cloud:provision).
+     * else prompted (so the command also works standalone, like cloud:init).
      *
      * @return array{0:string,1:string,2:int,3:string}
      */

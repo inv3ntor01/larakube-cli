@@ -517,7 +517,7 @@ trait ConfiguresCloudEnvironment
 
         if (! $adminContext) {
             $this->laraKubeError("No cluster target for '{$environment}'.");
-            $this->line('  Run <fg=yellow;options=bold>larakube cloud:configure:base '.$environment.'</> (or cloud:provision) first.');
+            $this->line('  Run <fg=yellow;options=bold>larakube cloud:configure:base '.$environment.'</> (or cloud:init) first.');
 
             return 1;
         }
@@ -753,7 +753,7 @@ trait ConfiguresCloudEnvironment
                 $this->line("  <fg=yellow>{$upperEnv}_KUBECONFIG</> = <fg=gray>(base64 kubeconfig — run: kubectl config view --context {$context} --minify --raw | base64)</>");
             }
         } else {
-            $this->laraKubeWarn("No cluster context for '{$environment}' — skipping kubeconfig upload. Run `larakube cloud:provision` first.");
+            $this->laraKubeWarn("No cluster context for '{$environment}' — skipping kubeconfig upload. Run `larakube cloud:init` first.");
         }
 
         // Env file secret
@@ -807,7 +807,7 @@ trait ConfiguresCloudEnvironment
         }
 
         if (empty($cloudEnvs)) {
-            $this->laraKubeWarn('No cloud environments with a deploy target found — run `larakube cloud:provision` or `cloud:configure:base` first.');
+            $this->laraKubeWarn('No cloud environments with a deploy target found — run `larakube cloud:init` or `cloud:configure:base` first.');
 
             return 1;
         }

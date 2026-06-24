@@ -20,7 +20,7 @@ trait InteractsWithRemoteDeploy
 {
     use DeploysMonitoringExporters;
 
-    /** The kube-context cloud:provision creates for a host. Pure. */
+    /** The kube-context cloud:init creates for a host. Pure. */
     public function remoteContextName(string $ip): string
     {
         return 'larakube-'.$ip;
@@ -145,7 +145,7 @@ trait InteractsWithRemoteDeploy
     /**
      * Stream a local image into the remote node's k3s containerd. `k3s ctr`
      * needs root, hence sudo (the larakube user must have passwordless sudo for
-     * it — set up by cloud:provision). Pure.
+     * it — set up by cloud:init). Pure.
      */
     public function sideloadOverSshCommand(string $image, string $sshBase): string
     {
@@ -417,7 +417,7 @@ trait InteractsWithRemoteDeploy
         $cloud = $config->getCloud($environment);
 
         if (! $cloud || ! $cloud->ip) {
-            $this->laraKubeError("No cloud connection configured for '{$environment}'. Run `larakube cloud:provision` first.");
+            $this->laraKubeError("No cloud connection configured for '{$environment}'. Run `larakube cloud:init` first.");
 
             return 1;
         }
@@ -430,7 +430,7 @@ trait InteractsWithRemoteDeploy
         $this->line("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
 
         if (! $this->remoteContextReachable($context)) {
-            $this->laraKubeError("Context '{$context}' is missing or unreachable. Re-run `larakube cloud:provision`.");
+            $this->laraKubeError("Context '{$context}' is missing or unreachable. Re-run `larakube cloud:init`.");
 
             return 1;
         }
@@ -500,7 +500,7 @@ trait InteractsWithRemoteDeploy
         // VPS (larakube-<ip>) OR managed (cloud.context) — resolved one way.
         $context = $this->environmentContextOrCurrent($config, $environment);
         if (! $context) {
-            $this->laraKubeError("No cluster context for '{$environment}'. Run `cloud:configure:base` or `cloud:provision` first.");
+            $this->laraKubeError("No cluster context for '{$environment}'. Run `cloud:configure:base` or `cloud:init` first.");
 
             return 1;
         }

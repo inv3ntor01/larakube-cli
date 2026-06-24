@@ -76,7 +76,7 @@ class PlexJoinCommand extends Command
             [$config, $context] = $this->resolveEnvironmentContext($config, $env, $projectPath);
 
             if (! $context) {
-                $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:provision` (or set environments.{$env}.cloud).");
+                $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:init` (or set environments.{$env}.cloud).");
 
                 return 1;
             }
@@ -85,7 +85,7 @@ class PlexJoinCommand extends Command
         $this->plexContext = $context;
 
         if (! $this->environmentContextReachable($context)) {
-            $this->laraKubeError("Cluster context '{$context}' is unreachable. Check the server / re-run cloud:provision.");
+            $this->laraKubeError("Cluster context '{$context}' is unreachable. Check the server / re-run cloud:init.");
 
             return 1;
         }

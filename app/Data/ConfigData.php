@@ -39,7 +39,7 @@ class ConfigData extends Data
     // infra coordinates are never pushed. Gitignored; merged in at load time.
     const string LOCAL_CONFIG_FILE = '.larakube.local.json';
 
-    // The RWX StorageClass that `cloud:provision:nfs` installs (in-cluster NFS),
+    // The RWX StorageClass that `cloud:init:nfs` installs (in-cluster NFS),
     // used by envs that opt into shared cross-node storage (sharedStorage).
     const string NFS_STORAGE_CLASS = 'larakube-nfs';
 

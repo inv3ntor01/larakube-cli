@@ -18,7 +18,7 @@ function remoteDeploy(): object
     };
 }
 
-test('the per-host context name matches what cloud:provision creates', function () {
+test('the per-host context name matches what cloud:init creates', function () {
     expect(remoteDeploy()->remoteContextName('159.223.43.95'))->toBe('larakube-159.223.43.95');
 });
 

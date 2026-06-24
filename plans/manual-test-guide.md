@@ -223,16 +223,16 @@ kubectl get pods -n <namespace> -l larakube.dev/role=share
 
 ---
 
-## 6. `cloud:provision` — Context Not Switched
+## 6. `cloud:init` — Context Not Switched
 
-**Goal:** Verify that `cloud:provision` no longer silently changes your active kubectl context.
+**Goal:** Verify that `cloud:init` no longer silently changes your active kubectl context.
 
 ```bash
 # Check your current context BEFORE
 kubectl config current-context
 
-# Run cloud:provision (use a dummy/test VPS or watch the Traefik deploy step)
-larakube cloud:provision vps
+# Run cloud:init (use a dummy/test VPS or watch the Traefik deploy step)
+larakube cloud:init vps
 # Step through until the "Deploy Traefik" prompt; say yes
 
 # Check context AFTER
@@ -241,7 +241,7 @@ kubectl config current-context
 # NOT switched to larakube-<ip>
 ```
 
-**Pass criteria:** Active kubectl context is unchanged after `cloud:provision` runs Traefik deployment.
+**Pass criteria:** Active kubectl context is unchanged after `cloud:init` runs Traefik deployment.
 
 ---
 
@@ -573,9 +573,9 @@ larakube bundle:install --bundle=./dist/larakube-bundle.tar.gz
 
 ---
 
-## 12. `cloud:provision:doks` — DigitalOcean Kubernetes
+## 12. `cloud:init:doks` — DigitalOcean Kubernetes
 
-**Goal:** Verify that `cloud:provision:doks` installs Traefik on a DOKS cluster, surfaces the LoadBalancer IP, and optionally wires the project.
+**Goal:** Verify that `cloud:init:doks` installs Traefik on a DOKS cluster, surfaces the LoadBalancer IP, and optionally wires the project.
 
 > **Prerequisites:**
 > - A DigitalOcean Kubernetes cluster already created (via the DO Console or `doctl`)
@@ -587,9 +587,9 @@ larakube bundle:install --bundle=./dist/larakube-bundle.tar.gz
 kubectl config get-contexts | grep do-
 
 # Provision Traefik on DOKS (picks up the context interactively)
-larakube cloud:provision:doks
+larakube cloud:init:doks
 # Or pass the context directly:
-larakube cloud:provision:doks --context=do-sfo3-my-cluster
+larakube cloud:init:doks --context=do-sfo3-my-cluster
 
 # Expected flow:
 #   Target context: do-sfo3-my-cluster
@@ -616,7 +616,7 @@ cat .larakube.json | jq '.environments.production'
 
 ```bash
 # Running again on a cluster that already has Traefik should skip install
-larakube cloud:provision:doks --context=do-sfo3-my-cluster
+larakube cloud:init:doks --context=do-sfo3-my-cluster
 # Expect: "Traefik is already installed on this cluster — skipping install."
 # Should still print the LoadBalancer IP
 ```
@@ -692,7 +692,7 @@ brew audit --new luchavez-technologies/larakube/larakube
 
 > **Prerequisites:**
 > - Project hosted on GitLab (remote origin = `git@gitlab.com:...`)
-> - Cloud environment provisioned (e.g. via `cloud:provision:doks` or `cloud:provision vps`)
+> - Cloud environment provisioned (e.g. via `cloud:init:doks` or `cloud:init vps`)
 > - `glab` CLI installed and authenticated (`glab auth login`) — optional but recommended
 
 ```bash
@@ -938,7 +938,7 @@ larakube cloud:deploy production
 ```bash
 # Confirm the Namespace doc was NOT applied (scoped kubeconfig can't apply it)
 # Pipeline output should show the awk strip step ran without error
-# Verify the namespace already exists (it was created during cloud:provision)
+# Verify the namespace already exists (it was created during cloud:init)
 kubectl get namespace <appname>-production
 # Should exist; the deploy didn't try to re-create it
 ```

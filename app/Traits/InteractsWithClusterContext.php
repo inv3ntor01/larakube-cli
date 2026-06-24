@@ -103,7 +103,7 @@ trait InteractsWithClusterContext
         $context = trim($context);
 
         // 'k3s-larakube' is the context name cluster:setup gives a *local* native
-        // k3s install. Remote k3s (cloud:provision) is named "larakube-<ip>", so
+        // k3s install. Remote k3s (cloud:init) is named "larakube-<ip>", so
         // it stays correctly classified as non-local.
         $localKeywords = ['k3d', 'minikube', 'docker-desktop', 'orbstack', 'kind', 'colima', 'k3s-larakube'];
 

@@ -5,7 +5,7 @@ namespace App\Traits;
 /**
  * Basic, idempotent hardening for a freshly provisioned k3s node. Pure builders
  * (return the remote bash) so they're unit-testable and reusable by both
- * `cloud:provision` and a future standalone `cloud:harden`. The orchestration
+ * `cloud:init` and a future standalone `cloud:harden`. The orchestration
  * SSHes the script via the same runner as the rest of provisioning.
  *
  * Two safety rules baked into the script:

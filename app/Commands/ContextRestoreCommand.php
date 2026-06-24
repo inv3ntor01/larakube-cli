@@ -24,7 +24,7 @@ class ContextRestoreCommand extends Command
         $home = home_path();
         $config = $home.'/.kube/config';
 
-        // Our dated snapshots + the legacy auto-backups (cloud:provision / context:import).
+        // Our dated snapshots + the legacy auto-backups (cloud:init / context:import).
         $backups = array_values(array_filter(array_merge(
             glob($home.'/.larakube/kube-backups/config-*.bak') ?: [],
             glob($home.'/.kube/config.bak.*') ?: [],

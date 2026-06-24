@@ -22,7 +22,14 @@ class CloudProvisionDoksCommand extends Command
 {
     use InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput, PromotesIngressDns, ResolvesEnvironmentContext;
 
-    protected $signature = 'cloud:provision:doks {--context= : Target a specific kube-context}';
+    protected $signature = 'cloud:init:doks {--context= : Target a specific kube-context}';
+
+    /**
+     * Backward-compatible alias for the pre-rename command name.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['cloud:provision:doks'];
 
     protected $description = 'Provision a DigitalOcean Kubernetes (DOKS) cluster with Traefik and Let\'s Encrypt TLS';
 

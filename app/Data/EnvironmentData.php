@@ -155,7 +155,7 @@ class EnvironmentData extends Data
          * externalized. Set true for apps that genuinely need a shared cross-node
          * folder (e.g. a sitemap written by a worker and served by web): LaraKube
          * points the shared PVC at the in-cluster NFS StorageClass (RWX) instead of
-         * an emptyDir. Requires the NFS provisioner — `larakube cloud:provision:nfs`.
+         * an emptyDir. Requires the NFS provisioner — `larakube cloud:init:nfs`.
          */
         public bool $sharedStorage = false,
         /**

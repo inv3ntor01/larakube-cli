@@ -71,7 +71,7 @@ class PlexMigrateCommand extends Command
             [$config, $context] = $this->resolveEnvironmentContext($config, $env, $projectPath);
 
             if (! $context) {
-                $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:provision` first.");
+                $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:init` first.");
 
                 return 1;
             }
@@ -80,7 +80,7 @@ class PlexMigrateCommand extends Command
         $this->plexContext = $context;
 
         if (! $this->plexContextReachable()) {
-            $this->laraKubeError('Cluster is unreachable. Check the server or re-run cloud:provision.');
+            $this->laraKubeError('Cluster is unreachable. Check the server or re-run cloud:init.');
 
             return 1;
         }

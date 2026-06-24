@@ -77,7 +77,7 @@ test('routes the local native k3s context to the k3s engine', function () {
 test('routes remote/registry-backed contexts to nothing (no sideload)', function () {
     $r = k3dResolver();
 
-    expect($r->sideload('larakube-203.0.113.5'))->toBeNull()  // remote k3s from cloud:provision
+    expect($r->sideload('larakube-203.0.113.5'))->toBeNull()  // remote k3s from cloud:init
         ->and($r->sideload('arn:aws:eks:...'))->toBeNull()    // managed cloud
         ->and($r->sideload('orbstack'))->toBeNull()           // not a build-sideload engine
         ->and($r->sideload(''))->toBeNull();

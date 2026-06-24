@@ -20,9 +20,16 @@ class CloudProvisionCommand extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'cloud:provision
+    protected $signature = 'cloud:init
         {target? : What to provision — "vps" (default) or "doks". Omit to be asked.}
         {--context= : (DOKS only) target a specific kube-context}';
+
+    /**
+     * Backward-compatible alias for the pre-rename command name.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['cloud:provision'];
 
     /**
      * The console command description.
@@ -48,7 +55,7 @@ class CloudProvisionCommand extends Command
 
         // DOKS is a separate flow — delegate to its dedicated command.
         if ($target === 'doks') {
-            return (int) $this->call('cloud:provision:doks', array_filter([
+            return (int) $this->call('cloud:init:doks', array_filter([
                 '--context' => $this->option('context'),
             ]));
         }

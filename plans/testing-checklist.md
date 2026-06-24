@@ -72,7 +72,7 @@ Pass — ALL on `.test`, ZERO stranded on `.kube`:
 - [ ] §2–3 Companions / phpMyAdmin auto-config
 - [ ] §15–17 Plex init/export/join + §10 plex:migrate
 - [ ] §9 clone, §11 bundle CA, §21 bundle tunnel
-- [ ] §4–5 tunnels/share, §6 cloud:provision context
+- [ ] §4–5 tunnels/share, §6 cloud:init context
 - [ ] §12 DOKS, §13 Homebrew, §14 GitLab, §18 registry
 
 ---
