@@ -1,0 +1,122 @@
+<?php
+
+use App\Enums\CompanionDriver;
+
+test('installable() returns all companions', function () {
+    $installable = CompanionDriver::installable();
+
+    expect(array_map(fn ($c) => $c->value, $installable))
+        ->toContain('adminer')
+        ->toContain('phpmyadmin')
+        ->toContain('pgadmin')
+        ->toContain('redisinsight')
+        ->toContain('mongo-express');
+});
+
+test('every companion has a non-empty image', function () {
+    foreach (CompanionDriver::cases() as $companion) {
+        expect($companion->getImage())->not->toBeEmpty("image missing for {$companion->value}");
+    }
+});
+
+test('every companion has a port greater than zero', function () {
+    foreach (CompanionDriver::cases() as $companion) {
+        expect($companion->getPort())->toBeGreaterThan(0, "port missing for {$companion->value}");
+    }
+});
+
+test('phpMyAdmin env sets PMA_ARBITRARY to 1', function () {
+    expect(CompanionDriver::PHPMYADMIN->getEnv()['PMA_ARBITRARY'])->toBe('1');
+});
+
+test('pgAdmin env has default credentials', function () {
+    $env = CompanionDriver::PGADMIN->getEnv();
+
+    expect($env)->toHaveKey('PGADMIN_DEFAULT_EMAIL')
+        ->toHaveKey('PGADMIN_DEFAULT_PASSWORD');
+});
+
+test('companion:add command definition has companion argument', function () {
+    $cmd = new App\Commands\Companion\CompanionAddCommand;
+
+    expect($cmd->getDefinition()->hasArgument('companion'))->toBeTrue();
+});
+
+test('companion:remove command definition has companion argument and force option', function () {
+    $cmd = new App\Commands\Companion\CompanionRemoveCommand;
+
+    expect($cmd->getDefinition()->hasArgument('companion'))->toBeTrue()
+        ->and($cmd->getDefinition()->hasOption('force'))->toBeTrue();
+});
+
+test('Adminer connection hint uses server param for MySQL', function () {
+    expect(CompanionDriver::ADMINER->getConnectionHint())
+        ->toBe('mysql.{appname}.svc.cluster.local');
+});
+
+test('getUrl returns https with tld', function () {
+    $url = CompanionDriver::PHPMYADMIN->getUrl();
+
+    expect($url)->toStartWith('https://phpmyadmin.');
+});
+
+test('ManagesCompanions methods are callable on UpCommand', function () {
+    $cmd = new App\Commands\UpCommand;
+
+    expect(method_exists($cmd, 'refreshPhpMyAdminServers'))->toBeTrue()
+        ->and(method_exists($cmd, 'showCompanionAccess'))->toBeTrue();
+});
+
+test('companion ingress renders on the explicitly passed TLD, not the shared boot value', function () {
+    // Guards the config:tld staleness fix: View::share('localTld', …) is frozen at
+    // provider boot, so when config:tld mutates the TLD and chains `up` in the same
+    // process, the shared value is stale. deployCompanion() passes a freshly-loaded
+    // localTld, which must override the share — here we simulate a stale share (kube)
+    // and assert an explicit override (test) wins, so the ingress follows the new TLD.
+    Illuminate\Support\Facades\View::share('localTld', 'kube');
+
+    $yaml = Illuminate\Support\Facades\View::make('k8s.companion.global', [
+        'companion' => CompanionDriver::PHPMYADMIN,
+        'localTld' => 'test',
+    ])->render();
+
+    expect($yaml)->toContain('host: phpmyadmin.test')
+        ->not->toContain('phpmyadmin.kube');
+});
+
+test('shared Mailpit blade template exists and contains larakube-shared namespace', function () {
+    $content = file_get_contents(resource_path('views/k8s/mailpit/shared.blade.php'));
+
+    expect($content)->toContain('larakube-shared')
+        ->toContain('containerPort: 1025')
+        ->toContain('containerPort: 8025')
+        ->toContain('host: {{ $host }}');
+});
+
+test('recommendedFor() leads with pgAdmin then Adminer for a Postgres project', function () {
+    $config = App\Data\ConfigData::from(['name' => 'demo', 'database' => 'postgres']);
+
+    $recommended = array_map(fn ($c) => $c->value, CompanionDriver::recommendedFor($config));
+
+    expect($recommended)->toBe(['pgadmin', 'adminer']);
+});
+
+test('recommendedFor() leads with phpMyAdmin then Adminer for a MySQL project', function () {
+    $config = App\Data\ConfigData::from(['name' => 'demo', 'database' => 'mysql']);
+
+    expect(array_map(fn ($c) => $c->value, CompanionDriver::recommendedFor($config)))
+        ->toBe(['phpmyadmin', 'adminer']);
+});
+
+test('recommendedFor() adds RedisInsight when the project caches with Redis', function () {
+    $config = App\Data\ConfigData::from(['name' => 'demo', 'database' => 'postgres', 'cacheDriver' => 'redis']);
+
+    expect(array_map(fn ($c) => $c->value, CompanionDriver::recommendedFor($config)))
+        ->toBe(['pgadmin', 'adminer', 'redisinsight']);
+});
+
+test('recommendedFor() returns nothing for a SQLite-only project', function () {
+    $config = App\Data\ConfigData::from(['name' => 'demo', 'database' => 'sqlite']);
+
+    expect(CompanionDriver::recommendedFor($config))->toBe([]);
+});

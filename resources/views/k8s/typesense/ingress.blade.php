@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: typesense.{{ $config->getName() }}.kube
+    - host: typesense.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -19,4 +19,4 @@ spec:
                   number: 8108
   tls:
     - hosts:
-        - typesense.{{ $config->getName() }}.kube
+        - typesense.{{ $config->getName() }}.{{ $config->getLocalTld() }}

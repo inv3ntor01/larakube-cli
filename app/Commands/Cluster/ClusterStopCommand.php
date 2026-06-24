@@ -2,12 +2,13 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class ClusterStopCommand extends Command
 {
-    use LaraKubeOutput;
+    use InteractsWithOs, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -34,7 +35,7 @@ class ClusterStopCommand extends Command
 
         if (shell_exec('which k3d')) {
             passthru('k3d cluster stop larakube');
-        } elseif (shell_exec('which k3s') && PHP_OS_FAMILY === 'Linux') {
+        } elseif (shell_exec('which k3s') && $this->isLinux()) {
             $this->info('  Detected native k3s. Using systemctl...');
             passthru('sudo systemctl stop k3s');
         } else {

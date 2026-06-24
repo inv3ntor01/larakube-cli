@@ -7,6 +7,8 @@ use App\Enums\AiProvider;
 
 trait InteractsWithGlobalConfig
 {
+    use InteractsWithOs;
+
     protected function getGlobalConfig(): GlobalConfigData
     {
         return GlobalConfigData::load();
@@ -14,9 +16,7 @@ trait InteractsWithGlobalConfig
 
     protected function getGhConfigPath(): string
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-
-        return $home.'/.larakube/gh-config';
+        return home_path('.larakube/gh-config');
     }
 
     protected function getGhCommand(?string $workDir = null, bool $interactive = false): string
@@ -43,9 +43,8 @@ trait InteractsWithGlobalConfig
     protected function getGhDockerCommand(?string $workDir = null, bool $interactive = false): string
     {
         $workDir = $workDir ?? getcwd();
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
         $ghConfigPath = $this->getGhConfigPath();
-        $dockerConfigPath = $home.'/.docker';
+        $dockerConfigPath = home_path('.docker');
 
         if (! is_dir($ghConfigPath)) {
             @mkdir($ghConfigPath, 0700, true);
@@ -85,6 +84,18 @@ trait InteractsWithGlobalConfig
         $config->save();
     }
 
+    protected function getLocalTld(): string
+    {
+        return $this->getGlobalConfig()->getLocalTld();
+    }
+
+    protected function setLocalTld(string $tld): void
+    {
+        $config = $this->getGlobalConfig();
+        $config->setLocalTld($tld);
+        $config->save();
+    }
+
     protected function getAiProvider(): AiProvider
     {
         return $this->getGlobalConfig()->getAiProvider();
@@ -117,15 +128,13 @@ trait InteractsWithGlobalConfig
 
     protected function checkCaTrust(): bool
     {
-        $os = PHP_OS_FAMILY;
-
-        if ($os === 'Darwin') {
+        if ($this->isDarwin()) {
             $output = shell_exec('security find-certificate -c "Server Side Up CA" 2>/dev/null');
 
             return ! empty($output);
         }
 
-        if ($os === 'Linux') {
+        if ($this->isLinux()) {
             return file_exists('/usr/local/share/ca-certificates/larakube-local-ca.crt');
         }
 

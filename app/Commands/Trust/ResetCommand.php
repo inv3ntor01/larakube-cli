@@ -2,6 +2,7 @@
 
 namespace App\Commands\Trust;
 
+use App\Data\GlobalConfigData;
 use App\Traits\InteractsWithTrust;
 use App\Traits\LaraKubeOutput;
 
@@ -63,7 +64,8 @@ class ResetCommand extends Command
         });
 
         // 4. Regenerate system cert
-        $this->withSpin('Generating system cert (console.kube, traefik.kube, …)...', function () {
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $this->withSpin("Generating system cert (console.{$tld}, traefik.{$tld}, …)...", function () {
             @mkdir($this->getAppCertsDir(), 0700, true);
             $this->generateSystemCert();
 
@@ -84,7 +86,7 @@ class ResetCommand extends Command
 
         $this->newLine();
         $this->laraKubeInfo('✅ CA regenerated and trusted.');
-        $this->line('  <fg=gray>Per-app certs (e.g. hospital.kube) will be regenerated automatically on the next</>');
+        $this->line("  <fg=gray>Per-app certs (e.g. hospital.{$tld}) will be regenerated automatically on the next</>");
         $this->line('  <fg=gray>  larakube up  run in each project.</>');
         $this->newLine();
         $this->line('  Restart your browser to pick up the new CA.');

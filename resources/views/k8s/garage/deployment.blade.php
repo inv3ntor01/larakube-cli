@@ -59,11 +59,11 @@ data:
     [s3_api]
     s3_region = "us-east-1"
     api_bind_addr = "[::]:3900"
-    root_domain = ".s3.{{ $config->getName() }}.kube"
+    root_domain = ".s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}"
 
     [s3_web]
     bind_addr = "[::]:3902"
-    root_domain = ".s3.{{ $config->getName() }}.kube"
+    root_domain = ".s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}"
     index = "index.html"
 
     [admin]

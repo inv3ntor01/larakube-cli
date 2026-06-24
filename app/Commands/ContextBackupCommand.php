@@ -17,7 +17,7 @@ class ContextBackupCommand extends Command
     {
         $this->renderHeader();
 
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $home = home_path();
         $config = $home.'/.kube/config';
 
         if (! is_file($config)) {

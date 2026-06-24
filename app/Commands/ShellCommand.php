@@ -101,10 +101,8 @@ class ShellCommand extends Command
                         continue;
                     }
 
-                    // Skip other non-shellable features (like metallb, monitoring, etc.)
-                    if (in_array($val, ['metallb', 'monitoring', 'mailpit'])) {
-                        continue;
-                    }
+                    // Only named cases above are shellable; skip everything else.
+                    continue;
                 }
 
                 $activeOptions[$val] = $label;

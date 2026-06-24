@@ -5,6 +5,7 @@ namespace App\Commands;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ManagesCompanions;
 
 use function Laravel\Prompts\table;
 
@@ -12,7 +13,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class AboutCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ManagesCompanions;
 
     /**
      * The name and signature of the console command.
@@ -147,16 +148,14 @@ class AboutCommand extends Command
 
         // 4. Project URLs
         $this->newLine();
-        $this->laraKubeInfo('Active Service Links');
-        $hosts = $config->getAllHosts($environment);
-
-        if (empty($hosts)) {
+        if (! $this->showServiceLinks($config, $environment)) {
+            $this->laraKubeInfo('Active Service Links');
             $this->line('  <fg=gray>No external hosts configured.</>');
-        } else {
-            foreach ($hosts as $host => $label) {
-                $this->line("  <fg=gray>●</> <fg=blue;options=underscore>https://{$host}</> <fg=gray>($label)</>");
-            }
         }
+
+        // 5. Companion apps (shared, larakube-system) — the real DB/cache/search
+        // consoles, with per-project connection details. Local only; no-ops otherwise.
+        $this->showCompanionAccess($config, $config->getName(), $environment);
 
         return 0;
     }

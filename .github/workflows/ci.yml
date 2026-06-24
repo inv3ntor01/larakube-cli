@@ -89,3 +89,49 @@ jobs:
           make_latest: ${{ github.ref_type == 'tag' && 'true' || 'false' }}
           generate_release_notes: true
           overwrite_files: true
+
+  tap:
+    name: Update Homebrew Tap
+    needs: publish
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CLI repo
+        uses: actions/checkout@v4
+        with:
+          path: cli
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: luchavez-technologies/homebrew-larakube
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Download mac binaries and compute SHA256
+        run: |
+          VERSION="${{ github.ref_name }}"
+          ARM_URL="https://github.com/luchavez-technologies/larakube-cli/releases/download/${VERSION}/larakube-mac-arm"
+          X64_URL="https://github.com/luchavez-technologies/larakube-cli/releases/download/${VERSION}/larakube-mac-x64"
+          curl -fsSL "$ARM_URL" -o /tmp/larakube-mac-arm
+          curl -fsSL "$X64_URL" -o /tmp/larakube-mac-x64
+          echo "SHA_ARM=$(sha256sum /tmp/larakube-mac-arm | awk '{print $1}')" >> $GITHUB_ENV
+          echo "SHA_X64=$(sha256sum /tmp/larakube-mac-x64 | awk '{print $1}')" >> $GITHUB_ENV
+          echo "VERSION=${VERSION#v}" >> $GITHUB_ENV
+
+      - name: Stamp formula with version and SHA256
+        run: |
+          cp cli/homebrew-tap/Formula/larakube.rb tap/Formula/larakube.rb
+          sed -i "s/LARAKUBE_VERSION/${{ env.VERSION }}/g" tap/Formula/larakube.rb
+          sed -i "s/SHA256_MAC_ARM/${{ env.SHA_ARM }}/g" tap/Formula/larakube.rb
+          sed -i "s/SHA256_MAC_X64/${{ env.SHA_X64 }}/g" tap/Formula/larakube.rb
+
+      - name: Commit and push updated formula
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/larakube.rb
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update LaraKube CLI to ${{ github.ref_name }}"
+          git push

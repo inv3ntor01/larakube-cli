@@ -40,7 +40,7 @@ metadata:
   name: grafana
 spec:
   rules:
-    - host: grafana.{{ $config->getName() }}.kube
+    - host: grafana.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /

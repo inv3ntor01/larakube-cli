@@ -492,6 +492,7 @@ namespace: kitchen-sink-local
 
 resources:
   - app-volumes.yaml
+  - reverb-ingress.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
@@ -846,6 +847,31 @@ spec:
   tls:
     - hosts:
         - kitchen-sink.kube
+
+
+--- FILE: overlays/local/reverb-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reverb
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: reverb.kitchen-sink.kube
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: reverb
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - reverb.kitchen-sink.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---

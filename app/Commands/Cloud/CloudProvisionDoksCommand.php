@@ -3,6 +3,7 @@
 namespace App\Commands\Cloud;
 
 use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
 use App\Enums\ManagedProvider;
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
@@ -139,10 +140,12 @@ class CloudProvisionDoksCommand extends Command
 
         // Web domain — skip the {name}.com placeholder and any local .kube host.
         $currentHost = $config->getHost($environment, 'web');
+        $localTldPatterns = array_map(fn ($t) => '.'.$t, GlobalConfigData::ALLOWED_TLDS);
+        $isLocalHost = str_contains((string) $currentHost, '.dev.test')
+            || collect($localTldPatterns)->contains(fn ($p) => str_contains((string) $currentHost, $p));
         $isPlaceholder = ! $currentHost
             || $currentHost === "{$config->getName()}.com"
-            || str_contains((string) $currentHost, '.kube')
-            || str_contains((string) $currentHost, '.dev.test');
+            || $isLocalHost;
 
         $host = text(
             label: "Web domain for '{$environment}'",

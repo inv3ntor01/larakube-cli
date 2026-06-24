@@ -2,12 +2,18 @@
 
 namespace App\Dashboard;
 
+use App\Data\GlobalConfigData;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
 class DashboardConnector
 {
-    protected string $baseUrl = 'https://console.kube';
+    protected string $baseUrl;
+
+    public function __construct()
+    {
+        $this->baseUrl = 'https://console.'.GlobalConfigData::load()->getLocalTld();
+    }
 
     public function isUp(): bool
     {

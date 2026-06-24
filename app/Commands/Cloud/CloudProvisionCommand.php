@@ -85,7 +85,7 @@ class CloudProvisionCommand extends Command
         );
 
         // Resolve ~ in keyPath
-        $keyPath = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $keyPath);
+        $keyPath = str_replace('~', home_path(), $keyPath);
 
         if (! file_exists($keyPath)) {
             $this->laraKubeError("SSH key not found at: {$keyPath}");
@@ -344,16 +344,15 @@ BASH;
     {
         $this->laraKubeInfo('Deploying Traefik (Single-Node Hero) to remote cluster...');
 
-        // Ensure we are using the correct context
-        exec("kubectl config use-context {$contextName}");
-
+        $kubectl = 'kubectl --context '.escapeshellarg($contextName);
         $namespace = 'traefik';
-        shell_exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
+
+        shell_exec("{$kubectl} create namespace {$namespace} --dry-run=client -o yaml | {$kubectl} apply -f -");
 
         // 1. Create ConfigMap for Traefik dynamic configuration
         $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
         file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
-        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+        shell_exec("{$kubectl} create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | {$kubectl} apply -f -");
 
         // 2. Create Secret for SSL certificates
         $certDir = base_path('resources/views/traefik/certificates');
@@ -367,7 +366,7 @@ BASH;
         if ($devPemContent && $devKeyPemContent) {
             file_put_contents($tmpDevPem, $devPemContent);
             file_put_contents($tmpDevKeyPem, $devKeyPemContent);
-            shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
+            shell_exec("{$kubectl} create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | {$kubectl} apply -f -");
         } else {
             $this->laraKubeWarn('Could not find local dev certificates. Skipping SSL secret creation.');
         }
@@ -375,7 +374,7 @@ BASH;
         // 3. Apply Traefik Cloud manifest
         $tmpInstall = sys_get_temp_dir().'/traefik-cloud.yaml';
         file_put_contents($tmpInstall, view('k8s.traefik-cloud', ['email' => $this->getEmail()])->render());
-        shell_exec("kubectl apply -f {$tmpInstall} --request-timeout=60s --validate=false");
+        shell_exec("{$kubectl} apply -f {$tmpInstall} --request-timeout=60s --validate=false");
 
         $this->laraKubeInfo('Traefik deployed and configured with HostPort and ACME (Let\'sEncrypt).');
 

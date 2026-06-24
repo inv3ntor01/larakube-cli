@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithOs;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ResolvesEnvironmentContext;
@@ -10,7 +11,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class K9sCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
+    use InteractsWithEnvironments, InteractsWithOs, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -41,7 +42,7 @@ class K9sCommand extends Command
 
         if (! $hasK9s) {
             $this->laraKubeError('K9s is not installed.');
-            $isLinux = PHP_OS_FAMILY === 'Linux';
+            $isLinux = $this->isLinux();
             $k9sCmd = $isLinux ? 'sudo snap install k9s' : 'brew install k9s';
             $this->warn("  👉 Install it for the best CLI experience: {$k9sCmd}");
 

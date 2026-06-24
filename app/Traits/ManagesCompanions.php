@@ -1,0 +1,362 @@
+<?php
+
+namespace App\Traits;
+
+use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
+use App\Enums\CacheDriver;
+use App\Enums\CompanionDriver;
+use App\Enums\DatabaseDriver;
+
+use function Laravel\Prompts\table;
+
+trait ManagesCompanions
+{
+    protected function deployCompanion(CompanionDriver $companion): void
+    {
+        // Resolve the dev TLD fresh from disk rather than leaning on the shared
+        // `$localTld` view var — that's set once at provider boot, so when
+        // `config:tld` mutates the global TLD and chains `larakube up` in the SAME
+        // process, the shared value is still the old TLD and the companion ingress
+        // host (companion.{tld}) is stranded on it (companion.kube 200,
+        // companion.test 404). Passing it explicitly overrides the stale share, so
+        // a config:tld → up re-points the ingress the same way Mailpit's does.
+        $manifest = view('k8s.companion.global', [
+            'companion' => $companion,
+            'localTld' => GlobalConfigData::load()->getLocalTld(),
+        ])->render();
+        $tmp = sys_get_temp_dir().'/larakube-companion-'.$companion->value.'.yaml';
+        file_put_contents($tmp, $manifest);
+        exec('kubectl apply -f '.escapeshellarg($tmp));
+        @unlink($tmp);
+    }
+
+    protected function removeCompanion(CompanionDriver $companion): void
+    {
+        foreach (['deployment', 'service', 'ingress'] as $kind) {
+            exec("kubectl delete {$kind} ".escapeshellarg($companion->value).' -n larakube-system --ignore-not-found=true 2>/dev/null');
+        }
+    }
+
+    protected function isCompanionInstalled(CompanionDriver $companion): bool
+    {
+        $result = shell_exec('kubectl get deployment '.escapeshellarg($companion->value).' -n larakube-system --no-headers 2>/dev/null');
+
+        return $result !== null && trim($result) !== '';
+    }
+
+    protected function ensureCompanionNamespace(): void
+    {
+        exec('kubectl create namespace larakube-system --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null');
+    }
+
+    /**
+     * Print this project's companion connection details at the end of `larakube up`
+     * (and re-viewable via `companion:list`). Renders as a Laravel Prompts table so
+     * the host/credentials line up in aligned columns instead of long wrapping lines.
+     * Only runs for local; skips silently when no relevant companion is installed.
+     */
+    protected function showCompanionAccess(ConfigData $config, string $appName, string $environment): void
+    {
+        $rows = $this->companionAccessRows($config, $appName, $environment);
+
+        if ($rows === []) {
+            return;
+        }
+
+        $this->newLine();
+        $this->line("  <fg=yellow;options=bold>🔌 Companions — {$appName}</>");
+        table(['Companion', 'URL', 'Host', 'User', 'Password', 'Database'], $rows);
+    }
+
+    /**
+     * Build the connection rows (companion, URL, host, user, password, database) for
+     * this project's installed companions. Host/credentials reflect what the local app
+     * pod actually consumes, so they're correct for self-hosted databases AND Plex
+     * tenants (whose Commons creds live in .env, not the enum defaults). The per-driver
+     * rows are gated on withCompanions — a project that opted out doesn't want LaraKube
+     * managing/showing its data tooling. Mailpit is unconditional cluster-wide infra.
+     * Split out from rendering so it's unit-testable without invoking Prompts table().
+     *
+     * @return array<int, array<int, string>>
+     */
+    protected function companionAccessRows(ConfigData $config, string $appName, string $environment): array
+    {
+        if ($environment !== 'local') {
+            return [];
+        }
+
+        $tld = GlobalConfigData::load()->getLocalTld();
+
+        // Mailpit is always running in larakube-shared — show it unconditionally.
+        $rows = [
+            ['Mailpit', "<fg=blue>https://mailpit.{$tld}</>", '—', '—', '—', '—'],
+        ];
+
+        if (! $config->withCompanions) {
+            return $rows;
+        }
+
+        $db = $config->getDatabase();
+        $cache = $config->getCacheDriver();
+
+        // Resolve the connection the local app pod actually consumes, so host and
+        // credentials are correct for self-hosted databases AND Plex tenants.
+        $conn = $this->resolveConnectionEnv($config->getNamespace($environment), $config->getPath());
+
+        // Fall back to the self-hosted defaults only when a value can't be resolved
+        // (e.g. cluster unreachable and .env carries no DB_* yet).
+        $dbHost = $conn['DB_HOST'] ?? ($db instanceof DatabaseDriver ? "{$db->getPodName()}.{$appName}.svc.cluster.local" : null);
+        $dbUser = $conn['DB_USERNAME'] ?? $db?->dbUsername();
+        $dbPass = $conn['DB_PASSWORD'] ?? null;
+        $dbName = $conn['DB_DATABASE'] ?? 'laravel';
+
+        if ($this->isCompanionInstalled(CompanionDriver::ADMINER)
+            && $db instanceof DatabaseDriver
+            && $db !== DatabaseDriver::SQLITE
+        ) {
+            $rows[] = ['Adminer', "<fg=blue>https://adminer.{$tld}</>", $this->dashOr($dbHost), $this->dashOr($dbUser), $this->dashOr($dbPass), $this->dashOr($dbName)];
+        }
+
+        if ($this->isCompanionInstalled(CompanionDriver::PHPMYADMIN)
+            && $db instanceof DatabaseDriver
+            && in_array($db, [DatabaseDriver::MYSQL, DatabaseDriver::MARIADB], true)
+        ) {
+            $rows[] = ['phpMyAdmin', "<fg=blue>https://phpmyadmin.{$tld}</>", $this->dashOr($dbHost), $this->dashOr($dbUser), $this->dashOr($dbPass), $this->dashOr($dbName)];
+        }
+
+        if ($this->isCompanionInstalled(CompanionDriver::PGADMIN)
+            && $db === DatabaseDriver::POSTGRESQL
+        ) {
+            $port = $conn['DB_PORT'] ?? '5432';
+            $host = $dbHost !== null ? "{$dbHost}:{$port}" : '—';
+            $rows[] = ['pgAdmin', "<fg=blue>https://pgadmin.{$tld}</>", $host, $this->dashOr($dbUser), $this->dashOr($dbPass), $this->dashOr($dbName)];
+        }
+
+        if ($this->isCompanionInstalled(CompanionDriver::REDISINSIGHT)
+            && $cache === CacheDriver::REDIS
+        ) {
+            $redisHost = $conn['REDIS_HOST'] ?? "redis.{$appName}.svc.cluster.local";
+            $redisPort = $conn['REDIS_PORT'] ?? '6379';
+            $redisPass = $conn['REDIS_PASSWORD'] ?? null;
+            $pass = ($redisPass === 'null') ? null : $redisPass;
+            $rows[] = ['RedisInsight', "<fg=blue>https://redisinsight.{$tld}</>", "{$redisHost}:{$redisPort}", '—', $this->dashOr($pass), '—'];
+        }
+
+        if ($this->isCompanionInstalled(CompanionDriver::MONGO_EXPRESS)
+            && $db === DatabaseDriver::MONGODB
+        ) {
+            $mongoHost = $dbHost ?? "mongodb.{$appName}.svc.cluster.local";
+            $rows[] = ['Mongo Express', "<fg=blue>https://mongo-express.{$tld}</>", "{$mongoHost}:27017", $this->dashOr($dbUser), $this->dashOr($dbPass), $this->dashOr($dbName)];
+        }
+
+        return $rows;
+    }
+
+    /** Table-cell value, or a dim em-dash when null/empty. */
+    protected function dashOr(?string $value): string
+    {
+        return ($value === null || $value === '') ? '—' : $value;
+    }
+
+    /**
+     * Resolve the service-connection env the local app pod actually consumes:
+     * the live `laravel-config` ConfigMap + `laravel-secrets` Secret (which carry
+     * self-hosted DB_ and REDIS_ vars via envFrom) overlaid on the project's
+     * mounted .env — where a Plex tenant's Commons credentials live, since those are
+     * deliberately kept out of the ConfigMap/Secret. envFrom wins over .env in the
+     * pod, so the cluster values are merged last. Read-only; degrades to whatever
+     * is available when the cluster is unreachable.
+     *
+     * @return array<string, string>
+     */
+    protected function resolveConnectionEnv(string $namespace, string $projectPath): array
+    {
+        $env = [];
+
+        // Lowest precedence: the .env the hostPath-mounted pod reads.
+        $envPath = $projectPath.'/.env';
+        if (is_file($envPath)) {
+            $env = $this->parseDotenvVars((string) file_get_contents($envPath));
+        }
+
+        // Highest precedence: what the pod receives via envFrom (self-hosted services).
+        return array_merge(
+            $env,
+            $this->readClusterEnvVars('configmap', 'laravel-config', $namespace, false),
+            $this->readClusterEnvVars('secret', 'laravel-secrets', $namespace, true),
+        );
+    }
+
+    /**
+     * Parse KEY=VALUE pairs from a .env body. Skips comments/blank lines and strips
+     * matching surrounding quotes. Adequate for connection vars (no multiline values).
+     *
+     * @return array<string, string>
+     */
+    protected function parseDotenvVars(string $content): array
+    {
+        $vars = [];
+
+        foreach (preg_split('/\r\n|\r|\n/', $content) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#') || ! str_contains($line, '=')) {
+                continue;
+            }
+
+            [$key, $value] = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+
+            if (strlen($value) >= 2 && ($value[0] === '"' || $value[0] === "'") && $value[-1] === $value[0]) {
+                $value = substr($value, 1, -1);
+            }
+
+            if ($key !== '') {
+                $vars[$key] = $value;
+            }
+        }
+
+        return $vars;
+    }
+
+    /**
+     * Read a ConfigMap or Secret's `.data` map from the cluster as KEY => value.
+     * Secret values are base64-decoded. Returns [] when the object is missing or
+     * the cluster is unreachable. `-o json` (not jsonpath '{.data}', which emits
+     * non-JSON Go-map syntax) so the payload is parseable. Read-only.
+     *
+     * @return array<string, string>
+     */
+    protected function readClusterEnvVars(string $kind, string $name, string $namespace, bool $base64): array
+    {
+        $json = shell_exec(
+            'kubectl get '.escapeshellarg($kind).' '.escapeshellarg($name)
+            .' -n '.escapeshellarg($namespace).' -o json 2>/dev/null',
+        );
+
+        if ($json === null || trim((string) $json) === '') {
+            return [];
+        }
+
+        $parsed = json_decode((string) $json, true);
+        $data = is_array($parsed) ? ($parsed['data'] ?? null) : null;
+
+        if (! is_array($data)) {
+            return [];
+        }
+
+        $vars = [];
+        foreach ($data as $key => $value) {
+            $vars[(string) $key] = $base64 ? (string) base64_decode((string) $value, true) : (string) $value;
+        }
+
+        return $vars;
+    }
+
+    /**
+     * Ensure the cluster-wide companion(s) this project's database/cache need are
+     * running and routed on the current TLD — re-applied every `up` (idempotent),
+     * not just installed once, so an ingress doesn't get stranded on an old TLD
+     * after `config:tld`. Only when withCompanions is enabled — a project that
+     * opts out doesn't want LaraKube managing data tooling for it at all, so this
+     * (and any auto-registration) is fully skipped.
+     *
+     * Each driver maps to its single best-fit companion rather than spinning up
+     * every tool that could theoretically work — running three different admin
+     * UIs for one MySQL database defeats the point of sharing companions
+     * cluster-wide to begin with.
+     *
+     * Full persistent auto-registration (no manual server entry needed) is only
+     * implemented for phpMyAdmin today — it's the only one of these tools verified
+     * to support a hot-reloadable multi-server list (PMA_HOSTS). pgAdmin, Mongo
+     * Express, and RedisInsight get auto-installed here but still rely on the
+     * pre-filled guide link in showCompanionAccess() until their own
+     * auto-registration mechanics are verified against a live cluster.
+     */
+    protected function ensureProjectCompanions(ConfigData $config, string $appName): void
+    {
+        if (! $config->withCompanions) {
+            return;
+        }
+
+        $db = $config->getDatabase();
+        $cache = $config->getCacheDriver();
+
+        $dbCompanion = match (true) {
+            in_array($db, [DatabaseDriver::MYSQL, DatabaseDriver::MARIADB], true) => CompanionDriver::PHPMYADMIN,
+            $db === DatabaseDriver::POSTGRESQL => CompanionDriver::PGADMIN,
+            $db === DatabaseDriver::MONGODB => CompanionDriver::MONGO_EXPRESS,
+            default => null,
+        };
+
+        $needed = array_filter([
+            $dbCompanion,
+            $cache === CacheDriver::REDIS ? CompanionDriver::REDISINSIGHT : null,
+        ]);
+
+        // Re-apply unconditionally (kubectl apply is idempotent) rather than only
+        // when missing — otherwise a companion installed under a previous TLD keeps
+        // its stale ingress host (e.g. phpmyadmin.kube) after `config:tld`, so its
+        // advertised URL (phpmyadmin.localhost) 404s. Re-applying re-renders the
+        // ingress on the current TLD; an unchanged manifest is a no-op.
+        foreach ($needed as $companion) {
+            $this->ensureCompanionNamespace();
+            $this->deployCompanion($companion);
+        }
+
+        $this->refreshPhpMyAdminServers($config, $appName);
+    }
+
+    /**
+     * Keep phpMyAdmin aware of this project's MySQL/MariaDB server.
+     *
+     * Stores the known FQDN list in ConfigMap `phpmyadmin-hosts` in larakube-system,
+     * patches the Deployment's PMA_HOSTS env var to match, then triggers a rolling
+     * restart so the change takes effect.
+     */
+    protected function refreshPhpMyAdminServers(ConfigData $config, string $appName): void
+    {
+        if (! $this->isCompanionInstalled(CompanionDriver::PHPMYADMIN)) {
+            return;
+        }
+
+        $db = $config->getDatabase();
+
+        if (! $db instanceof DatabaseDriver || ! in_array($db, [DatabaseDriver::MYSQL, DatabaseDriver::MARIADB], true)) {
+            return;
+        }
+
+        $fqdn = "{$db->getPodName()}.{$appName}.svc.cluster.local";
+
+        $existing = shell_exec("kubectl get configmap phpmyadmin-hosts -n larakube-system -o jsonpath='{.data.hosts}' 2>/dev/null") ?? '';
+        $existing = trim((string) $existing);
+
+        $hosts = $existing !== '' ? explode(',', $existing) : [];
+        $hosts = array_values(array_unique(array_filter(array_map('trim', $hosts))));
+
+        if (! in_array($fqdn, $hosts, true)) {
+            $hosts[] = $fqdn;
+        }
+
+        $hostsStr = implode(',', $hosts);
+
+        $yaml = implode("\n", [
+            'apiVersion: v1',
+            'kind: ConfigMap',
+            'metadata:',
+            '  name: phpmyadmin-hosts',
+            '  namespace: larakube-system',
+            'data:',
+            "  hosts: \"{$hostsStr}\"",
+        ]);
+
+        $tmp = sys_get_temp_dir().'/larakube-pma-hosts.yaml';
+        file_put_contents($tmp, $yaml);
+        exec('kubectl apply -f '.escapeshellarg($tmp).' 2>/dev/null');
+        @unlink($tmp);
+
+        exec('kubectl set env deployment/phpmyadmin PMA_HOSTS='.escapeshellarg($hostsStr).' -n larakube-system 2>/dev/null');
+        exec('kubectl rollout restart deployment/phpmyadmin -n larakube-system 2>/dev/null');
+    }
+}

@@ -78,9 +78,9 @@ spec:
             - containerPort: 8080
           env:
             - name: APP_URL
-              value: https://console.kube
+              value: https://{{ $host }}
             - name: ASSET_URL
-              value: https://console.kube
+              value: https://{{ $host }}
             - name: APP_ENV
               value: production
             - name: APP_DEBUG
@@ -129,26 +129,7 @@ spec:
             path: {{ $workspacePath }}
             type: Directory
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: larakube-dashboard
-  namespace: larakube-system
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  rules:
-    - host: console.kube
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: larakube-dashboard
-                port:
-                  number: 80
-  tls:
-    - hosts:
-        - console.kube
+{{-- Single source of truth for the console.{tld} Ingress. Also rendered
+     standalone by ensureConsoleIngress() so a `config:tld` change re-points the
+     host on the next `up` instead of leaving it stale (console.kube → 404). --}}
+@include('k8s.console-ingress')

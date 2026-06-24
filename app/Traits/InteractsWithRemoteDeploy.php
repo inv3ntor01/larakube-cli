@@ -18,6 +18,8 @@ use App\Enums\RegistryProvider;
  */
 trait InteractsWithRemoteDeploy
 {
+    use DeploysMonitoringExporters;
+
     /** The kube-context cloud:provision creates for a host. Pure. */
     public function remoteContextName(string $ip): string
     {
@@ -473,7 +475,13 @@ trait InteractsWithRemoteDeploy
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $image);
+        $result = $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $image);
+
+        if ($result === 0) {
+            $this->ensureMonitoringExporters($config, $namespace, 'kubectl --context '.escapeshellarg($context));
+        }
+
+        return $result;
     }
 
     /**
@@ -733,6 +741,9 @@ trait InteractsWithRemoteDeploy
         } finally {
             @unlink($kubeconfigPath);
         }
+
+        // Deploy monitoring exporters if monitoring is active on this cluster.
+        $this->ensureMonitoringExporters($config, $namespace, 'kubectl --context '.escapeshellarg($adminContext));
 
         $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' (namespace-scoped, ns: {$namespace}).");
 

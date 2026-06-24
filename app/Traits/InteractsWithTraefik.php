@@ -2,6 +2,10 @@
 
 namespace App\Traits;
 
+use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
+use App\Enums\SharedClusterService;
+
 trait InteractsWithTraefik
 {
     use LaraKubeOutput, ManagesLocalCa;
@@ -34,6 +38,24 @@ trait InteractsWithTraefik
             return true;
         });
 
+        // Bring up the shared services Traefik fronts (Mailpit + the dashboard
+        // ingress) so a standalone `traefik:setup` lands them too. The same
+        // registry is reconciled on every `up` via reconcileSharedCluster().
+        // Both are local-only services, so their host derives from the dev TLD.
+        $localTld = GlobalConfigData::load()->getLocalTld();
+
+        $this->withSpin('Starting shared Mailpit (catch-all SMTP)...', function () use ($localTld) {
+            $this->applySharedService(SharedClusterService::MAILPIT, SharedClusterService::MAILPIT->hostFor($localTld));
+
+            return true;
+        });
+
+        $this->withSpin('Publishing Traefik dashboard ingress...', function () use ($localTld) {
+            $this->applySharedService(SharedClusterService::TRAEFIK_DASHBOARD, SharedClusterService::TRAEFIK_DASHBOARD->hostFor($localTld));
+
+            return true;
+        });
+
         @unlink($tmpInstall);
     }
 
@@ -52,12 +74,130 @@ trait InteractsWithTraefik
 
     /**
      * Ensure this app's cert is in the Traefik cert pool.
-     * Called on every `larakube up` so new apps join automatically.
+     * Called on every `larakube up` so new apps join automatically. Pass the
+     * project's getLocalTld() so a project-pinned TLD override gets a
+     * matching cert; omit it to fall back to the developer's global TLD.
+     *
+     * Also re-validates the system/default cert (console, traefik, mailpit,
+     * companions) against the current global TLD — without this, changing the
+     * TLD via `config:tld` left the default cert frozen on the old TLD, so
+     * shared hosts like mailpit.{tld} served a mismatched cert (no valid HTTPS)
+     * until Traefik was reinstalled. ensureSystemCertExists() is a no-op when
+     * the cert already covers the current TLD.
      */
-    protected function refreshTraefikCerts(string $appName): void
+    protected function refreshTraefikCerts(string $appName, ?string $tld = null): void
     {
-        $this->ensureAppCertExists($appName);
+        $this->ensureSystemCertExists();
+        $this->ensureAppCertExists($appName, $tld);
         $this->applyTraefikCertResources('traefik');
+    }
+
+    /**
+     * Reconcile every cluster-wide, TLD-carrying shared artifact on a local `up`.
+     *
+     * Certs first (so every shared host below is served valid HTTPS by the
+     * default cert), then each registered SharedClusterService. The set of
+     * shared services is the single registry in the SharedClusterService enum —
+     * add a new cluster-wide global (Uptime Kuma, a status page, …) as a case
+     * there and it is reconciled here automatically, with no new method or call
+     * site. Every step is internally guarded + idempotent, so this is safe to
+     * run unconditionally on each local up — `up` is the single propagation
+     * point for a `config:tld` change.
+     */
+    protected function reconcileSharedCluster(ConfigData $config): void
+    {
+        $appName = $config->getName();
+        $tld = $config->getLocalTld();
+
+        $this->withSpin('Syncing local TLS certificates...', function () use ($appName, $tld) {
+            $this->refreshTraefikCerts($appName, $tld);
+
+            return true;
+        });
+
+        // This is the LOCAL up path, so we reconcile only the services that target
+        // the local environment (Mailpit, the Console, the Traefik dashboard, and
+        // the local Grafana ingress). Cloud-targeting reconciles (prod Grafana)
+        // are driven by their own installers (monitor:init --context).
+        //
+        // Each host is resolved through getSharedServiceHost(): a name-less GLOBAL
+        // host on the developer's global TLD by default, but a .larakube.json
+        // hosts[serviceKey] entry can override it — the same map the cloud paths
+        // read, so host resolution is data-driven, not Grafana-special-cased.
+        foreach (SharedClusterService::cases() as $service) {
+            if (! $service->targetsEnvironment('local')) {
+                continue;
+            }
+
+            $this->withSpin($service->reconcileLabel(), function () use ($service, $config) {
+                $this->applySharedService($service, $config->getSharedServiceHost($service, 'local'));
+
+                return true;
+            });
+        }
+    }
+
+    /**
+     * Render a shared service's manifest at the given host and kubectl-apply it.
+     *
+     * The caller resolves $host (via SharedClusterService::hostFor()) from the
+     * target environment's domain — the dev TLD locally, the env's real domain on
+     * a cloud cluster — so this method stays environment-agnostic.
+     *
+     * Install-gated services (those with a presenceProbe) are skipped when their
+     * probe finds nothing — `up` re-points an existing install but never auto-
+     * installs one, so a declined service stays declined. Always-on services
+     * (no probe) get their namespace auto-created first. Idempotent: an unchanged
+     * manifest is a no-op; a `config:tld` change re-points the Ingress host.
+     */
+    protected function applySharedService(SharedClusterService $service, string $host): void
+    {
+        $probe = $service->presenceProbe();
+        if ($probe !== null && trim((string) shell_exec("kubectl get {$probe} --no-headers 2>/dev/null")) === '') {
+            return;
+        }
+
+        if ($service->namespace() !== null) {
+            exec('kubectl create namespace '.escapeshellarg($service->namespace()).' --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null');
+        }
+
+        $tmp = sys_get_temp_dir()."/larakube-shared-{$service->value}.yaml";
+        file_put_contents($tmp, view($service->template(), ['host' => $host])->render());
+        shell_exec("kubectl apply -f {$tmp} 2>/dev/null");
+        @unlink($tmp);
+
+        $this->syncSharedServiceDeploymentEnv($service, $host);
+    }
+
+    /**
+     * Re-sync any host-carrying Deployment env that a service's Ingress-only
+     * reconcile doesn't touch (the Console's APP_URL/ASSET_URL). Without this a
+     * config:tld change re-points the ingress but leaves the Deployment serving
+     * on the old host until `console --update`. Idempotent: `kubectl set env`
+     * only rolls the Deployment when a value actually changes, and the whole
+     * thing is skipped unless the Deployment already exists.
+     */
+    protected function syncSharedServiceDeploymentEnv(SharedClusterService $service, string $host): void
+    {
+        $sync = $service->deploymentEnvSync($host);
+        if ($sync === null) {
+            return;
+        }
+
+        $deployment = escapeshellarg($sync['deployment']);
+        $namespace = escapeshellarg($sync['namespace']);
+
+        $exists = trim((string) shell_exec("kubectl get deployment {$deployment} -n {$namespace} --no-headers 2>/dev/null"));
+        if ($exists === '') {
+            return;
+        }
+
+        $pairs = '';
+        foreach ($sync['env'] as $key => $value) {
+            $pairs .= ' '.escapeshellarg("{$key}={$value}");
+        }
+
+        shell_exec("kubectl set env deployment {$deployment} -n {$namespace}{$pairs} 2>/dev/null");
     }
 
     /**

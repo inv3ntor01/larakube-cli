@@ -2,6 +2,8 @@
 
 namespace App\Commands;
 
+use App\Data\GlobalConfigData;
+use App\Enums\SharedClusterService;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
 use App\Traits\InteractsWithSslTrust;
@@ -63,7 +65,7 @@ class ConsoleCommand extends Command
         // Default behavior: Ask the user or promote K9s
         $this->info('  LaraKube offers two ways to monitor your cluster:');
         $this->line('  1. <fg=cyan;options=bold>K9s</> (Recommended) - Powerful, real-time terminal UI.');
-        $this->line('  2. <fg=yellow;options=bold>Web UI</> - Clean, web-based management at console.kube.');
+        $this->line('  2. <fg=yellow;options=bold>Web UI</> - Clean, web-based management at console.'.GlobalConfigData::load()->getLocalTld().'.');
         $this->newLine();
 
         $choice = $this->choice('Which would you like to open?', [
@@ -91,7 +93,8 @@ class ConsoleCommand extends Command
         $this->newLine();
 
         // 🛡 Automated Host Mapping & SSL Trust
-        $this->ensureHostsAreSet(['console.kube', 'traefik.kube'], 'larakube-system');
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $this->ensureHostsAreSet(['console.'.$tld, 'traefik.'.$tld], 'larakube-system');
 
         if (! $this->isSslTrusted()) {
             $this->newLine();
@@ -111,9 +114,16 @@ class ConsoleCommand extends Command
                     // Resolve the absolute path to the currently running LaraKube binary
                     $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
 
+                    // The Console is a local-only shared service, so its ingress
+                    // host (console.{tld}) derives from the dev TLD. Passing it
+                    // explicitly feeds the @include('k8s.console-ingress') partial,
+                    // the single source of truth also reconciled on every `up`.
+                    $consoleHost = SharedClusterService::CONSOLE->hostFor(GlobalConfigData::load()->getLocalTld());
+
                     $manifest = view('k8s.system-dashboard', [
                         'binaryPath' => $binaryPath,
                         'workspacePath' => $workspace,
+                        'host' => $consoleHost,
                     ])->render();
 
                     $tmp = sys_get_temp_dir().'/larakube-dashboard.yaml';
@@ -126,7 +136,7 @@ class ConsoleCommand extends Command
             }
         }
 
-        $url = 'https://console.kube';
+        $url = 'https://console.'.GlobalConfigData::load()->getLocalTld();
 
         $this->laraKubeInfo("Opening: {$url}");
 

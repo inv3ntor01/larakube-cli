@@ -19,7 +19,9 @@ use App\Enums\PackageManager;
 use App\Enums\PhpVersion;
 use App\Enums\ScoutDriver;
 use App\Enums\ServerVariation;
+use App\Enums\SharedClusterService;
 use App\Enums\StorageDriver;
+use App\Traits\InteractsWithJsonFile;
 use App\Traits\LaraKubeOutput;
 use BackedEnum;
 use Illuminate\Support\Str;
@@ -28,7 +30,7 @@ use Spatie\LaravelData\Data;
 
 class ConfigData extends Data
 {
-    use LaraKubeOutput;
+    use InteractsWithJsonFile, LaraKubeOutput;
 
     const string CONFIG_FILE = '.larakube.json';
 
@@ -58,6 +60,13 @@ class ConfigData extends Data
         public ?PhpVersion $phpVersion = null,
         public ?OperatingSystem $os = null,
         public ?string $email = null,
+        /**
+         * Project-pinned local TLD override (e.g. 'test'), committed in
+         * .larakube.json so every collaborator's local cluster routes this
+         * project the same way regardless of their personal global TLD.
+         * Null means "follow the developer's global TLD" (the default).
+         */
+        public ?string $localTld = null,
         public array $additionalExtensions = [],
         /** @var array<LaravelFeature> */
         public array $features = [],
@@ -208,6 +217,23 @@ class ConfigData extends Data
     public function setName(string $name): void
     {
         $this->name = $name;
+    }
+
+    /** This project's effective local TLD: its own pinned override, or the developer's global default. */
+    public function getLocalTld(): string
+    {
+        return $this->localTld ?? GlobalConfigData::load()->getLocalTld();
+    }
+
+    public function hasLocalTld(): bool
+    {
+        return ! is_null($this->localTld);
+    }
+
+    /** Pin (or, with null, clear) this project's local TLD override. */
+    public function setLocalTld(?string $tld): void
+    {
+        $this->localTld = $tld === null ? null : ltrim(strtolower(trim($tld)), '.');
     }
 
     public function getInfrastructurePath(): string
@@ -703,13 +729,14 @@ class ConfigData extends Data
 
     /**
      * Resolved web hostname for an environment — the env's configured `web`
-     * host, or the local .kube fallback. Used by ingress generation so
+     * host, or the local TLD fallback (this project's own override, or the
+     * developer's global default). Used by ingress generation so
      * every environment routes to its own domain.
      */
     public function getWebHost(string $environment): string
     {
         return $this->getEnvironment($environment)?->hosts['web']
-            ?? "{$this->getName()}.kube";
+            ?? "{$this->getName()}.".$this->getLocalTld();
     }
 
     public function getProductionHost(): string
@@ -926,6 +953,26 @@ class ConfigData extends Data
     public function setAdditionalExtensions(array $exts): self
     {
         $this->additionalExtensions = $exts;
+
+        return $this;
+    }
+
+    /** Append a single PHP extension, keeping the list unique. */
+    public function addAdditionalExtension(string $extension): self
+    {
+        if (! in_array($extension, $this->additionalExtensions, true)) {
+            $this->additionalExtensions[] = $extension;
+        }
+
+        return $this;
+    }
+
+    /** Drop a single PHP extension, re-indexing the list. */
+    public function removeAdditionalExtension(string $extension): self
+    {
+        $this->additionalExtensions = array_values(
+            array_filter($this->additionalExtensions, fn ($ext) => $ext !== $extension),
+        );
 
         return $this;
     }
@@ -1210,7 +1257,7 @@ class ConfigData extends Data
             return "https://{$webHost}";
         }
 
-        return "https://{$this->getName()}.kube";
+        return "https://{$this->getName()}.".$this->getLocalTld();
     }
 
     /**
@@ -1220,9 +1267,10 @@ class ConfigData extends Data
      *   1. Per-service explicit host on EnvironmentData (e.g. reverb
      *      lives on its own subdomain like ws.example.com that does NOT
      *      share the web host's prefix scheme).
-     *   2. Local env uses the `{service}.{name}.kube` pattern.
+     *   2. Local env uses the `{service}.{name}.{tld}` pattern (this
+     *      project's own TLD override, or the developer's global default).
      *   3. Non-local env with a web host → `{service}-{webHost}` prefix.
-     *   4. Fallback: `{service}.{name}.kube` (so a cloud env without
+     *   4. Fallback: `{service}.{name}.{tld}` (so a cloud env without
      *      hosts configured still produces something usable for previews).
      */
     public function getServiceHost(string $service, string $environment = 'local'): string
@@ -1234,14 +1282,49 @@ class ConfigData extends Data
         }
 
         if ($environment === 'local') {
-            return "{$service}.{$this->getName()}.kube";
+            return "{$service}.{$this->getName()}.".$this->getLocalTld();
         }
 
         if ($envData && isset($envData->hosts['web'])) {
             return "{$service}-{$envData->hosts['web']}";
         }
 
-        return "{$service}.{$this->getName()}.kube";
+        return "{$service}.{$this->getName()}.".$this->getLocalTld();
+    }
+
+    /**
+     * Resolve a cluster-wide shared service's external host for an environment.
+     *
+     * Parallels getServiceHost() but for the name-less GLOBAL hosts that live
+     * OUTSIDE any project namespace (Grafana, Mailpit, the Console, the Traefik
+     * dashboard, …): they carry NO project-name segment. Resolution order
+     * (first match wins) — the same hosts-map mechanism as web/reverb/s3, so a
+     * cloud Grafana host is just another `.larakube.json` entry to hand-edit:
+     *   1. Explicit per-env override in .larakube.json (hosts[serviceKey]).
+     *   2. Local env → {prefix}.{global TLD}. Always the developer's GLOBAL tld,
+     *      never a project tld override — these hosts are shared cluster-wide,
+     *      so they don't follow a single project's .larakube.json localTld.
+     *   3. Non-local env with a web host → {prefix}-{webHost} (same derive scheme
+     *      as getServiceHost; e.g. grafana-app.example.com until overridden).
+     *   4. Fallback → {prefix}.{global TLD}.
+     */
+    public function getSharedServiceHost(SharedClusterService $service, string $environment = 'local'): string
+    {
+        $envData = $this->getEnvironment($environment);
+
+        if ($envData && isset($envData->hosts[$service->value])) {
+            return $envData->hosts[$service->value];
+        }
+
+        if ($environment === 'local') {
+            return $service->hostFor(GlobalConfigData::load()->getLocalTld());
+        }
+
+        if ($envData && isset($envData->hosts['web'])) {
+            return "{$service->hostPrefix()}-{$envData->hosts['web']}";
+        }
+
+        return $service->hostFor(GlobalConfigData::load()->getLocalTld());
     }
 
     public function getPhpImage(bool $isCli = false): string
@@ -1269,6 +1352,17 @@ class ConfigData extends Data
             'APP_URL' => $this->getAppUrl($environment),
             'ASSET_URL' => $this->getAppUrl($environment),
         ], $envs);
+
+        if ($environment === 'local') {
+            // Shared Mailpit in larakube-shared handles all local outbound mail.
+            $envs = array_merge($envs, [
+                'MAIL_MAILER' => 'smtp',
+                'MAIL_HOST' => 'mailpit.larakube-shared.svc.cluster.local',
+                'MAIL_PORT' => '1025',
+                'MAIL_USERNAME' => 'null',
+                'MAIL_ENCRYPTION' => 'null',
+            ]);
+        }
 
         if ($environment === 'local' && $this->frontend?->requiresNodePod()) {
             $envs['VITE_URL'] = 'https://'.$this->getServiceHost('vite', 'local');
@@ -1300,6 +1394,11 @@ class ConfigData extends Data
     public function getAllSecretEnvironmentVariables(string $environment = 'local'): array
     {
         $envs = $this->serverVariation?->getSecretEnvironmentVariables($this, $environment) ?? [];
+
+        if ($environment === 'local') {
+            $envs['MAIL_PASSWORD'] = 'null';
+        }
+
         foreach ($this->getComponents($environment) as $component) {
             if ($component instanceof HasEnvironmentVariables && ! ($component instanceof ServerVariation)) {
                 if ($this->isPlexBacked($component, $environment)) {
@@ -1441,17 +1540,15 @@ class ConfigData extends Data
             throw new RuntimeException("LaraKube DNA not found at: {$path}");
         }
 
-        $data = json_decode((string) file_get_contents($path), true) ?: [];
+        $data = self::readJsonFile($path) ?? [];
 
         // Merge operator-local cloud connections from the gitignored local file
         // (it wins over anything left in the committed blueprint during migration).
         $localPath = "$directory/".self::LOCAL_CONFIG_FILE;
-        if (file_exists($localPath)) {
-            $local = json_decode((string) file_get_contents($localPath), true) ?: [];
-            foreach (($local['environments'] ?? []) as $env => $envLocal) {
-                if (isset($envLocal['cloud'])) {
-                    $data['environments'][$env]['cloud'] = $envLocal['cloud'];
-                }
+        $local = self::readJsonFile($localPath) ?? [];
+        foreach (($local['environments'] ?? []) as $env => $envLocal) {
+            if (isset($envLocal['cloud'])) {
+                $data['environments'][$env]['cloud'] = $envLocal['cloud'];
             }
         }
 
@@ -1498,12 +1595,12 @@ class ConfigData extends Data
             $local['environments'][$env] = ['cloud' => $cloud];
         }
 
-        file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        self::atomicWriteJson($filePath, $data);
 
         // Write/refresh the local file only when there's a connection to persist,
         // and make sure it's gitignored.
         if ($local['environments'] !== []) {
-            file_put_contents("$directory/".self::LOCAL_CONFIG_FILE, json_encode($local, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            self::atomicWriteJson("$directory/".self::LOCAL_CONFIG_FILE, $local);
             self::ensureGitignored($directory, self::LOCAL_CONFIG_FILE);
         }
     }

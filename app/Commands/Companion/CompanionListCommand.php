@@ -1,0 +1,60 @@
+<?php
+
+namespace App\Commands\Companion;
+
+use App\Data\GlobalConfigData;
+use App\Enums\CompanionDriver;
+use App\Traits\InteractsWithProjectConfig;
+use App\Traits\LaraKubeOutput;
+use App\Traits\ManagesCompanions;
+
+use function Laravel\Prompts\table;
+
+use LaravelZero\Framework\Commands\Command;
+
+class CompanionListCommand extends Command
+{
+    use InteractsWithProjectConfig, LaraKubeOutput, ManagesCompanions;
+
+    protected $signature = 'companion:list';
+
+    protected $description = 'List available and installed companion apps';
+
+    public function handle(): int
+    {
+        $this->renderHeader();
+        $this->laraKubeInfo('Companion Apps');
+        $this->line('');
+
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $rows = [];
+
+        foreach (CompanionDriver::cases() as $companion) {
+            $installed = $this->isCompanionInstalled($companion);
+
+            $rows[] = [
+                $companion->getLabel(),
+                $installed ? '<fg=green>✔ Installed</>' : '<fg=gray>Available</>',
+                $installed ? "https://{$companion->value}.{$tld}" : '—',
+                $companion->getDescription(),
+            ];
+        }
+
+        table(['Companion', 'Status', 'URL', 'Description'], $rows);
+
+        // When run inside a LaraKube project, append the same per-project
+        // connection block `larakube up` prints — so the FQDN hints
+        // (e.g. mysql.<project>.svc.cluster.local) are re-viewable on demand
+        // without a full `up`. Reuses showCompanionAccess() so the two never drift.
+        if ($this->isLaraKubeProject(false) && ($config = $this->getProjectConfig())) {
+            $appName = $config->getName() ?? basename(getcwd());
+            $this->showCompanionAccess($config, $appName, 'local');
+        }
+
+        $this->line('');
+        $this->line('  <fg=gray>Run</> <fg=yellow>larakube companion:add</> <fg=gray>to add a companion.</>');
+        $this->line('  <fg=gray>Run</> <fg=yellow>larakube companion:remove <name></> <fg=gray>to remove one.</>');
+
+        return 0;
+    }
+}

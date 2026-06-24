@@ -123,8 +123,11 @@ class BundleInstallCommand extends Command
         }
 
         // Make the k3s kubeconfig available at the standard path so kubectl, k9s,
-        // and other tools work without needing KUBECONFIG set explicitly.
-        $homeDir = getenv('HOME') ?: '/root';
+        // and other tools work without needing KUBECONFIG set explicitly. This
+        // script requires root throughout (update-ca-certificates, /etc/rancher,
+        // systemctl, /usr/local/bin), so root's home is always /root regardless
+        // of $HOME — which varies with the operator's sudoers env_reset config.
+        $homeDir = '/root';
         passthru('mkdir -p '.escapeshellarg("{$homeDir}/.kube").' && cp /etc/rancher/k3s/k3s.yaml '.escapeshellarg("{$homeDir}/.kube/config"));
 
         if (file_exists('./k9s')) {
@@ -132,6 +135,17 @@ class BundleInstallCommand extends Command
             passthru('cp k9s /usr/local/bin/k9s');
             passthru('chmod +x /usr/local/bin/k9s');
             $this->laraKubeInfo('✅ k9s installed at /usr/local/bin/k9s');
+        }
+
+        $tunnelToken = null;
+        if (($bundleManifest['tunnelEnabled'] ?? false) && file_exists('./cloudflared')) {
+            $this->laraKubeInfo('Cloudflare Tunnel detected in bundle.');
+            $this->line('  <fg=gray>Create a tunnel at:</> <fg=cyan>https://one.dash.cloudflare.com → Zero Trust → Networks → Tunnels</>');
+            $this->line('  <fg=gray>Choose "Cloudflared" → copy the token from the install command.</>');
+            $tunnelToken = \Laravel\Prompts\password(
+                label: 'Cloudflare tunnel token (leave blank to skip)',
+                placeholder: 'eyJhIjoiM...',
+            );
         }
 
         $this->laraKubeInfo('Waiting for K3s containerd to become ready...');
@@ -317,11 +331,49 @@ class BundleInstallCommand extends Command
             ['public' => $public, 'secret' => $secret] = $this->splitEnvForK8s($mergedLines, $knownSecrets);
         }
 
-        // 6. Generate CA+cert + wire Traefik TLSStore
-        $this->laraKubeInfo('Generating secure local CA and TLS certificates...');
+        // 6. Company CA trust + TLS certificate generation
+        $bundledCaCrt = getcwd().'/ca/company-ca.crt';
+        $bundledCaKey = getcwd().'/ca/company-ca.key';
+        $caMode = $bundleManifest['caMode'] ?? null;
+
+        if ($caMode !== null && file_exists($bundledCaCrt)) {
+            $this->laraKubeInfo('Installing company CA certificate...');
+
+            // Install into the OS trust store so curl, apt, and system tools trust
+            // the company's internal services (private registries, LDAP, etc.).
+            passthru('cp '.escapeshellarg($bundledCaCrt).' /usr/local/share/ca-certificates/company-ca.crt');
+            passthru('update-ca-certificates');
+
+            // Trust in containerd so k3s can pull from private registries signed by
+            // the company CA without TLS errors.
+            $registriesYaml = '/etc/rancher/k3s/registries.yaml';
+            if (! file_exists($registriesYaml)) {
+                @mkdir(dirname($registriesYaml), 0755, true);
+                file_put_contents($registriesYaml, <<<'YAML'
+                configs:
+                  "*":
+                    tls:
+                      ca_file: /usr/local/share/ca-certificates/company-ca.crt
+                YAML);
+            }
+
+            if ($caMode === 'full_sign') {
+                $this->laraKubeInfo('Full-sign mode: server certificate will be signed by company CA.');
+            } else {
+                $this->laraKubeInfo('Trust-only mode: company CA installed; LaraKube will generate its own server certificate.');
+            }
+        }
+
+        $this->laraKubeInfo('Generating TLS certificates...');
         $certDir = sys_get_temp_dir().'/larakube-certs-'.time();
         @mkdir($certDir, 0700, true);
-        $certs = $this->generateSanCertificates(array_values($hosts), $certDir);
+
+        $certs = $this->generateSanCertificates(
+            domains: array_values($hosts),
+            outputDir: $certDir,
+            companyCaCrt: ($caMode === 'full_sign' && file_exists($bundledCaCrt)) ? $bundledCaCrt : null,
+            companyCaKey: ($caMode === 'full_sign' && file_exists($bundledCaKey)) ? $bundledCaKey : null,
+        );
 
         $this->laraKubeInfo('Waiting for Kubernetes API to be ready...');
         for ($wait = 0; $wait < 60; $wait++) {
@@ -419,10 +471,37 @@ class BundleInstallCommand extends Command
         $this->laraKubeInfo('Waiting for rollout...');
         passthru('kubectl rollout status deploy/web -n '.escapeshellarg($namespace).' --timeout=180s');
 
-        // 10. Expose CA for easy download
-        $niceCaName = "{$name}-{$env}-".date('Y-m-d').'-ca.crt';
-        $niceCaPath = getcwd().'/'.$niceCaName;
-        copy($certs['ca_crt'], $niceCaPath);
+        // 10. Activate Cloudflare Tunnel (if bundled and token was provided)
+        if ($tunnelToken !== null && $tunnelToken !== '') {
+            $this->laraKubeInfo('Installing cloudflared as a system service...');
+            passthru('cp cloudflared /usr/local/bin/cloudflared');
+            passthru('chmod +x /usr/local/bin/cloudflared');
+
+            $serviceFile = "[Unit]\n"
+                ."Description=Cloudflare Tunnel\n"
+                ."After=network-online.target\n"
+                ."Wants=network-online.target\n"
+                ."\n"
+                ."[Service]\n"
+                ."Type=simple\n"
+                ."User=root\n"
+                .'ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token '.$tunnelToken."\n"
+                ."Restart=on-failure\n"
+                ."RestartSec=5s\n"
+                ."\n"
+                ."[Install]\n"
+                ."WantedBy=multi-user.target\n";
+
+            file_put_contents('/etc/systemd/system/cloudflared.service', $serviceFile);
+            passthru('chmod 600 /etc/systemd/system/cloudflared.service');
+            passthru('systemctl daemon-reload');
+            passthru('systemctl enable --now cloudflared');
+            $this->laraKubeInfo('✅ Cloudflare Tunnel service enabled and started.');
+        } elseif (($bundleManifest['tunnelEnabled'] ?? false)) {
+            $this->laraKubeWarn('Cloudflare Tunnel skipped (no token provided). Run manually later:');
+            $this->line('  cp cloudflared /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared');
+            $this->line('  cloudflared tunnel --no-autoupdate run --token YOUR_TOKEN');
+        }
 
         if (file_exists('./reset.sh')) {
             passthru('cp reset.sh /usr/local/bin/larakube-reset');
@@ -434,13 +513,30 @@ class BundleInstallCommand extends Command
         if (isset($hosts['web'])) {
             $this->line("  <fg=gray>Your app should be available at:</> <fg=cyan>https://{$hosts['web']}</>");
         }
+        if ($tunnelToken !== null && $tunnelToken !== '') {
+            $this->line('  <fg=gray>Cloudflare Tunnel is active — configure the tunnel in your dashboard to route:</>');
+            $this->line('  <fg=cyan>yourapp.yourdomain.com → http://localhost:80</>');
+            $this->line('  <fg=gray>Cloudflare handles TLS. No port-forwarding or static IP needed.</>');
+        }
         $this->newLine();
-        $this->line('  <fg=gray>The CA certificate for this installation is at:</>');
-        $this->line('  <fg=cyan>'.$niceCaPath.'</>');
-        $this->newLine();
-        $this->line('  <fg=gray>Pull it to your developer machine and trust it:</>');
-        $this->line('  <fg=cyan>rsync -P root@YOUR_SERVER_IP:'.escapeshellarg($niceCaPath).' ~/Downloads/</>');
-        $this->line('  <fg=cyan>larakube trust ~/Downloads/'.$niceCaName.'</>');
+
+        if ($caMode === 'full_sign') {
+            $this->line('  <fg=gray>Server certificate signed by your company CA.</>');
+            $this->line('  <fg=gray>Browsers and devices that already trust your company CA will connect without warnings.</>');
+        } else {
+            // Expose the LaraKube-generated CA for easy download (trust-only and default).
+            $niceCaName = "{$name}-{$env}-".date('Y-m-d').'-ca.crt';
+            $niceCaPath = getcwd().'/'.$niceCaName;
+            copy($certs['ca_crt'], $niceCaPath);
+
+            $this->line('  <fg=gray>The CA certificate for this installation is at:</>');
+            $this->line('  <fg=cyan>'.$niceCaPath.'</>');
+            $this->newLine();
+            $this->line('  <fg=gray>Pull it to your developer machine and trust it:</>');
+            $this->line('  <fg=cyan>rsync -P root@YOUR_SERVER_IP:'.escapeshellarg($niceCaPath).' ~/Downloads/</>');
+            $this->line('  <fg=cyan>larakube trust ~/Downloads/'.$niceCaName.'</>');
+        }
+
         $this->newLine();
         $this->line('  <fg=gray>To wipe everything and start fresh, run:</> <fg=cyan>sudo larakube-reset</>');
 

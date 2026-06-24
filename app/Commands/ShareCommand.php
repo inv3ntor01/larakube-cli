@@ -2,28 +2,28 @@
 
 namespace App\Commands;
 
+use App\Data\GlobalConfigData;
+use App\Enums\StorageDriver;
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithGlobalConfig;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+
+use function Laravel\Prompts\text;
+
 use LaravelZero\Framework\Commands\Command;
 
 class ShareCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput;
 
-    /**
-     * The name and signature of the console command.
-     */
-    protected $signature = 'share {--stop : Stop the active share}';
+    protected $signature = 'share
+        {--stop : Stop all share tunnels and restore env overrides}
+        {--token= : Cloudflare named-tunnel token (saves to global config for reuse)}
+        {--reset : Forget saved share URLs and re-configure}';
 
-    /**
-     * The console command description.
-     */
     protected $description = 'Expose your local LaraKube project to the internet via Cloudflare Tunnel';
 
-    /**
-     * Execute the console command.
-     */
     public function handle(): int
     {
         $this->renderHeader();
@@ -32,7 +32,14 @@ class ShareCommand extends Command
             return 1;
         }
 
-        $namespace = $this->getNamespace('local');
+        $projectPath = getcwd();
+        $config = $this->getProjectConfig($projectPath);
+        if (! $config) {
+            return 1;
+        }
+
+        $appName = $config->getName() ?? basename($projectPath);
+        $namespace = $this->getNamespace('local', $appName);
 
         if ($this->option('stop')) {
             $this->stopShare($namespace);
@@ -40,66 +47,261 @@ class ShareCommand extends Command
             return 0;
         }
 
-        return $this->startShare($namespace);
-    }
+        $token = $this->resolveToken();
 
-    protected function startShare(string $namespace): int
-    {
-        $this->laraKubeInfo('Initializing Cloudflare Tunnel...');
-
-        // 1. Prepare Manifest
-        $stub = file_get_contents(resource_path('views/k8s/cloudflared/deployment.blade.php'));
-
-        // 2. Apply Manifest
-        $this->withSpin('Deploying tunnel pod...', function () use ($namespace, $stub) {
-            $process = proc_open("kubectl apply -f - -n {$namespace}", [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ], $pipes);
-
-            fwrite($pipes[0], $stub);
-            fclose($pipes[0]);
-            proc_close($process);
-
-            return true;
-        });
-
-        // 3. Wait for Pod to be ready
-        $this->withSpin('Waiting for Cloudflare to assign a URL...', function () use ($namespace) {
-            exec("kubectl wait --for=condition=ready pod -l app=larakube-share -n {$namespace} --timeout=60s");
-
-            return true;
-        });
-
-        // 4. Extract URL from logs
-        $url = null;
-        $attempts = 0;
-        while (! $url && $attempts < 10) {
-            $logs = shell_exec("kubectl logs -l app=larakube-share -n {$namespace} --tail=20 2>&1");
-            if (preg_match('/https:\/\/[a-z0-9-]+\.trycloudflare\.com/', $logs, $matches)) {
-                $url = $matches[0];
-            }
-            $attempts++;
-            sleep(2);
+        if ($token !== null) {
+            return $this->runNamedTunnel($config, $appName, $namespace, $token);
         }
 
-        if (! $url) {
-            $this->laraKubeError('Failed to retrieve tunnel URL. Check logs with: larakube logs larakube-share');
+        return $this->runQuickTunnels($config, $appName, $namespace);
+    }
+
+    // ─── Named tunnel (B path — token available) ──────────────────────────────
+
+    private function runNamedTunnel(mixed $config, string $appName, string $namespace, string $token): int
+    {
+        $this->laraKubeInfo('Named Cloudflare Tunnel detected — using stable public URLs.');
+
+        $globalConfig = $this->getGlobalConfig();
+
+        if ($this->option('reset')) {
+            $globalConfig->setShareUrls($appName, ['web' => null, 'hmr' => null, 'storage' => null]);
+            $globalConfig->save();
+        }
+
+        $urls = $this->resolveNamedTunnelUrls($config, $appName, $globalConfig);
+
+        // Deploy single connector pod
+        $this->withSpin('Deploying Cloudflare tunnel connector...', function () use ($namespace, $token) {
+            $manifest = view('k8s.cloudflared.deployment', [
+                'name' => 'larakube-share',
+                'namespace' => $namespace,
+                'token' => $token,
+                'targetUrl' => null,
+            ])->render();
+
+            $tmp = sys_get_temp_dir().'/larakube-share.yaml';
+            file_put_contents($tmp, $manifest);
+            exec('kubectl apply -f '.escapeshellarg($tmp).' 2>/dev/null');
+            @unlink($tmp);
+
+            return true;
+        });
+
+        $this->applyEnvPatches($config, $appName, $namespace, $urls);
+        $this->printShareUrls($urls, 'named');
+        $this->keepAlive($namespace);
+
+        return 0;
+    }
+
+    private function resolveNamedTunnelUrls(mixed $config, string $appName, GlobalConfigData $globalConfig): array
+    {
+        $stored = $globalConfig->getShareUrls($appName);
+        $urls = [];
+
+        // Web URL (always required)
+        $urls['web'] = $stored['web'] ?? (string) text(
+            label: 'Public URL for the web app (from your Cloudflare tunnel config)',
+            placeholder: 'https://myapp.example.com',
+            required: true,
+            validate: fn ($v) => str_starts_with(trim($v), 'http') ? null : 'Must be a full URL (https://…)',
+        );
+
+        // HMR URL (only if project has a frontend)
+        if ($config->getFrontend()?->requiresNodePod()) {
+            $urls['hmr'] = $stored['hmr'] ?? (string) text(
+                label: 'Public URL for Vite HMR (hostname that routes to the node service on port 5173)',
+                placeholder: 'https://hmr.myapp.example.com',
+                hint: 'Leave blank to skip — HMR will only work on your local browser',
+            );
+        }
+
+        // Storage URL (only if project has object storage)
+        if ($config->getObjectStorage() !== null) {
+            $urls['storage'] = $stored['storage'] ?? (string) text(
+                label: 'Public URL for object storage (routes to the S3 API port)',
+                placeholder: 'https://s3.myapp.example.com',
+                hint: 'Leave blank to skip — stored file URLs will only resolve locally',
+            );
+        }
+
+        $urls = array_filter($urls);
+
+        // Persist so next run skips prompting
+        $globalConfig->setShareUrls($appName, $urls);
+        $globalConfig->save();
+
+        return $urls;
+    }
+
+    // ─── Quick tunnels (A path — no token, one pod per service) ───────────────
+
+    private function runQuickTunnels(mixed $config, string $appName, string $namespace): int
+    {
+        $this->laraKubeInfo('No Cloudflare token found — using quick tunnels (random URLs).');
+        $this->line('  <fg=gray>Tip: set CLOUDFLARE_TUNNEL_TOKEN or run with --token for a stable named tunnel.</>');
+        $this->laraKubeNewLine();
+
+        $services = $this->buildServiceMap($config, $appName, $namespace);
+
+        // Deploy all pods in one pass
+        $this->withSpin('Deploying tunnel pods...', function () use ($services, $namespace) {
+            foreach ($services as $name => ['targetUrl' => $targetUrl]) {
+                $manifest = view('k8s.cloudflared.deployment', [
+                    'name' => $name,
+                    'namespace' => $namespace,
+                    'token' => null,
+                    'targetUrl' => $targetUrl,
+                ])->render();
+
+                $tmp = sys_get_temp_dir()."/larakube-share-{$name}.yaml";
+                file_put_contents($tmp, $manifest);
+                exec('kubectl apply -f '.escapeshellarg($tmp).' 2>/dev/null');
+                @unlink($tmp);
+            }
+
+            return true;
+        });
+
+        $this->withSpin('Waiting for tunnel pods to be ready...', function () use ($namespace) {
+            exec("kubectl wait --for=condition=ready pod -l larakube.dev/role=share -n {$namespace} --timeout=90s 2>/dev/null");
+
+            return true;
+        });
+
+        $urls = $this->extractQuickTunnelUrls($services, $namespace);
+
+        if (empty($urls)) {
+            $this->laraKubeError('Could not retrieve tunnel URLs. Check pod logs: larakube logs larakube-share-web');
 
             return 1;
         }
 
-        $this->laraKubeInfo('Tunnel active! Your project is now public:');
-        $this->line('');
-        $this->line("    🌐 <fg=cyan;options=bold>{$url}</>");
-        $this->line('');
-        $this->info('Press Ctrl+C to stop sharing (or run larakube share --stop)');
+        $this->applyEnvPatches($config, $appName, $namespace, $urls);
+        $this->printShareUrls($urls, 'quick');
+        $this->keepAlive($namespace);
 
-        // Keep alive and trap Ctrl+C if possible, or just wait for input
+        return 0;
+    }
+
+    /**
+     * Build the map of pod-name → [targetUrl, urlKey] for the services we need to expose.
+     * urlKey matches the key used in $urls ('web', 'hmr', 'storage').
+     */
+    private function buildServiceMap(mixed $config, string $appName, string $namespace): array
+    {
+        $map = [
+            'larakube-share-web' => ['targetUrl' => 'http://web:80', 'urlKey' => 'web'],
+        ];
+
+        if ($config->getFrontend()?->requiresNodePod()) {
+            $map['larakube-share-hmr'] = ['targetUrl' => 'http://node:5173', 'urlKey' => 'hmr'];
+        }
+
+        $storage = $config->getObjectStorage();
+        if ($storage instanceof StorageDriver) {
+            $map['larakube-share-storage'] = [
+                'targetUrl' => "http://{$storage->getPodName()}:{$storage->port()}",
+                'urlKey' => 'storage',
+            ];
+        }
+
+        return $map;
+    }
+
+    private function extractQuickTunnelUrls(array $services, string $namespace): array
+    {
+        $urls = [];
+        $pattern = '/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/';
+        $maxAttempts = 15;
+
+        foreach ($services as $podName => ['urlKey' => $urlKey]) {
+            $found = null;
+
+            for ($i = 0; $i < $maxAttempts && $found === null; $i++) {
+                $logs = (string) shell_exec('kubectl logs -l app='.escapeshellarg($podName)." -n {$namespace} --tail=30 2>&1");
+
+                if (preg_match($pattern, $logs, $m)) {
+                    $found = $m[1];
+                } else {
+                    sleep(2);
+                }
+            }
+
+            if ($found !== null) {
+                $urls[$urlKey] = $found;
+            }
+        }
+
+        return $urls;
+    }
+
+    // ─── Env patches (shared between B and A paths) ────────────────────────────
+
+    /**
+     * Patch the cluster deployments with public URLs so the running app generates
+     * correct external links. All patches are deployment-level overrides — the
+     * original ConfigMap values are untouched and restored when the share stops.
+     */
+    private function applyEnvPatches(mixed $config, string $appName, string $namespace, array $urls): void
+    {
+        $ns = escapeshellarg($namespace);
+        $restartNeeded = [];
+
+        // Storage: update AWS_URL on the web deployment so Storage::url() generates public links
+        if (isset($urls['storage'])) {
+            $storageUrl = rtrim($urls['storage'], '/');
+            exec('kubectl set env deployment/web AWS_URL='.escapeshellarg($storageUrl)." -n {$namespace} 2>/dev/null");
+            $restartNeeded[] = 'web';
+        }
+
+        // HMR: inject VITE_HMR_HOST/PORT/PROTOCOL so the Vite server tells browsers
+        // to connect via the public tunnel URL instead of the local .kube hostname
+        if (isset($urls['hmr'])) {
+            $hmrHost = preg_replace('#^https?://#', '', rtrim($urls['hmr'], '/'));
+            exec('kubectl set env deployment/node VITE_HMR_HOST='.escapeshellarg($hmrHost)." VITE_HMR_CLIENT_PORT=443 VITE_HMR_PROTOCOL=wss -n {$namespace} 2>/dev/null");
+            $restartNeeded[] = 'node';
+        }
+
+        if (! empty($restartNeeded)) {
+            $targets = implode(' ', array_map(fn ($d) => "deployment/{$d}", array_unique($restartNeeded)));
+            exec("kubectl rollout restart {$targets} -n {$namespace} 2>/dev/null");
+            exec("kubectl rollout status {$targets} -n {$namespace} --timeout=60s 2>/dev/null");
+        }
+    }
+
+    // ─── Output ────────────────────────────────────────────────────────────────
+
+    private function printShareUrls(array $urls, string $mode): void
+    {
+        $modeLabel = $mode === 'named' ? '(named tunnel — stable)' : '(quick tunnel — random URL)';
+        $this->laraKubeNewLine();
+        $this->laraKubeInfo("🌐 Your project is now public {$modeLabel}");
+        $this->laraKubeNewLine();
+
+        if (isset($urls['web'])) {
+            $this->line('  <fg=gray>Web app  :</> <fg=cyan;options=bold>'.$urls['web'].'</>');
+        }
+        if (isset($urls['hmr'])) {
+            $this->line('  <fg=gray>Vite HMR :</> <fg=cyan>'.$urls['hmr'].'</>');
+        }
+        if (isset($urls['storage'])) {
+            $this->line('  <fg=gray>Storage  :</> <fg=cyan>'.$urls['storage'].'</>');
+        }
+
+        $this->laraKubeNewLine();
+        $this->line('  Press <fg=yellow>Ctrl+C</> or run <fg=yellow>larakube share --stop</> to stop sharing.');
+    }
+
+    // ─── Keep-alive and stop ───────────────────────────────────────────────────
+
+    private function keepAlive(string $namespace): void
+    {
         if (function_exists('pcntl_async_signals')) {
             pcntl_async_signals(true);
             pcntl_signal(SIGINT, function () use ($namespace) {
+                $this->laraKubeNewLine();
                 $this->stopShare($namespace);
                 exit(0);
             });
@@ -108,20 +310,62 @@ class ShareCommand extends Command
                 sleep(1);
             }
         } else {
-            $this->confirm('Sharing... Press Enter to stop', true);
+            $this->confirm('Sharing… press Enter to stop', true);
             $this->stopShare($namespace);
         }
-
-        return 0;
     }
 
-    protected function stopShare(string $namespace): void
+    private function stopShare(string $namespace): void
     {
-        $this->withSpin('Tearing down tunnel...', function () use ($namespace) {
-            exec("kubectl delete deployment larakube-share -n {$namespace} --ignore-not-found");
+        $this->withSpin('Stopping tunnels and restoring env...', function () use ($namespace) {
+            // Remove all share pods (label-selector covers both B and A pods)
+            exec("kubectl delete deployment -l larakube.dev/role=share -n {$namespace} --ignore-not-found 2>/dev/null");
+
+            // Remove deployment-level env overrides (no-op if they were never set)
+            exec("kubectl set env deployment/web AWS_URL- -n {$namespace} 2>/dev/null");
+            exec("kubectl set env deployment/node VITE_HMR_HOST- VITE_HMR_CLIENT_PORT- VITE_HMR_PROTOCOL- -n {$namespace} 2>/dev/null");
+
+            // Restart to pick up original ConfigMap values
+            exec("kubectl rollout restart deployment/web -n {$namespace} 2>/dev/null");
+            exec("kubectl rollout restart deployment/node -n {$namespace} 2>/dev/null");
 
             return true;
         });
-        $this->laraKubeInfo('Tunnel stopped successfully.');
+
+        $this->laraKubeInfo('Tunnel stopped and env restored.');
+    }
+
+    // ─── Token resolution ──────────────────────────────────────────────────────
+
+    private function resolveToken(): ?string
+    {
+        // CLI flag always wins
+        if ($this->option('token')) {
+            $token = (string) $this->option('token');
+            $this->persistToken($token);
+
+            return $token;
+        }
+
+        // Shell env var (CI-friendly, no storage needed)
+        $envToken = getenv('CLOUDFLARE_TUNNEL_TOKEN');
+        if ($envToken !== false && $envToken !== '') {
+            return $envToken;
+        }
+
+        // Saved in global config from a previous run
+        $saved = $this->getGlobalConfig()->getShareToken();
+        if ($saved !== null && $saved !== '') {
+            return $saved;
+        }
+
+        return null;
+    }
+
+    private function persistToken(string $token): void
+    {
+        $globalConfig = $this->getGlobalConfig();
+        $globalConfig->setShareToken($token);
+        $globalConfig->save();
     }
 }

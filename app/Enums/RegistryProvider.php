@@ -9,6 +9,7 @@ enum RegistryProvider: string
         return match ($this) {
             self::GHCR => 'GitHub Container Registry (GHCR)',
             self::DOCKERHUB => 'Docker Hub',
+            self::GITLAB => 'GitLab Container Registry',
         };
     }
 
@@ -17,16 +18,25 @@ enum RegistryProvider: string
         return match ($this) {
             self::GHCR => 'ghcr.io',
             self::DOCKERHUB => 'docker.io',
+            self::GITLAB => 'registry.gitlab.com',
         };
     }
 
     public function defaultImagePath(string $githubRepo): string
     {
         return match ($this) {
-            self::GHCR => $githubRepo,  // ghcr.io/{owner}/{repo}
-            self::DOCKERHUB => $githubRepo,  // docker.io/{owner}/{repo}
+            self::GHCR => $githubRepo,
+            self::DOCKERHUB => $githubRepo,
+            self::GITLAB => $githubRepo,
         };
     }
+
+    public function isGitLabNative(): bool
+    {
+        return $this === self::GITLAB;
+    }
+
     case GHCR = 'ghcr';
     case DOCKERHUB = 'dockerhub';
+    case GITLAB = 'gitlab';
 }
