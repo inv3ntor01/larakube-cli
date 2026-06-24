@@ -8,6 +8,7 @@ use App\Enums\SharedClusterService;
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\LaraKubeOutput;
 
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
@@ -17,8 +18,9 @@ class MonitorInitCommand extends Command
     use InteractsWithClusterContext, LaraKubeOutput;
 
     protected $signature = 'monitor:init
+        {environment? : Environment this install targets — "local" (default) or a cloud env. Omit to be prompted, like plex:init. A non-local env prompts for + persists the Grafana host.}
         {--context=  : Target a specific kube-context (defaults to current context)}
-        {--env=      : Which .larakube.json environment this install is for (default: local); a non-local env prompts for + persists the Grafana host}
+        {--env=      : Legacy alias for the environment argument}
         {--domain=   : Raw override for the Grafana cluster domain (e.g. example.com → grafana.example.com); skips the prompt}
         {--remove    : Tear down Prometheus + Grafana from larakube-shared}';
 
@@ -158,13 +160,46 @@ class MonitorInitCommand extends Command
             return $service->hostFor($domain);
         }
 
-        $env = (string) ($this->option('env') ?: 'local');
+        $env = $this->resolveEnvironment();
 
         if ($env === 'local') {
             return $service->hostFor(GlobalConfigData::load()->getLocalTld());
         }
 
         return $this->promptForCloudGrafanaHost($service, $env);
+    }
+
+    /**
+     * Decide which environment this install targets, mirroring plex:init's
+     * interactive selection. An explicit positional argument (or the legacy
+     * --env option) wins; otherwise prompt with the project's environments
+     * (local + any cloud envs). Non-interactive — or a raw --domain override —
+     * falls back to local.
+     */
+    protected function resolveEnvironment(): string
+    {
+        $explicit = (string) ($this->argument('environment') ?: $this->option('env') ?: '');
+        if ($explicit !== '') {
+            return $explicit;
+        }
+
+        if ($this->option('no-interaction') || $this->option('domain')) {
+            return 'local';
+        }
+
+        $projectPath = getcwd();
+        $config = file_exists($projectPath.'/'.ConfigData::CONFIG_FILE)
+            ? ConfigData::loadFromFile($projectPath)
+            : null;
+
+        $envs = $config ? array_merge(['local'], $config->getCloudEnvironments()) : ['local'];
+
+        return select(
+            label: 'Which environment is this monitoring install for?',
+            options: array_combine($envs, $envs),
+            default: 'local',
+            hint: 'Local uses your dev TLD; a cloud env asks for + persists the Grafana host.',
+        );
     }
 
     /**

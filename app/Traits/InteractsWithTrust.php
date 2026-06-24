@@ -29,14 +29,17 @@ trait InteractsWithTrust
             $this->line('');
             if ($code !== 0) {
                 $this->laraKubeWarn('Could not add the CA to the Windows user store automatically.');
-                $this->line('  👉 In a Windows terminal (no admin needed) run:');
-                $this->line("       certutil -user -addstore -f Root \"{$winPath}\"");
-                $this->line('     …or double-click that .crt → Install Certificate → Current User → Trusted Root Certification Authorities.');
+                $this->line('  👉 Re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> (right-click → Run as administrator),');
+                $this->line('     or in that elevated Windows terminal run:');
+                $this->line("       certutil -addstore -f Root \"{$winPath}\"");
+                $this->line('     …or double-click that .crt → Install Certificate → Local Machine → Trusted Root Certification Authorities.');
 
                 return 1;
             }
 
-            $this->laraKubeInfo('✅ CA trusted (Windows current-user store). Restart your browser.');
+            $this->laraKubeInfo('✅ CA added to the Windows current-user store. Restart your browser.');
+            $this->line('  <fg=yellow>🪟 Windows note:</> if HTTPS still shows a warning, the current-user store wasn\'t enough on your setup —');
+            $this->line('     re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> so the CA registers machine-wide.');
             $this->line('  <fg=gray>Firefox uses its own trust store — import the CA there separately if needed.</>');
 
             return 0;
