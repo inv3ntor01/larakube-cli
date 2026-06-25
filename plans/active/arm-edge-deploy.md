@@ -131,7 +131,7 @@ No router access, no ISP cooperation, no static IP purchase.
    `bundle.json`; `bundle:install` prompts for token, installs
    `/usr/local/bin/cloudflared`, writes `/etc/systemd/system/cloudflared.service`,
    runs `systemctl enable --now cloudflared`; `larakube-reset` stops/removes it.
-   Manual test §21 in `plans/manual-test-guide.md`.
+   Manual test §21 in `plans/testing-checklist.md` (Manual Test Guide section).
 
 ## ✅ Verification
 
