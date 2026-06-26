@@ -5,37 +5,32 @@ namespace App\Traits;
 use App\Data\ConfigData;
 
 /**
- * Local manifest builds use `kubectl kustomize` / `kubectl apply -k`, i.e. kubectl's
- * EMBEDDED kustomize. On k3s/WSL that embedded version is often too old to parse the
- * modern `patches:` field, so builds fail; macOS/OrbStack ship a current kustomize and
- * are fine. This trait installs a standalone kustomize ONLY when the embedded one is
- * too old (isolated under ~/.larakube, never touching system binaries) and routes the
- * build/apply through it when present — so users who already have a good kustomize are
- * never disturbed.
+ * Local manifest builds default to `kubectl kustomize` / `kubectl apply -k` — kubectl's
+ * EMBEDDED kustomize, whose version varies wildly across machines (a recent macOS/OrbStack
+ * kubectl ships v5; k3s/WSL often ship one too old to parse the multi-document `patches:`
+ * files we emit). On a mixed team that means manifests build on one laptop and fail — or
+ * render differently — on another. To make builds identical everywhere, the CLI pins its
+ * OWN standalone kustomize under ~/.larakube/bin (isolated, no sudo, never shadows a system
+ * binary) and builds with it on every platform.
  */
 trait InteractsWithKustomize
 {
-    /** The CLI's own standalone kustomize — isolated, never shadows a system binary. */
+    /** The CLI's own pinned standalone kustomize — isolated, never shadows a system binary. */
     protected function managedKustomizePath(): string
     {
         return home_path('.larakube/bin/kustomize');
     }
 
-    /**
-     * Records that the host's embedded `kubectl kustomize` already handles the
-     * manifests we emit. Filename is versioned (-patches-ok): an earlier build
-     * probed with a non-representative single-doc patch and may have written a stale
-     * marker, so the new name forces a fresh, correct probe.
-     */
-    protected function kustomizeOkMarker(): string
+    /** The single kustomize version every machine standardises on. */
+    protected function pinnedKustomizeVersion(): string
     {
-        return home_path('.larakube/.kustomize-patches-ok');
+        return (new ConfigData)->kustomizeVersion ?? 'v5.6.0';
     }
 
     /**
-     * The kustomize binary to BUILD with, or null to fall back to `kubectl kustomize`.
-     * Non-null only once ensureKustomizeReady() has installed our standalone because the
-     * embedded one was too old.
+     * The kustomize binary to BUILD with, or null to fall back to `kubectl kustomize`
+     * (only when our standalone couldn't be installed — e.g. offline). After
+     * ensureKustomizeReady() this is normally the pinned standalone on every platform.
      */
     protected function kustomizeBin(): ?string
     {
@@ -65,142 +60,65 @@ trait InteractsWithKustomize
     }
 
     /**
-     * Ensure a kustomize that can parse the `patches:` field is available for local
-     * builds, installing a standalone binary only when the host's embedded one is too
-     * old. No-op on macOS (always current), when our standalone is already installed,
-     * or once the embedded one has been confirmed good — so it never disturbs users who
-     * don't need it, and adds no per-run cost after the first check.
+     * Ensure the pinned standalone kustomize is installed for this host, so every machine
+     * (macOS, Linux, WSL) builds manifests with the SAME kustomize version — no more
+     * "works on my Mac, breaks on their WSL". Re-installs when the pinned version changed
+     * (e.g. after a CLI upgrade). Cheap after the first run (a single `kustomize version`
+     * check). Best-effort: if the download fails (offline), builds fall back to
+     * `kubectl kustomize`.
      */
     protected function ensureKustomizeReady(bool $verbose = true): void
     {
-        // macOS/OrbStack always ship a current kustomize — never touch them.
-        if (PHP_OS_FAMILY === 'Darwin') {
-            return;
+        $version = $this->pinnedKustomizeVersion();
+        $bin = $this->managedKustomizePath();
+
+        if (is_file($bin) && is_executable($bin)) {
+            $out = (string) shell_exec(escapeshellarg($bin).' version 2>/dev/null');
+            if (str_contains($out, $version)) {
+                return;   // already on the pinned version
+            }
         }
 
-        // Already installed our standalone, or already confirmed the embedded one is fine.
-        if ($this->kustomizeBin() !== null || is_file($this->kustomizeOkMarker())) {
-            return;
-        }
-
-        // Does the host's embedded `kubectl kustomize` understand the `patches:` field?
-        if ($this->kustomizeHandlesPatches('kubectl kustomize')) {
-            @mkdir(dirname($this->kustomizeOkMarker()), 0755, true);
-            @touch($this->kustomizeOkMarker());
-
-            return;
-        }
-
-        // Too old (classic on k3s/WSL) — install our own standalone under ~/.larakube.
-        $this->installManagedKustomize($verbose);
+        $this->installManagedKustomize($version, $verbose);
     }
 
-    /**
-     * Functional probe replicating exactly what the CLI emits and what breaks on old
-     * kustomize: `patches: - path: patches.yaml` where patches.yaml is a MULTI-DOCUMENT
-     * file (overlays/local/patches.yaml = deployment patch `---` ingress patch). kubectl's
-     * embedded kustomize on k3s/WSL fails to parse a multi-doc patch file
-     * ("unable to parse SM or JSON patch"); kustomize v5 handles it. A single inline
-     * patch would NOT catch this — that was the original probe's blind spot. Version-
-     * agnostic: it tests the exact failure mode rather than parsing version strings.
-     * $buildPrefix is "kubectl kustomize" or "<bin> build".
-     */
-    protected function kustomizeHandlesPatches(string $buildPrefix): bool
+    /** Download the pinned kustomize into ~/.larakube/bin (no sudo, no system changes). */
+    protected function installManagedKustomize(string $version, bool $verbose): void
     {
-        $dir = sys_get_temp_dir().'/lk-kustomize-probe-'.uniqid();
-        @mkdir($dir, 0755, true);
-
-        file_put_contents($dir.'/deploy.yaml', implode("\n", [
-            'apiVersion: apps/v1',
-            'kind: Deployment',
-            'metadata:',
-            '  name: probe',
-            'spec:',
-            '  replicas: 1',
-            '  selector:',
-            '    matchLabels:',
-            '      app: probe',
-            '  template:',
-            '    metadata:',
-            '      labels:',
-            '        app: probe',
-            '    spec:',
-            '      containers:',
-            '        - name: c',
-            '          image: nginx',
-        ])."\n");
-
-        // Multi-document patch file — the exact shape that trips the embedded kustomize.
-        file_put_contents($dir.'/patches.yaml', implode("\n", [
-            'apiVersion: apps/v1',
-            'kind: Deployment',
-            'metadata:',
-            '  name: probe',
-            'spec:',
-            '  replicas: 2',
-            '---',
-            'apiVersion: apps/v1',
-            'kind: Deployment',
-            'metadata:',
-            '  name: probe',
-            'spec:',
-            '  template:',
-            '    metadata:',
-            '      labels:',
-            '        probed: "true"',
-        ])."\n");
-
-        file_put_contents($dir.'/kustomization.yaml', implode("\n", [
-            'resources:',
-            '  - deploy.yaml',
-            'patches:',
-            '  - path: patches.yaml',
-        ])."\n");
-
-        exec($buildPrefix.' '.escapeshellarg($dir).' 2>/dev/null', $out, $code);
-
-        @unlink($dir.'/deploy.yaml');
-        @unlink($dir.'/patches.yaml');
-        @unlink($dir.'/kustomization.yaml');
-        @rmdir($dir);
-
-        return $code === 0 && $out !== [];
-    }
-
-    /** Download a standalone kustomize into ~/.larakube/bin (no sudo, no system changes). */
-    protected function installManagedKustomize(bool $verbose): void
-    {
-        $version = (new ConfigData)->kustomizeVersion ?? 'v5.6.0';
         $machine = php_uname('m');
         $arch = in_array($machine, ['arm64', 'aarch64'], true) ? 'arm64' : 'amd64';
-        $os = 'linux';   // Darwin already returned above; WSL reports linux.
+        $os = PHP_OS_FAMILY === 'Darwin' ? 'darwin' : 'linux';   // WSL reports linux
 
-        $binDir = dirname($this->managedKustomizePath());
+        $bin = $this->managedKustomizePath();
+        $binDir = dirname($bin);
         @mkdir($binDir, 0755, true);
 
         if ($verbose) {
-            $this->laraKubeInfo("Your kubectl's embedded kustomize is too old to parse modern manifests (the `patches:` field) — installing a standalone kustomize ({$version})...");
+            $this->laraKubeInfo("Installing kustomize {$version} (pinned, so every machine builds manifests identically)...");
         }
 
         $url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F{$version}/kustomize_{$version}_{$os}_{$arch}.tar.gz";
         exec('curl -sL '.escapeshellarg($url).' | tar -xz -C '.escapeshellarg($binDir).' kustomize 2>/dev/null');
-        @chmod($this->managedKustomizePath(), 0755);
+        @chmod($bin, 0755);
 
-        $bin = $this->kustomizeBin();
-        if ($bin !== null && $this->kustomizeHandlesPatches(escapeshellarg($bin).' build')) {
+        // Confirm it runs the pinned version; otherwise drop it so the build cleanly
+        // falls back to `kubectl kustomize` rather than using a broken/partial binary.
+        $out = (is_file($bin) && is_executable($bin))
+            ? (string) shell_exec(escapeshellarg($bin).' version 2>/dev/null')
+            : '';
+
+        if (str_contains($out, $version)) {
             if ($verbose) {
-                $this->laraKubeInfo('✅ Installed standalone kustomize at '.$bin);
-                $this->laraKubeLine('  <fg=gray>larakube uses it for local manifest builds; your system tools are untouched.</>');
+                $this->laraKubeInfo('✅ kustomize ready at '.$bin);
             }
 
             return;
         }
 
-        // Couldn't install or verify — remove any partial binary so we fall back cleanly.
-        @unlink($this->managedKustomizePath());
+        @unlink($bin);
         if ($verbose) {
-            $this->laraKubeWarn('Could not install a standalone kustomize automatically.');
-            $this->laraKubeLine('  👉 Install kustomize v5+ manually so `larakube up` can build manifests that use the `patches:` field.');
+            $this->laraKubeWarn("Could not install kustomize {$version} automatically (offline?).");
+            $this->laraKubeLine('  👉 Builds will use your kubectl\'s kustomize for now; install kustomize v5+ for consistent results.');
         }
     }
 }

@@ -50,9 +50,8 @@ class KustomizeCommand extends Command
         $this->laraKubeInfo("Rendering merged manifests for environment: <fg=cyan;options=bold>{$environment}</>");
         $this->newLine();
 
-        // Render with a kustomize that can parse the `patches:` field — installs a
-        // standalone one if the host's embedded kustomize is too old (k3s/WSL), else
-        // falls back to `kubectl kustomize`.
+        // Render with the CLI's pinned standalone kustomize (installed on demand) so the
+        // preview matches what every other machine builds.
         $this->ensureKustomizeReady();
         passthru($this->kustomizeBuildCommand($overlayPath));
 

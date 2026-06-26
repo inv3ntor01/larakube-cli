@@ -154,10 +154,9 @@ class UpCommand extends Command
                 return 1;
             }
 
-            // Self-heal: install a standalone kustomize if the host's embedded one is
-            // too old for the `patches:` field (k3s/WSL). No-op on macOS and any host
-            // whose kustomize is already current, so existing clusters benefit on upgrade
-            // without re-running cluster:setup.
+            // Ensure the CLI's pinned standalone kustomize is present so builds match
+            // across the team (every machine uses the same kustomize version, not
+            // kubectl's wildly-varying embedded one). One-time download; cheap after.
             $this->ensureKustomizeReady();
 
             $validationResult = ['result' => 0, 'output' => []];
