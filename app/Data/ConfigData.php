@@ -43,6 +43,9 @@ class ConfigData extends Data
     // used by envs that opt into shared cross-node storage (sharedStorage).
     const string NFS_STORAGE_CLASS = 'larakube-nfs';
 
+    /** Pinned k3s version — installed locally (cluster:setup), remotely (cloud:provision), and bundled. */
+    const string DEFAULT_K3S_VERSION = 'v1.30.4+k3s1';
+
     /** Conservative default pod resources, applied to every app pod and overridable per env/component. */
     const array DEFAULT_RESOURCES = [
         'requests' => ['cpu' => '50m', 'memory' => '128Mi'],
@@ -111,7 +114,7 @@ class ConfigData extends Data
             'composer.lock',
             '.env',
         ],
-        public ?string $k3sVersion = 'v1.30.4+k3s1',
+        public ?string $k3sVersion = self::DEFAULT_K3S_VERSION,
         public ?string $kustomizeVersion = 'v5.6.0',
         public ?string $k9sVersion = 'v0.32.7',
         /**

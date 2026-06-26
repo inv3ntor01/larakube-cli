@@ -2,6 +2,7 @@
 
 namespace App\Commands\Cloud;
 
+use App\Traits\InstallsK3s;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteSsh;
 use App\Traits\InteractsWithServerHardening;
@@ -15,7 +16,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudProvisionCommand extends Command
 {
-    use InteractsWithProjectConfig, InteractsWithRemoteSsh, InteractsWithServerHardening, LaraKubeOutput;
+    use InstallsK3s, InteractsWithProjectConfig, InteractsWithRemoteSsh, InteractsWithServerHardening, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -174,7 +175,11 @@ class CloudProvisionCommand extends Command
     {
         $this->laraKubeInfo('Hardening OS and Installing K3s on remote server...');
 
-        $k3sVersion = escapeshellarg($config->k3sVersion ?? 'v1.30.4+k3s1');
+        $installK3s = $this->k3sInstallCommand($this->k3sVersion($config), [
+            '--disable=traefik',
+            '--write-kubeconfig-mode 644',
+            '--kubelet-arg=fail-swap-on=false',
+        ]);
 
         // 1. Create Swap (Crucial for 512MB droplets)
         // 2. Enable IP Forwarding
@@ -194,10 +199,7 @@ class CloudProvisionCommand extends Command
     grep -qxF 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
 
     echo "Installing K3s..."
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={$k3sVersion} sh -s - \
-      --disable=traefik \
-      --write-kubeconfig-mode 644 \
-      --kubelet-arg=fail-swap-on=false
+    {$installK3s}
     BASH;
 
         $this->runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand);

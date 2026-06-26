@@ -4,6 +4,7 @@ namespace App\Commands\Bundle;
 
 use App\Enums\LaravelFeature;
 use App\Traits\AssemblesBundle;
+use App\Traits\InstallsK3s;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteDeploy;
 use App\Traits\LaraKubeOutput;
@@ -19,7 +20,7 @@ use LaravelZero\Framework\Commands\Command;
  */
 class BundleBuildCommand extends Command
 {
-    use AssemblesBundle, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput;
+    use AssemblesBundle, InstallsK3s, InteractsWithProjectConfig, InteractsWithRemoteDeploy, LaraKubeOutput;
 
     protected $signature = 'bundle:build
                             {environment=production : The environment to bundle}
@@ -240,7 +241,7 @@ class BundleBuildCommand extends Command
         }
 
         $isUpdate = $this->option('update');
-        $k3sVersion = $config->k3sVersion ?? 'v1.30.4+k3s1';
+        $k3sVersion = $this->k3sVersion($config);
         $kustomizeVersion = $config->kustomizeVersion ?? 'v5.6.0';
         $kArch = $arch === 'arm64' ? 'arm64' : 'amd64';
 
