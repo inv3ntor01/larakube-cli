@@ -2,6 +2,7 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 
@@ -12,7 +13,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use InteractsWithOs, LaraKubeOutput;
+    use InteractsWithKustomize, InteractsWithOs, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
@@ -63,10 +64,21 @@ class ClusterSetupCommand extends Command
                 return 1;
             }
 
-            return $this->installK3d();
+            $result = $this->installK3d();
+        } else {
+            $result = $this->installK3s();
         }
 
-        return $this->installK3s();
+        // 3. Make sure local manifest builds have a kustomize that can parse the
+        //    `patches:` field. k3s/WSL ship an embedded kustomize that's often too
+        //    old; this installs a standalone one only when needed (no-op on
+        //    macOS/OrbStack and any host whose kustomize is already current). Runs on
+        //    the "already exists" path too — that's the typical existing-WSL-cluster case.
+        if ($result === 0) {
+            $this->ensureKustomizeReady();
+        }
+
+        return $result;
     }
 
     /**

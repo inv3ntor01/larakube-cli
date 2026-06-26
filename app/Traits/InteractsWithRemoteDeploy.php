@@ -18,7 +18,7 @@ use App\Enums\RegistryProvider;
  */
 trait InteractsWithRemoteDeploy
 {
-    use DeploysMonitoringExporters;
+    use DeploysMonitoringExporters, InteractsWithKustomize;
 
     /** The kube-context cloud:init creates for a host. Pure. */
     public function remoteContextName(string $ip): string
@@ -153,29 +153,32 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
-     * `kubectl kustomize | sed image-rewrite | kubectl apply`, all against the
+     * `kustomize build | sed image-rewrite | kubectl apply`, the apply against the
      * env's context. Mirrors what the GHA workflow does, but for the sideloaded
-     * local tag instead of a registry image. Pure.
+     * local tag instead of a registry image. The build half uses the resolved
+     * kustomize (standalone when the host's embedded one is too old for `patches:`,
+     * e.g. k3s/WSL) — it renders locally, so it needs no context.
      */
     public function applyWithImageRewriteCommand(string $context, string $overlayPath, string $fromImage, string $toImage): string
     {
         $ctx = escapeshellarg($context);
 
-        return 'kubectl --context '.$ctx.' kustomize '.escapeshellarg($overlayPath)
+        return $this->kustomizeBuildCommand($overlayPath)
             .' | sed '.escapeshellarg('s|image: '.$fromImage.'|image: '.$toImage.'|g')
             .' | kubectl --context '.$ctx.' apply -f -';
     }
 
     /**
-     * Same kustomize|sed|apply, but driven by a standalone (scoped) kubeconfig
-     * file instead of a named admin context — used for the dogfooded deploy where
-     * the namespace-locked `deployer` token does the apply. Pure.
+     * Same build|sed|apply, but the apply is driven by a standalone (scoped)
+     * kubeconfig file instead of a named admin context — used for the dogfooded
+     * deploy where the namespace-locked `deployer` token does the apply. The build
+     * half renders locally via the resolved kustomize, so it carries no kubeconfig.
      */
     public function applyWithImageRewriteUsingKubeconfig(string $kubeconfigPath, string $overlayPath, string $fromImage, string $toImage): string
     {
         $kc = 'KUBECONFIG='.escapeshellarg($kubeconfigPath).' kubectl';
 
-        return $kc.' kustomize '.escapeshellarg($overlayPath)
+        return $this->kustomizeBuildCommand($overlayPath)
             .' | sed '.escapeshellarg('s|image: '.$fromImage.'|image: '.$toImage.'|g')
             .' | '.$this->dropNamespaceDocCommand()
             .' | '.$kc.' apply -f -';
@@ -713,6 +716,9 @@ trait InteractsWithRemoteDeploy
 
             // 6. Apply the overlay via the scoped credential, retrying briefly for
             //    RBAC propagation lag right after the RoleBinding was created.
+            //    Ensure a kustomize that parses `patches:` first (k3s/WSL hosts ship an
+            //    embedded one too old); no-op on macOS or an already-current host.
+            $this->ensureKustomizeReady();
             $overlay = $config->getK8sPath().'/overlays/'.$environment;
             $applyCmd = $this->applyWithImageRewriteUsingKubeconfig($kubeconfigPath, $overlay, $fromImage, $toImage);
             $this->laraKubeInfo('Applying Kubernetes manifests...');

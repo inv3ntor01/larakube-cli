@@ -13,6 +13,7 @@ use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
+use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
@@ -27,7 +28,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {
-    use DeploysMonitoringExporters, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
+    use DeploysMonitoringExporters, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithKustomize, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
 
     /**
      * The name and signature of the console command.
@@ -153,12 +154,18 @@ class UpCommand extends Command
                 return 1;
             }
 
+            // Self-heal: install a standalone kustomize if the host's embedded one is
+            // too old for the `patches:` field (k3s/WSL). No-op on macOS and any host
+            // whose kustomize is already current, so existing clusters benefit on upgrade
+            // without re-running cluster:setup.
+            $this->ensureKustomizeReady();
+
             $validationResult = ['result' => 0, 'output' => []];
 
             $this->withSpin('Validating Kubernetes manifests...', function () use (&$validationResult, $path) {
                 $output = [];
                 $result = 0;
-                exec("kubectl kustomize {$path} 2>&1", $output, $result);
+                exec($this->kustomizeBuildCommand($path).' 2>&1', $output, $result);
 
                 $validationResult = [
                     'result' => $result,
@@ -419,7 +426,7 @@ class UpCommand extends Command
             exec("kubectl scale deployment --all --replicas=0 -n $namespace 2>/dev/null");
         });
 
-        passthru("kubectl apply -k $path");
+        passthru($this->kustomizeApplyCommand($path));
 
         // 5a. If monitoring is active, deploy service-level exporters into this namespace
         if ($this->isMonitoringActive()) {
