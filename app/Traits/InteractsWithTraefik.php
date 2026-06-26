@@ -233,11 +233,46 @@ trait InteractsWithTraefik
     }
 
     /**
-     * Check if Traefik is currently active in the cluster.
+     * Check if any Ingress Controller is currently active in the cluster.
+     *
+     * Tries increasingly broad detection strategies:
+     *  1. Label-based: standard ingress-controller labels (catches Helm k3s Traefik,
+     *     nginx-ingress, and any other conformant install).
+     *  2. Name-based: a LoadBalancer named "traefik" in any namespace (catches
+     *     hand-rolled installs or older templates with no labels).
+     *  3. Namespace-wide: any LoadBalancer in kube-system (last-resort catch-all).
      */
     protected function isTraefikInstalled(): bool
     {
-        return shell_exec('kubectl get svc traefik -n traefik 2>/dev/null') !== null;
+        // 1. Label-based: standard ingress-controller labels.
+        // Note: kubectl does not support combining -l (label) and --field-selector
+        // in the same call, so we use -l alone and trust the label accuracy.
+        $output = trim((string) shell_exec(
+            'kubectl get svc -A -l app.kubernetes.io/name=traefik,app.kubernetes.io/component=ingress-controller -o name 2>/dev/null',
+        ));
+
+        // 1b. Label-based: nginx-ingress variants
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -A -l app=ingress-nginx,app.kubernetes.io/name=ingress-nginx -o name 2>/dev/null',
+            ));
+        }
+
+        // 2. Name-based: a LoadBalancer named "traefik" anywhere (hand-rolled installs)
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -A --field-selector metadata.name=traefik,spec.type=LoadBalancer -o name 2>/dev/null',
+            ));
+        }
+
+        // 3. Last resort: any LoadBalancer in kube-system
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -n kube-system --field-selector spec.type=LoadBalancer -o name 2>/dev/null',
+            ));
+        }
+
+        return $output !== '';
     }
 
     /**
