@@ -5,19 +5,15 @@ namespace App\Commands\Companion;
 use App\Enums\CompanionDriver;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ManagesCompanions;
-
-use function Laravel\Prompts\confirm;
-
 use LaravelZero\Framework\Commands\Command;
 
-class CompanionRemoveCommand extends Command
+class CompanionStopCommand extends Command
 {
     use LaraKubeOutput, ManagesCompanions;
 
-    protected $signature = 'companion:remove {companion? : Companion slug to remove (omit to pick from installed)}
-                            {--force : Skip confirmation}';
+    protected $signature = 'companion:stop {companion? : Companion slug to stop (omit to pick from installed)}';
 
-    protected $description = 'Remove a companion app from your local cluster';
+    protected $description = 'Pause a companion app by scaling it to zero (its config is preserved)';
 
     public function handle(): int
     {
@@ -35,7 +31,7 @@ class CompanionRemoveCommand extends Command
                 return 1;
             }
         } else {
-            $companion = $this->selectInstalledCompanion('remove');
+            $companion = $this->selectInstalledCompanion('stop');
 
             if ($companion === null) {
                 return 0;
@@ -48,17 +44,14 @@ class CompanionRemoveCommand extends Command
             return 0;
         }
 
-        if (! $this->option('force') && ! confirm("Remove {$companion->getLabel()} from larakube-system?", false)) {
-            return 0;
-        }
-
-        $this->withSpin("Removing {$companion->getLabel()}...", function () use ($companion) {
-            $this->removeCompanion($companion);
+        $this->withSpin("Pausing {$companion->getLabel()}...", function () use ($companion) {
+            $this->scaleCompanion($companion, 0);
 
             return true;
         });
 
-        $this->laraKubeInfo("✅ {$companion->getLabel()} removed.");
+        $this->laraKubeInfo("⏸  {$companion->getLabel()} paused — its data and config remain in the cluster.");
+        $this->line('  <fg=gray>Resume with</> <fg=yellow>larakube companion:start '.$companion->value.'</>');
 
         return 0;
     }

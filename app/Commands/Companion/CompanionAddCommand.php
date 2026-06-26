@@ -81,12 +81,6 @@ class CompanionAddCommand extends Command
                 return null;
             }
 
-            if ($companion->isDefault()) {
-                $this->line("  <fg=yellow>{$companion->getLabel()}</> is deployed automatically with the cluster.");
-
-                return null;
-            }
-
             return $companion;
         }
 

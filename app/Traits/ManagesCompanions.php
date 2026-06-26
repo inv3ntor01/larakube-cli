@@ -8,6 +8,7 @@ use App\Enums\CacheDriver;
 use App\Enums\CompanionDriver;
 use App\Enums\DatabaseDriver;
 
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\table;
 
 trait ManagesCompanions
@@ -36,6 +37,41 @@ trait ManagesCompanions
         foreach (['deployment', 'service', 'ingress'] as $kind) {
             exec("kubectl delete {$kind} ".escapeshellarg($companion->value).' -n larakube-system --ignore-not-found=true 2>/dev/null');
         }
+    }
+
+    /**
+     * Scale a companion's Deployment in larakube-system. 0 pauses it (the Deployment,
+     * Service, Ingress, and any config like phpMyAdmin's PMA_HOSTS are preserved —
+     * the companion analogue of `larakube stop`); 1 resumes it. Note: a subsequent
+     * `larakube up` re-applies needed companions and will scale a paused one back up,
+     * since `up` re-asserts desired state.
+     */
+    protected function scaleCompanion(CompanionDriver $companion, int $replicas): void
+    {
+        exec('kubectl scale deployment '.escapeshellarg($companion->value)." --replicas={$replicas} -n larakube-system 2>/dev/null");
+    }
+
+    /**
+     * Let the user pick from the companions currently deployed in larakube-system.
+     * Returns null (with a friendly note) when none are installed, so callers can
+     * exit cleanly. $action is the verb shown in the prompt (e.g. "stop", "remove").
+     */
+    protected function selectInstalledCompanion(string $action): ?CompanionDriver
+    {
+        $installed = array_filter(CompanionDriver::cases(), fn ($c) => $this->isCompanionInstalled($c));
+
+        if ($installed === []) {
+            $this->line('  <fg=gray>No companions are installed.</>');
+
+            return null;
+        }
+
+        $choices = [];
+        foreach ($installed as $companion) {
+            $choices[$companion->value] = $companion->getLabel();
+        }
+
+        return CompanionDriver::from(select("Which companion would you like to {$action}?", $choices));
     }
 
     protected function isCompanionInstalled(CompanionDriver $companion): bool

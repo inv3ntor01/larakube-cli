@@ -42,11 +42,45 @@ test('companion:add command definition has companion argument', function () {
     expect($cmd->getDefinition()->hasArgument('companion'))->toBeTrue();
 });
 
-test('companion:remove command definition has companion argument and force option', function () {
+test('companion:remove command definition has optional companion argument and force option', function () {
     $cmd = new App\Commands\Companion\CompanionRemoveCommand;
+    $argument = $cmd->getDefinition()->getArgument('companion');
 
     expect($cmd->getDefinition()->hasArgument('companion'))->toBeTrue()
+        ->and($argument->isRequired())->toBeFalse()   // omit the slug → pick from installed
         ->and($cmd->getDefinition()->hasOption('force'))->toBeTrue();
+});
+
+test('companion:stop and companion:start have an optional companion argument', function () {
+    foreach ([App\Commands\Companion\CompanionStopCommand::class, App\Commands\Companion\CompanionStartCommand::class] as $class) {
+        $cmd = new $class;
+
+        expect($cmd->getDefinition()->hasArgument('companion'))->toBeTrue("{$class} is missing the companion argument")
+            ->and($cmd->getDefinition()->getArgument('companion')->isRequired())->toBeFalse("{$class} companion arg should be optional");
+    }
+});
+
+test('companion commands only call CompanionDriver methods that actually exist', function () {
+    // Regression guard for the `isDefault()` crash: both commands called a method
+    // that was never implemented on the enum, and it only blew up at runtime with an
+    // explicit slug (the tests never invoked handle(), so it slipped through). This
+    // scans every $companion->foo()/$c->foo() call in the command sources and asserts
+    // the method exists — catching undefined-method regressions without a cluster.
+    $files = [
+        app_path('Commands/Companion/CompanionAddCommand.php'),
+        app_path('Commands/Companion/CompanionRemoveCommand.php'),
+        app_path('Commands/Companion/CompanionStopCommand.php'),
+        app_path('Commands/Companion/CompanionStartCommand.php'),
+    ];
+
+    foreach ($files as $file) {
+        preg_match_all('/\$(?:companion|c)\s*\??->\s*([a-zA-Z_]+)\s*\(/', (string) file_get_contents($file), $matches);
+
+        foreach (array_unique($matches[1]) as $method) {
+            expect(method_exists(CompanionDriver::class, $method))
+                ->toBeTrue("CompanionDriver::{$method}() is called in ".basename($file).' but does not exist');
+        }
+    }
 });
 
 test('Adminer connection hint uses server param for MySQL', function () {

@@ -65,7 +65,7 @@ enum CompanionDriver: string
                 'PMA_ARBITRARY' => '1',
             ],
             self::PGADMIN => [
-                'PGADMIN_DEFAULT_EMAIL' => 'admin@larakube.local',
+                'PGADMIN_DEFAULT_EMAIL' => 'admin@larakube.dev',
                 'PGADMIN_DEFAULT_PASSWORD' => 'larakube',
                 'PGADMIN_CONFIG_SERVER_MODE' => 'False',
             ],
