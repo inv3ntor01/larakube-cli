@@ -154,9 +154,9 @@ class UpCommand extends Command
                 return 1;
             }
 
-            // Ensure the CLI's pinned standalone kustomize is present so builds match
-            // across the team (every machine uses the same kustomize version, not
-            // kubectl's wildly-varying embedded one). One-time download; cheap after.
+            // Ensure a kustomize that can build our multi-doc patches: installs a pinned
+            // standalone only if this machine's kustomize is too old (k3s/WSL); recent
+            // kubectl uses its own. Self-heals existing clusters on upgrade.
             $this->ensureKustomizeReady();
 
             $validationResult = ['result' => 0, 'output' => []];

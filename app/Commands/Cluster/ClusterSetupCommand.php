@@ -70,10 +70,10 @@ class ClusterSetupCommand extends Command
             $result = $this->installK3s();
         }
 
-        // 3. Install the CLI's pinned standalone kustomize so manifest builds are
-        //    identical on every machine (kubectl's embedded kustomize varies — k3s/WSL
-        //    ship one too old for our multi-doc patches). One-time download, isolated
-        //    under ~/.larakube/bin. Runs on the "already exists" path too.
+        // 3. Make sure a kustomize that can build our multi-doc patches is available:
+        //    installs a pinned standalone only when this machine's kustomize is too old
+        //    (k3s/WSL). Recent kubectl (macOS/OrbStack) uses its own — no download. Runs
+        //    on the "already exists" path too.
         if ($result === 0) {
             $this->ensureKustomizeReady();
         }
