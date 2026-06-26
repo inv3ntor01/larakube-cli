@@ -11,6 +11,31 @@ trait InteractsWithHosts
     use DetectsWsl, InteractsWithOs, InteractsWithProjectConfig, InteractsWithTrust, LaraKubeOutput;
 
     /**
+     * Resolve the externally-reachable IP for cluster ingress.
+     *
+     * Tries LoadBalancer IP first (cloud / Docker Desktop), then falls back to
+     * the node's InternalIP. On WSL2 + native k3s the LoadBalancer has no
+     * external IP assigned, so the node IP is the only reliable address that
+     * works from both WSL and the Windows browser.
+     */
+    protected function resolveIngressIp(): string
+    {
+        // Prefer the LoadBalancer IP when cloud assigns one.
+        $lbIp = trim((string) shell_exec(
+            "kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null",
+        ));
+        if ($lbIp !== '') {
+            return $lbIp;
+        }
+
+        // Fall back to the node's InternalIP — the canonical routable address
+        // for WSL2 / bare-metal k3s where no cloud LoadBalancer IP exists.
+        return trim((string) shell_exec(
+            "kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}' 2>/dev/null",
+        )) ?: '127.0.0.1';
+    }
+
+    /**
      * Check and optionally update the hosts file(s) based on project context.
      * On WSL this also syncs the Windows hosts file, since the Windows browser
      * doesn't read WSL's /etc/hosts.
@@ -70,18 +95,7 @@ trait InteractsWithHosts
             $this->ensureWindowsHostsAreSet($requiredHosts, $appName);
         }
 
-        // 🛡 SMART IP DETECTION
-        // On Mac and Windows, Docker Desktop/OrbStack maps published ports to 127.0.0.1.
-        // On Linux, we use the actual LoadBalancer IP because it's natively routable.
-        $isLinux = $this->isLinux();
-        $externalIp = '127.0.0.1';
-
-        if ($isLinux) {
-            $detectedIp = shell_exec("kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null");
-            if (! empty($detectedIp)) {
-                $externalIp = $detectedIp;
-            }
-        }
+        $externalIp = $this->resolveIngressIp();
         $hostList = implode(' ', $requiredHosts);
         $newEntry = "$externalIp $hostList";
         $blockIdentifier = "# LaraKube: $appName";
@@ -142,8 +156,11 @@ trait InteractsWithHosts
      * The Windows hosts file requires Administrator rights, so we don't write to
      * /mnt/c/... directly (it would fail with permission denied). Instead we drop
      * a tiny .ps1 and run it elevated via PowerShell's Start-Process -Verb RunAs
-     * (the standard UAC prompt). Windows reaches the WSL2 cluster ingress on
-     * 127.0.0.1, so that's the mapped address.
+     * (the standard UAC prompt).
+     *
+     * On WSL2 with native k3s, the ingress runs on the WSL node's InternalIP
+     * (e.g. 172.31.x.x) — NOT 127.0.0.1 — because Windows and WSL have separate
+     * loopback interfaces. Windows can reach the WSL node IP directly.
      *
      * @param  array<int, string>  $requiredHosts
      */
@@ -156,7 +173,8 @@ trait InteractsWithHosts
         }
 
         $blockIdentifier = "# LaraKube: $appName";
-        $entry = '127.0.0.1 '.implode(' ', $requiredHosts);
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $requiredHosts);
 
         $current = (string) file_get_contents($winHosts);
         $updated = $this->applyHostsBlock($current, $blockIdentifier, $entry);
