@@ -5,6 +5,7 @@ namespace App\Commands\Cluster;
 use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PrunesKubeContext;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -13,7 +14,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use InteractsWithKustomize, InteractsWithOs, LaraKubeOutput;
+    use InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
 
     /**
      * The name and signature of the console command.
@@ -135,6 +136,12 @@ class ClusterSetupCommand extends Command
         // so that projects can be located anywhere (Desktop, Codes, etc.)
         $userRoot = $this->isDarwin() ? '/Users' : '/home';
 
+        // Clear any stale k3d-larakube kubeconfig entry from a prior cluster (e.g.
+        // destroyed by an older CLI without this cleanup) so the fresh create + merge
+        // yields a clean, connectable context. Safe here — we're committed to creating
+        // a new cluster, so no live context is being removed.
+        $this->pruneKubeContext(['k3d-larakube']);
+
         $this->laraKubeInfo('Creating LaraKube local cluster...');
         $this->info("  🛡 Universal workspace bridge: {$userRoot}");
 
@@ -211,7 +218,9 @@ class ClusterSetupCommand extends Command
 
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
         // never touches ~/.kube/config — so kubectl and `larakube context` can't
-        // see it until we merge it in.
+        // see it until we merge it in. Prune any stale k3s-larakube entry first so
+        // the fresh merge starts clean (no dangling current-context from a prior run).
+        $this->pruneKubeContext(['k3s-larakube']);
         $this->mergeK3sKubeconfig();
 
         $this->laraKubeInfo('✅ Native k3s cluster is ready!');
