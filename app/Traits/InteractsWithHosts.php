@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Data\GlobalConfigData;
+use App\Enums\SharedClusterService;
 
 use function Laravel\Prompts\confirm;
 
@@ -148,6 +149,127 @@ trait InteractsWithHosts
 
             $this->laraKubeInfo('Hosts synchronized successfully!');
         }
+    }
+
+    /**
+     * Sync cluster-wide shared service hosts (Mailpit, Traefik dashboard, Console,
+     * Grafana) into /etc/hosts and the Windows hosts file on WSL.
+     *
+     * Called after reconcileSharedCluster() in UpCommand, so the shared services
+     * are already deployed. Without this, their ingress hosts existed only in the
+     * cluster and were never written to the local hosts file — browsers couldn't
+     * resolve them.
+     *
+     * Unlike ensureHostsAreSet() this is fully automated (no confirm prompt) because
+     * the hosts are managed by LaraKube itself, not user project config, and they
+     * only contain the cluster ingress IP (not a wildcard catch-all).
+     */
+    protected function syncClusterServiceHosts(): void
+    {
+        $domain = GlobalConfigData::load()->getLocalTld();
+
+        $hosts = [];
+        foreach (SharedClusterService::cases() as $service) {
+            if (! $service->targetsEnvironment('local')) {
+                continue;
+            }
+            $hosts[] = $service->host($domain);
+        }
+
+        if ($hosts === []) {
+            return;
+        }
+
+        // On WSL also sync the Windows hosts file (browsers run on Windows, not WSL).
+        if ($this->isWsl()) {
+            $this->syncWindowsHosts($hosts, 'larakube-shared');
+        }
+
+        $this->syncHostsEntries($hosts, 'larakube-shared');
+    }
+
+    /**
+     * Write a list of hosts to /etc/hosts for the given app name block.
+     * Automated (no confirm prompt) — caller owns the UX decision.
+     *
+     * @param  array<int, string>  $hosts
+     */
+    protected function syncHostsEntries(array $hosts, string $appName): void
+    {
+        if ($hosts === [] || ! file_exists('/etc/hosts')) {
+            return;
+        }
+
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $hosts);
+        $blockId = "# LaraKube: {$appName}";
+        $current = (string) file_get_contents('/etc/hosts');
+        $updated = $this->applyHostsBlock($current, $blockId, $entry);
+
+        if (rtrim($updated) === rtrim($current)) {
+            return;
+        }
+
+        $tmpPath = sys_get_temp_dir().'/larakube_hosts';
+        file_put_contents($tmpPath, $updated);
+        exec("sudo cp $tmpPath /etc/hosts");
+        @unlink($tmpPath);
+    }
+
+    /**
+     * Write cluster-wide shared service hosts to the Windows hosts file from WSL.
+     * Idempotent: skips if already up to date.
+     *
+     * @param  array<int, string>  $hosts
+     */
+    protected function syncWindowsHosts(array $hosts, string $appName): void
+    {
+        $winHosts = '/mnt/c/Windows/System32/drivers/etc/hosts';
+        if (! file_exists($winHosts)) {
+            return;
+        }
+
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $hosts);
+        $blockId = "# LaraKube: {$appName}";
+        $current = (string) file_get_contents($winHosts);
+        $updated = $this->applyHostsBlock($current, $blockId, $entry);
+
+        if (rtrim($updated) === rtrim($current)) {
+            return;
+        }
+
+        $contentTmp = sys_get_temp_dir().'/larakube_win_hosts';
+        $scriptTmp = sys_get_temp_dir().'/larakube_win_hosts_sync.ps1';
+        file_put_contents($contentTmp, $updated);
+
+        $winContent = trim((string) shell_exec('wslpath -w '.escapeshellarg($contentTmp).' 2>/dev/null'));
+        if ($winContent === '') {
+            @unlink($contentTmp);
+
+            return;
+        }
+
+        file_put_contents(
+            $scriptTmp,
+            "Copy-Item -LiteralPath '{$winContent}' -Destination 'C:\\Windows\\System32\\drivers\\etc\\hosts' -Force\n",
+        );
+        $winScript = trim((string) shell_exec('wslpath -w '.escapeshellarg($scriptTmp).' 2>/dev/null'));
+
+        if ($winScript === '') {
+            @unlink($contentTmp);
+            @unlink($scriptTmp);
+
+            return;
+        }
+
+        $startProcess = 'Start-Process -FilePath powershell -Verb RunAs -Wait '
+            ."-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{$winScript}'";
+
+        exec('powershell.exe -NoProfile -Command '.escapeshellarg($startProcess).' 2>/dev/null');
+
+        @unlink($contentTmp);
+        @unlink($scriptTmp);
     }
 
     /**
