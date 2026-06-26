@@ -3,9 +3,9 @@
 namespace App\Commands\Monitor;
 
 use App\Data\ConfigData;
-use App\Data\GlobalConfigData;
 use App\Enums\SharedClusterService;
 use App\Traits\InteractsWithClusterContext;
+use App\Traits\InteractsWithMonitoring;
 use App\Traits\LaraKubeOutput;
 
 use function Laravel\Prompts\select;
@@ -15,16 +15,16 @@ use LaravelZero\Framework\Commands\Command;
 
 class MonitorInitCommand extends Command
 {
-    use InteractsWithClusterContext, LaraKubeOutput;
+    use InteractsWithClusterContext, InteractsWithMonitoring, LaraKubeOutput;
 
     protected $signature = 'monitor:init
         {environment? : Environment this install targets — "local" (default) or a cloud env. Omit to be prompted, like plex:init. A non-local env prompts for + persists the Grafana host.}
         {--context=  : Target a specific kube-context (defaults to current context)}
         {--env=      : Legacy alias for the environment argument}
         {--domain=   : Raw override for the Grafana cluster domain (e.g. example.com → grafana.example.com); skips the prompt}
-        {--remove    : Tear down Prometheus + Grafana from larakube-shared}';
+        {--remove    : Tear down the monitoring stack (Prometheus, Loki, Grafana) from larakube-shared}';
 
-    protected $description = 'Deploy cluster-wide Prometheus + Grafana into larakube-shared';
+    protected $description = 'Deploy the cluster-wide monitoring stack (Prometheus, Loki, Grafana) into larakube-shared';
 
     public function handle(): int
     {
@@ -37,8 +37,8 @@ class MonitorInitCommand extends Command
 
     protected function deployMonitoring(): int
     {
-        $kubectl = $this->kubectl();
-        $ns = 'larakube-shared';
+        $kubectl = $this->monitoringKubectl($this->option('context'));
+        $ns = $this->monitoringNamespace();
 
         // Resolve the Grafana ingress host (local dev TLD, or a prompted +
         // persisted host for a non-local --env). Without this, a prod install
@@ -94,8 +94,8 @@ class MonitorInitCommand extends Command
 
     protected function removeMonitoring(): int
     {
-        $kubectl = $this->kubectl();
-        $ns = 'larakube-shared';
+        $kubectl = $this->monitoringKubectl($this->option('context'));
+        $ns = $this->monitoringNamespace();
 
         $this->withSpin('Removing Prometheus...', fn () => shell_exec(
             "{$kubectl} delete deployment,svc,configmap,pvc,serviceaccount"
@@ -163,7 +163,7 @@ class MonitorInitCommand extends Command
         $env = $this->resolveEnvironment();
 
         if ($env === 'local') {
-            return $service->hostFor(GlobalConfigData::load()->getLocalTld());
+            return (string) $this->resolveGrafanaHostReadOnly('local', null);
         }
 
         return $this->promptForCloudGrafanaHost($service, $env);
@@ -249,25 +249,6 @@ class MonitorInitCommand extends Command
      */
     protected function resolveGrafanaPassword(string $kubectl, string $ns): string
     {
-        $encoded = trim((string) shell_exec(
-            "{$kubectl} get secret grafana-admin -n {$ns}"
-            ." -o jsonpath='{.data.password}' 2>/dev/null",
-        ));
-
-        if ($encoded !== '') {
-            return (string) base64_decode($encoded);
-        }
-
-        return bin2hex(random_bytes(12));
-    }
-
-    /**
-     * Build the kubectl command, optionally scoped to a specific context.
-     */
-    protected function kubectl(): string
-    {
-        $context = (string) ($this->option('context') ?? '');
-
-        return $context !== '' ? "kubectl --context={$context}" : 'kubectl';
+        return $this->readGrafanaPassword($kubectl, $ns) ?? bin2hex(random_bytes(12));
     }
 }

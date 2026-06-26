@@ -2,16 +2,18 @@
 
 namespace App\Commands\Plex;
 
+use App\Data\ConfigData;
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ReadsPlexCredentials;
 use App\Traits\ResolvesEnvironmentContext;
 use LaravelZero\Framework\Commands\Command;
 
 class PlexStatusCommand extends Command
 {
-    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
+    use InteractsWithClusterContext, InteractsWithPlex, InteractsWithProjectConfig, LaraKubeOutput, ReadsPlexCredentials, ResolvesEnvironmentContext;
 
     protected $signature = 'plex:status
         {environment=production : The cloud environment whose Commons to inspect (used only inside a project)}
@@ -116,8 +118,36 @@ class PlexStatusCommand extends Command
             } else {
                 $this->line('      <fg=gray>└─ S3 Bucket:</> <fg=gray>—</>');
             }
+
+            // For this app, surface the joined credentials (passwords live in the
+            // project's .env, never the registry) so they're recoverable here too.
+            if ($name === $self && $config !== null) {
+                $this->showSelfCredentials($config, (string) $this->argument('environment'));
+            }
         }
 
         return 0;
+    }
+
+    /**
+     * Print the joined Commons credentials for this app (DB / Redis / S3), read
+     * from the project's .env / .env.{env}. No-op when not a tenant for this env.
+     */
+    private function showSelfCredentials(ConfigData $config, string $env): void
+    {
+        $creds = $this->plexTenantCredentials($config, getcwd(), $env);
+
+        if ($creds === []) {
+            return;
+        }
+
+        $source = $env === 'local' ? '.env' : ".env.{$env}";
+        $this->line("      <fg=gray>credentials</> <fg=gray>(from {$source}):</>");
+
+        foreach ($creds as $section => $pairs) {
+            foreach ($pairs as $key => $value) {
+                $this->line("        <fg=gray>{$section} {$key}:</> {$value}");
+            }
+        }
     }
 }

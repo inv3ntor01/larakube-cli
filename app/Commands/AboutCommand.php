@@ -2,10 +2,13 @@
 
 namespace App\Commands;
 
+use App\Data\ConfigData;
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithMonitoring;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ManagesCompanions;
+use App\Traits\ReadsPlexCredentials;
 
 use function Laravel\Prompts\table;
 
@@ -13,7 +16,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class AboutCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput, ManagesCompanions;
+    use InteractsWithEnvironments, InteractsWithMonitoring, InteractsWithProjectConfig, LaraKubeOutput, ManagesCompanions, ReadsPlexCredentials;
 
     /**
      * The name and signature of the console command.
@@ -157,7 +160,70 @@ class AboutCommand extends Command
         // consoles, with per-project connection details. Local only; no-ops otherwise.
         $this->showCompanionAccess($config, $config->getName(), $environment);
 
+        // 6. Monitoring stack (cluster-wide, larakube-shared) — shown only when
+        // installed, so projects without monitoring don't see an empty section.
+        $this->showMonitoringAccess($environment, $config);
+
+        // 7. Plex Commons credentials this project joined (read from the env's
+        // .env file). Only shown when the project is a tenant for this env.
+        $this->showPlexCredentials($config, $environment);
+
         return 0;
+    }
+
+    /**
+     * Render the cluster-wide monitoring stack's URLs + Grafana credentials when
+     * monitoring is installed. Silent no-op otherwise, so it only appears when
+     * there's something to show — another place to recover the Grafana password.
+     */
+    protected function showMonitoringAccess(string $environment, ConfigData $config): void
+    {
+        $access = $this->monitoringAccess($environment, $config);
+
+        if ($access === null) {
+            return;
+        }
+
+        $this->newLine();
+        $this->laraKubeInfo('Monitoring');
+
+        $grafana = $access['host'] ? "<fg=blue>https://{$access['host']}</>" : '<fg=gray>host not configured</>';
+        $login = $access['password'] !== null ? "admin / {$access['password']}" : '<fg=gray>unknown</>';
+
+        table(['Component', 'Access'], [
+            ['Grafana', $grafana],
+            ['Grafana login', $login],
+            ['Prometheus', $access['prometheus'].' <fg=gray>(in-cluster)</>'],
+            ['Loki', $access['loki'].' <fg=gray>(in-cluster)</>'],
+        ]);
+    }
+
+    /**
+     * Render the Plex Commons credentials this project joined for the env (DB,
+     * Redis, S3) — read from .env / .env.{env}. Silent no-op when the project
+     * isn't a Plex tenant for this env, so it only appears when relevant. This is
+     * another place to recover the joined Commons secrets, alongside plex:status.
+     */
+    protected function showPlexCredentials(ConfigData $config, string $environment): void
+    {
+        $creds = $this->plexTenantCredentials($config, getcwd(), $environment);
+
+        if ($creds === []) {
+            return;
+        }
+
+        $this->newLine();
+        $this->laraKubeInfo("Plex Commons ({$environment})");
+
+        $sectionLabels = ['database' => 'Database', 'redis' => 'Redis', 's3' => 'S3'];
+        $rows = [];
+        foreach ($creds as $section => $pairs) {
+            foreach ($pairs as $key => $value) {
+                $rows[] = [($sectionLabels[$section] ?? ucfirst($section)).' '.$key, $value];
+            }
+        }
+
+        table(['Commons resource', 'Detail'], $rows);
     }
 
     protected function getPodStatus(array $pod): string

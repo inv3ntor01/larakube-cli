@@ -1,5 +1,9 @@
 # Plan: Cluster Observability — Loki + Prometheus + Grafana
 
+> **Related:** [`monitoring-plex-storage.md`](monitoring-plex-storage.md) — queued
+> enhancement to reuse the Plex Commons object store for Loki chunks (auto-detected,
+> PVC fallback). Post-v0.21.x; pairs with the Gitea/Plex-MinIO work.
+
 ## Context
 
 The LaraKube CLI roadmap ("Console: Real-time Prometheus / Grafana monitoring built in") has
