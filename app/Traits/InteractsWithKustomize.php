@@ -21,10 +21,15 @@ trait InteractsWithKustomize
         return home_path('.larakube/bin/kustomize');
     }
 
-    /** Records that the host's embedded `kubectl kustomize` already handles modern syntax. */
+    /**
+     * Records that the host's embedded `kubectl kustomize` already handles the
+     * manifests we emit. Filename is versioned (-patches-ok): an earlier build
+     * probed with a non-representative single-doc patch and may have written a stale
+     * marker, so the new name forces a fresh, correct probe.
+     */
     protected function kustomizeOkMarker(): string
     {
-        return home_path('.larakube/.kustomize-embedded-ok');
+        return home_path('.larakube/.kustomize-patches-ok');
     }
 
     /**
@@ -91,8 +96,13 @@ trait InteractsWithKustomize
     }
 
     /**
-     * Functional probe: build a tiny overlay that uses the `patches:` field. Version-
-     * agnostic — it tests the exact feature that breaks rather than parsing versions.
+     * Functional probe replicating exactly what the CLI emits and what breaks on old
+     * kustomize: `patches: - path: patches.yaml` where patches.yaml is a MULTI-DOCUMENT
+     * file (overlays/local/patches.yaml = deployment patch `---` ingress patch). kubectl's
+     * embedded kustomize on k3s/WSL fails to parse a multi-doc patch file
+     * ("unable to parse SM or JSON patch"); kustomize v5 handles it. A single inline
+     * patch would NOT catch this — that was the original probe's blind spot. Version-
+     * agnostic: it tests the exact failure mode rather than parsing version strings.
      * $buildPrefix is "kubectl kustomize" or "<bin> build".
      */
     protected function kustomizeHandlesPatches(string $buildPrefix): bool
@@ -120,25 +130,37 @@ trait InteractsWithKustomize
             '          image: nginx',
         ])."\n");
 
+        // Multi-document patch file — the exact shape that trips the embedded kustomize.
+        file_put_contents($dir.'/patches.yaml', implode("\n", [
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata:',
+            '  name: probe',
+            'spec:',
+            '  replicas: 2',
+            '---',
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata:',
+            '  name: probe',
+            'spec:',
+            '  template:',
+            '    metadata:',
+            '      labels:',
+            '        probed: "true"',
+        ])."\n");
+
         file_put_contents($dir.'/kustomization.yaml', implode("\n", [
             'resources:',
             '  - deploy.yaml',
             'patches:',
-            '  - target:',
-            '      kind: Deployment',
-            '      name: probe',
-            '    patch: |-',
-            '      apiVersion: apps/v1',
-            '      kind: Deployment',
-            '      metadata:',
-            '        name: probe',
-            '      spec:',
-            '        replicas: 2',
+            '  - path: patches.yaml',
         ])."\n");
 
         exec($buildPrefix.' '.escapeshellarg($dir).' 2>/dev/null', $out, $code);
 
         @unlink($dir.'/deploy.yaml');
+        @unlink($dir.'/patches.yaml');
         @unlink($dir.'/kustomization.yaml');
         @rmdir($dir);
 
