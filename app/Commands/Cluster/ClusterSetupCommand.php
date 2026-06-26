@@ -72,9 +72,10 @@ class ClusterSetupCommand extends Command
         }
 
         // 3. Make sure a kustomize that can build our multi-doc patches is available:
-        //    installs a pinned standalone only when this machine's kustomize is too old
-        //    (k3s/WSL). Recent kubectl (macOS/OrbStack) uses its own — no download. Runs
-        //    on the "already exists" path too.
+        //    probes the machine's own kustomize and installs a pinned standalone only when
+        //    it can't build them (k3s/WSL, or an older v5 like v5.0.4). A capable kubectl
+        //    (recent macOS/OrbStack) uses its own — no download. Runs on the "already
+        //    exists" path too.
         if ($result === 0) {
             $this->ensureKustomizeReady();
         }

@@ -154,9 +154,9 @@ class UpCommand extends Command
                 return 1;
             }
 
-            // Ensure a kustomize that can build our multi-doc patches: installs a pinned
-            // standalone only if this machine's kustomize is too old (k3s/WSL); recent
-            // kubectl uses its own. Self-heals existing clusters on upgrade.
+            // Ensure a kustomize that can build our multi-doc patches: probes this machine's
+            // kustomize and installs a pinned standalone only if it can't build them (k3s/WSL,
+            // or an older v5); a capable kubectl uses its own. Self-heals on upgrade.
             $this->ensureKustomizeReady();
 
             $validationResult = ['result' => 0, 'output' => []];

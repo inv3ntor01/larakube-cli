@@ -5,13 +5,14 @@ namespace App\Traits;
 use App\Data\ConfigData;
 
 /**
- * Local manifest builds use `kubectl kustomize` / `kubectl apply -k` — kubectl's EMBEDDED
- * kustomize. That's fine on a recent kubectl (macOS/OrbStack ship v5), but k3s/WSL often
- * ship one too old to parse the multi-document `patches:` files we emit, so builds fail.
- * The team only needs everyone on kustomize v5+, not the exact same patch version — so we
- * install a pinned standalone kustomize (isolated under ~/.larakube/bin, no sudo) ONLY when
- * the machine's own kustomize is too old, and use it for builds. Up-to-date machines use
- * their own and download nothing.
+ * Local manifest builds (up, kustomize, cloud:deploy) render our overlays — including a
+ * multi-document `patches:` file that older kustomize can't parse. kubectl's EMBEDDED
+ * kustomize varies across machines and its VERSION isn't a reliable signal (k3s/WSL ship a
+ * very old one; even kubectl-bundled v5.0.4 reports "v5" but still can't handle multi-doc
+ * patches). So we don't trust the version: a quick functional PROBE checks whether the
+ * machine's own kustomize can actually build the overlay. If it can, we use it and download
+ * nothing (recent macOS/OrbStack). If it can't, we install the CLI's pinned kustomize into
+ * ~/.larakube/bin (isolated, no sudo, never shadows a system binary) and build with that.
  */
 trait InteractsWithKustomize
 {
@@ -21,7 +22,7 @@ trait InteractsWithKustomize
         return home_path('.larakube/bin/kustomize');
     }
 
-    /** The kustomize version we install when the machine's own is too old. */
+    /** The single version we install when a machine's own kustomize can't build our overlays. */
     protected function pinnedKustomizeVersion(): string
     {
         return (new ConfigData)->kustomizeVersion ?? 'v5.6.0';
@@ -30,7 +31,7 @@ trait InteractsWithKustomize
     /**
      * The kustomize binary to BUILD with, or null to fall back to `kubectl kustomize`.
      * Non-null only when we installed our standalone (because the machine's own kustomize
-     * was too old). Recent-kubectl machines keep this null and use their embedded one.
+     * couldn't build the overlays). Capable machines keep this null and use their own.
      */
     protected function kustomizeBin(): ?string
     {
@@ -60,11 +61,10 @@ trait InteractsWithKustomize
     }
 
     /**
-     * Ensure a kustomize that can build our manifests is available. Installs the pinned
-     * standalone ONLY when the machine's own kustomize is too old (typical on k3s/WSL);
-     * recent-kubectl machines (macOS/OrbStack, up-to-date Linux) use their own and download
-     * nothing. Cheap: a single `kubectl version` check, or an instant return once our
-     * standalone is present. Best-effort — if the download fails, builds fall back to
+     * Ensure a kustomize that can build our overlays is available. If the machine's own
+     * kustomize already builds our multi-doc `patches:` (recent macOS/OrbStack), use it —
+     * no download. Otherwise (k3s/WSL, or an older v5 like v5.0.4) install the pinned
+     * standalone. Best-effort — if the download fails (offline), builds fall back to
      * `kubectl kustomize`.
      */
     protected function ensureKustomizeReady(bool $verbose = true): void
@@ -74,33 +74,88 @@ trait InteractsWithKustomize
             return;
         }
 
-        // The machine's own kubectl ships a new-enough kustomize (v5+)? Use it, no download.
-        if ($this->embeddedKustomizeIsRecent()) {
+        // Can the machine's own kustomize build our overlays? If so, no download needed.
+        if ($this->embeddedKustomizeBuildsOurPatches()) {
             return;
         }
 
-        // Too old (k3s/WSL) to parse our multi-doc patches — install the pinned standalone.
         $this->installManagedKustomize($this->pinnedKustomizeVersion(), $verbose);
     }
 
-    /** Is kubectl's embedded kustomize new enough (v5+) to build our manifests? */
-    protected function embeddedKustomizeIsRecent(): bool
+    /** Does kubectl's embedded kustomize build a representative multi-doc `patches:` overlay? */
+    protected function embeddedKustomizeBuildsOurPatches(): bool
     {
-        $json = (string) shell_exec('kubectl version --client -o json 2>/dev/null');
-        if ($json === '') {
-            return false;   // no kubectl, or too old to report — treat as old, install ours
-        }
-
-        $data = json_decode($json, true);
-        $version = is_array($data) ? (string) ($data['kustomizeVersion'] ?? '') : '';
-
-        return $this->kustomizeVersionIsRecent($version);
+        return $this->kustomizeHandlesMultiDocPatches('kubectl kustomize');
     }
 
-    /** Pure: does a kustomize version string report major v5 or newer? */
-    protected function kustomizeVersionIsRecent(string $version): bool
+    /**
+     * Functional probe replicating exactly what we emit and what breaks: `patches: - path:`
+     * pointing at a MULTI-DOCUMENT patch file (overlays/local/patches.yaml = deployment patch
+     * `---` ingress patch). An older embedded kustomize fails this ("unable to parse SM or
+     * JSON patch"); a capable one builds it. Version-agnostic and self-correcting — it tests
+     * the real capability rather than guessing from a version string. Local-only (no cluster
+     * contact). $buildPrefix is "kubectl kustomize" or "<bin> build".
+     */
+    protected function kustomizeHandlesMultiDocPatches(string $buildPrefix): bool
     {
-        return preg_match('/v(\d+)\./', $version, $m) === 1 && (int) $m[1] >= 5;
+        $dir = sys_get_temp_dir().'/lk-kustomize-probe-'.uniqid();
+        @mkdir($dir, 0755, true);
+
+        file_put_contents($dir.'/deploy.yaml', implode("\n", [
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata:',
+            '  name: probe',
+            'spec:',
+            '  replicas: 1',
+            '  selector:',
+            '    matchLabels:',
+            '      app: probe',
+            '  template:',
+            '    metadata:',
+            '      labels:',
+            '        app: probe',
+            '    spec:',
+            '      containers:',
+            '        - name: c',
+            '          image: nginx',
+        ])."\n");
+
+        // Multi-document patch file — the exact shape that trips an older embedded kustomize.
+        file_put_contents($dir.'/patches.yaml', implode("\n", [
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata:',
+            '  name: probe',
+            'spec:',
+            '  replicas: 2',
+            '---',
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata:',
+            '  name: probe',
+            'spec:',
+            '  template:',
+            '    metadata:',
+            '      labels:',
+            '        probed: "true"',
+        ])."\n");
+
+        file_put_contents($dir.'/kustomization.yaml', implode("\n", [
+            'resources:',
+            '  - deploy.yaml',
+            'patches:',
+            '  - path: patches.yaml',
+        ])."\n");
+
+        exec($buildPrefix.' '.escapeshellarg($dir).' 2>/dev/null', $out, $code);
+
+        @unlink($dir.'/deploy.yaml');
+        @unlink($dir.'/patches.yaml');
+        @unlink($dir.'/kustomization.yaml');
+        @rmdir($dir);
+
+        return $code === 0 && $out !== [];
     }
 
     /** Download the pinned kustomize into ~/.larakube/bin (no sudo, no system changes). */
@@ -115,7 +170,7 @@ trait InteractsWithKustomize
         @mkdir($binDir, 0755, true);
 
         if ($verbose) {
-            $this->laraKubeInfo("Your kubectl's kustomize is too old to build these manifests (need v5+) — installing a standalone kustomize {$version}...");
+            $this->laraKubeInfo("Your kustomize can't build these manifests — installing a standalone kustomize {$version}...");
         }
 
         $url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F{$version}/kustomize_{$version}_{$os}_{$arch}.tar.gz";
@@ -139,7 +194,7 @@ trait InteractsWithKustomize
         @unlink($bin);
         if ($verbose) {
             $this->laraKubeWarn("Could not install kustomize {$version} automatically (offline?).");
-            $this->laraKubeLine('  👉 Builds will use your kubectl\'s kustomize for now; install kustomize v5+ for consistent results.');
+            $this->laraKubeLine('  👉 Builds will use your kubectl\'s kustomize for now; install kustomize v5.6+ for consistent results.');
         }
     }
 }

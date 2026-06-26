@@ -716,8 +716,8 @@ trait InteractsWithRemoteDeploy
 
             // 6. Apply the overlay via the scoped credential, retrying briefly for
             //    RBAC propagation lag right after the RoleBinding was created.
-            //    Ensure a kustomize that parses our multi-doc patches first (installs a
-            //    pinned standalone when this machine's is too old, e.g. k3s/WSL).
+            //    Ensure a kustomize that can build our multi-doc patches first (installs a
+            //    pinned standalone when this machine's kustomize can't, e.g. k3s/WSL).
             $this->ensureKustomizeReady();
             $overlay = $config->getK8sPath().'/overlays/'.$environment;
             $applyCmd = $this->applyWithImageRewriteUsingKubeconfig($kubeconfigPath, $overlay, $fromImage, $toImage);
