@@ -288,6 +288,11 @@ class UpCommand extends Command
             // internally guarded + idempotent. Add new shared globals to the
             // SharedClusterService enum — this call site never changes.
             $this->reconcileSharedCluster($config);
+
+            // Shared services are now deployed — sync their hosts to /etc/hosts and
+            // the Windows hosts file so browsers can resolve them (Mailpit, Traefik
+            // dashboard, Console, Grafana). Automated; no confirm prompt.
+            $this->syncClusterServiceHosts();
         }
 
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
@@ -457,6 +462,7 @@ class UpCommand extends Command
 
         if ($environment === 'local') {
             $this->ensureProjectCompanions($config, $appName);
+            $this->syncCompanionHosts($config);
         }
 
         $this->newLine();

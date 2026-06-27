@@ -13,6 +13,8 @@ use function Laravel\Prompts\table;
 
 trait ManagesCompanions
 {
+    use InteractsWithHosts;
+
     protected function deployCompanion(CompanionDriver $companion): void
     {
         // Resolve the dev TLD fresh from disk rather than leaning on the shared
@@ -342,6 +344,62 @@ trait ManagesCompanions
         }
 
         $this->refreshPhpMyAdminServers($config, $appName);
+    }
+
+    /**
+     * Sync installed companion hosts (pgAdmin, RedisInsight, phpMyAdmin, etc.) to
+     * /etc/hosts and the Windows hosts file on WSL.
+     *
+     * Called after ensureProjectCompanions() in UpCommand — companions are deployed
+     * before their hosts are synced. Without this, companion ingress hosts existed
+     * only in the cluster and were invisible to the browser on WSL/Windows.
+     * Automated (no confirm prompt); skips if companions are disabled.
+     */
+    protected function syncCompanionHosts(ConfigData $config): void
+    {
+        if (! $config->withCompanions) {
+            return;
+        }
+
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $hosts = [];
+
+        $db = $config->getDatabase();
+        $cache = $config->getCacheDriver();
+
+        if ($this->isCompanionInstalled(CompanionDriver::PGADMIN) && $db === DatabaseDriver::POSTGRESQL) {
+            $hosts[] = "pgadmin.{$tld}";
+        }
+        if ($this->isCompanionInstalled(CompanionDriver::REDISINSIGHT) && $cache === CacheDriver::REDIS) {
+            $hosts[] = "redisinsight.{$tld}";
+        }
+        if ($this->isCompanionInstalled(CompanionDriver::PHPMYADMIN)
+            && $db instanceof DatabaseDriver
+            && in_array($db, [DatabaseDriver::MYSQL, DatabaseDriver::MARIADB], true)
+        ) {
+            $hosts[] = "phpmyadmin.{$tld}";
+        }
+        if ($this->isCompanionInstalled(CompanionDriver::ADMINER)
+            && $db instanceof DatabaseDriver
+            && $db !== DatabaseDriver::SQLITE
+        ) {
+            $hosts[] = "adminer.{$tld}";
+        }
+        if ($this->isCompanionInstalled(CompanionDriver::MONGO_EXPRESS) && $db === DatabaseDriver::MONGODB) {
+            $hosts[] = "mongo-express.{$tld}";
+        }
+
+        if ($hosts === []) {
+            return;
+        }
+
+        $appName = $config->getName();
+
+        if ($this->isWsl()) {
+            $this->syncWindowsHosts($hosts, "{$appName}-companions");
+        }
+
+        $this->syncHostsEntries($hosts, "{$appName}-companions");
     }
 
     /**

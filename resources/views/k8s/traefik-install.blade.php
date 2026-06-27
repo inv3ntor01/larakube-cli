@@ -139,6 +139,10 @@ kind: Service
 metadata:
   name: traefik
   namespace: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: ingress-controller
+    app.kubernetes.io/managed-by: larakube
 spec:
   type: LoadBalancer
   selector:
