@@ -14,6 +14,7 @@ use function Laravel\Prompts\table;
 trait ManagesCompanions
 {
     use InteractsWithHosts;
+
     protected function deployCompanion(CompanionDriver $companion): void
     {
         // Resolve the dev TLD fresh from disk rather than leaning on the shared
