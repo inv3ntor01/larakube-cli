@@ -22,11 +22,12 @@ class ContextImportCommand extends Command
         $file = (string) $this->argument('file');
         if (! is_file($file)) {
             $this->laraKubeError("Kubeconfig file not found: {$file}");
+            $this->line('  <fg=gray>Need one? Ask your cluster admin to run</> <fg=yellow>larakube cluster:grant</> <fg=gray>and send you the file.</>');
 
             return 1;
         }
 
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        $home = home_path();
         $local = $home.'/.kube/config';
 
         // Which context are we importing? (Deterministic name → re-import is idempotent.)

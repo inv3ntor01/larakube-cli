@@ -9,6 +9,8 @@ use App\Enums\DatabaseDriver;
 use App\Enums\ScoutDriver;
 use App\Enums\StorageDriver;
 
+use function Laravel\Prompts\confirm;
+
 /**
  * Shared helpers for the Plex feature — the multi-tenant "Commons" (shared
  * Postgres/Redis/Meili) that several LaraKube projects join.
@@ -54,12 +56,12 @@ trait InteractsWithPlex
         // version stays in lockstep with ScoutDriver instead of a stale literal).
         $defaults = [
             'postgres' => ['image' => DatabaseDriver::POSTGRESQL->getDockerImage(), 'port' => DatabaseDriver::POSTGRESQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'mysql' => ['image' => DatabaseDriver::MYSQL->getDockerImage(), 'port' => DatabaseDriver::MYSQL->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'mariadb' => ['image' => DatabaseDriver::MARIADB->getDockerImage(), 'port' => DatabaseDriver::MARIADB->dbPort(), 'storage' => '10Gi', 'memory' => '1Gi'],
-            'redis' => ['image' => CacheDriver::REDIS->getDockerImage(), 'port' => CacheDriver::REDIS->dbPort()],
-            'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(), 'port' => ScoutDriver::MEILISEARCH->port(), 'storage' => '5Gi'],
-            'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(), 'port' => StorageDriver::SEAWEEDFS->port(), 'storage' => '10Gi'],
-            'minio' => ['image' => StorageDriver::MINIO->getDockerImage(), 'port' => StorageDriver::MINIO->port(), 'storage' => '10Gi'],
+            'mysql' => ['image' => DatabaseDriver::MYSQL->getDockerImage(),       'port' => DatabaseDriver::MYSQL->dbPort(),       'storage' => '10Gi', 'memory' => '1Gi'],
+            'mariadb' => ['image' => DatabaseDriver::MARIADB->getDockerImage(),     'port' => DatabaseDriver::MARIADB->dbPort(),     'storage' => '10Gi', 'memory' => '1Gi'],
+            'redis' => ['image' => CacheDriver::REDIS->getDockerImage(),          'port' => CacheDriver::REDIS->dbPort(),                               'memory' => '128Mi'],
+            'meilisearch' => ['image' => ScoutDriver::MEILISEARCH->getDockerImage(),    'port' => ScoutDriver::MEILISEARCH->port(),      'storage' => '5Gi',  'memory' => '512Mi'],
+            'seaweedfs' => ['image' => StorageDriver::SEAWEEDFS->getDockerImage(),    'port' => StorageDriver::SEAWEEDFS->port(),      'storage' => '10Gi', 'memory' => '512Mi'],
+            'minio' => ['image' => StorageDriver::MINIO->getDockerImage(),        'port' => StorageDriver::MINIO->port(),          'storage' => '10Gi', 'memory' => '512Mi'],
         ];
 
         $given = $spec['services'] ?? [];
@@ -160,10 +162,14 @@ trait InteractsWithPlex
     }
 
     /**
-     * Turn an app name into a safe SQL identifier reused for the tenant's
-     * database AND login role (e.g. "app-one" → "app_one"). Pure.
+     * Turn an app name (+ optional env) into a safe SQL identifier reused for
+     * the tenant's database AND login role (e.g. "app-one" → "app_one").
+     * For non-production envs the env is appended so the same app can join the
+     * Commons under two separate environments (e.g. "app_one_staging"). The
+     * production env keeps the un-suffixed form for backwards compatibility with
+     * existing single-env Plex setups. Pure.
      */
-    public function plexTenantIdentifier(string $appName): string
+    public function plexTenantIdentifier(string $appName, string $env = 'production'): string
     {
         $id = strtolower(trim($appName));
         $id = (string) preg_replace('/[^a-z0-9]+/', '_', $id);
@@ -172,6 +178,13 @@ trait InteractsWithPlex
         // SQL identifiers must start with a letter; prefix if not.
         if ($id === '' || ! preg_match('/^[a-z]/', $id)) {
             $id = 'app_'.$id;
+        }
+
+        // Non-production envs get an env suffix so staging/develop/etc. each
+        // get their own isolated DB, Redis slot, and S3 bucket on the Commons.
+        if ($env !== 'production') {
+            $suffix = '_'.preg_replace('/[^a-z0-9]+/', '_', strtolower(trim($env)));
+            $id = substr($id, 0, 63 - strlen($suffix)).$suffix;
         }
 
         return substr($id, 0, 63); // Postgres identifier length cap.
@@ -419,6 +432,112 @@ trait InteractsWithPlex
         file_put_contents($tmp, $manifest);
         passthru("{$kubectl} apply -n {$ns} -f ".escapeshellarg($tmp));
         @unlink($tmp);
+    }
+
+    /**
+     * Ensure a Commons exists on this cluster and offers every requested service.
+     * Offers to bootstrap via plex:init on first run (demand-driven: only the
+     * services this tenant needs). Returns false when the caller should abort.
+     *
+     * @param  array<int, string>  $services
+     */
+    protected function ensureCommons(array $services): bool
+    {
+        $spec = $this->getCommonsSpec();
+
+        if ($spec === null) {
+            if (! $this->option('yes') && ! confirm('No Commons on this cluster yet. Create one now?', true)) {
+                $this->laraKubeError('A Commons is required. Run `larakube plex:init` first.');
+
+                return false;
+            }
+
+            $bootstrap = ['--services' => implode(',', $services)];
+            if ($this->plexContext) {
+                $bootstrap['--context'] = $this->plexContext;
+            }
+            $this->call('plex:init', $bootstrap);
+            $spec = $this->getCommonsSpec();
+
+            if ($spec === null) {
+                $this->laraKubeError('Commons bootstrap failed. Run `larakube plex:init` and retry.');
+
+                return false;
+            }
+        }
+
+        $offered = $this->enabledCommonsServices($spec);
+        $missing = array_diff($services, $offered);
+
+        if (! empty($missing)) {
+            $this->laraKubeError('The Commons does not offer: '.implode(', ', $missing).'.');
+            $this->laraKubeLine('  Re-run `larakube plex:init` to add it, then join again.');
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Create/refresh this tenant's database + login in the Commons via
+     * `kubectl exec`. The engine-specific SQL and admin client come from the
+     * DatabaseDriver enum, so this single path serves Postgres, MySQL, and MariaDB.
+     */
+    protected function allocateDatabase(DatabaseDriver $driver, string $tenant, string $password): bool
+    {
+        $ns = $this->plexNamespace();
+        $sql = $driver->commonsTenantSql($tenant, $tenant, $password);
+
+        if ($sql === null) {
+            return true;
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_sql');
+        file_put_contents($tmp, $sql);
+
+        $service = $driver->value;
+        $client = $driver->commonsAdminClient();
+        $output = [];
+        $code = 0;
+        $this->withSpin("Allocating database '{$tenant}' in the Commons...", function () use ($ns, $service, $client, $tmp, &$output, &$code) {
+            exec(
+                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/'.$service.' -- '.
+                'sh -c '.escapeshellarg($client).' < '.escapeshellarg($tmp).' 2>&1',
+                $output,
+                $code,
+            );
+
+            return $code === 0;
+        });
+
+        @unlink($tmp);
+
+        if ($code !== 0) {
+            $this->laraKubeError("Could not allocate the tenant database in the Commons {$driver->getLabel()}.");
+            foreach (array_slice($output, -4) as $line) {
+                $this->laraKubeLine('    '.$line);
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Mark a DB service as managed in .larakube.json so plex:join's guard passes
+     * after a plex:migrate data copy (the PVC may still exist, but the "managed"
+     * flag is the guard's short-circuit).
+     */
+    protected function markServiceMigrated(string $projectPath, ConfigData $config, string $env, string $dbService): void
+    {
+        $data = $config->toArray();
+        $data['environments'][$env]['managed'] = array_values(array_unique(array_merge(
+            $data['environments'][$env]['managed'] ?? [],
+            [$dbService],
+        )));
+        ConfigData::from($data)->saveToFile($projectPath);
     }
 
     /** A `kubectl` prefix scoped to the resolved plex context (current when null). */

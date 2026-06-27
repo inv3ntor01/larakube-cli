@@ -14,11 +14,18 @@ class CloudProvisionNfsCommand extends Command
 {
     use InteractsWithClusterContext, LaraKubeOutput;
 
-    protected $signature = 'cloud:provision:nfs
+    protected $signature = 'cloud:init:nfs
                             {--context= : Target a specific kube-context}
                             {--size=10Gi : Size of the block volume backing the NFS share}
                             {--storage-class= : Block StorageClass for the backing volume (default: cluster default, e.g. do-block-storage)}
                             {--retain : Keep the PersistentVolume (reclaimPolicy: Retain) when a PVC is deleted}';
+
+    /**
+     * Backward-compatible alias for the pre-rename command name.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['cloud:provision:nfs'];
 
     protected $description = '[Experimental] In-cluster NFS for RWX shared storage — works on some clusters but NOT DOKS (mount hangs). Prefer externalizing to object storage + Redis';
 

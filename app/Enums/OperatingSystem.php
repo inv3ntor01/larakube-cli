@@ -27,6 +27,14 @@ enum OperatingSystem: string implements HasCommandOptions, HasLabel, HasSelectOp
             default => null,
         };
     }
+
+    public function getNodeInstallCommand(): string
+    {
+        return match ($this) {
+            self::ALPINE => 'apk add --no-cache nodejs npm',
+            self::DEBIAN => 'apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*',
+        };
+    }
     case DEBIAN = 'debian';
     case ALPINE = 'alpine';
 }

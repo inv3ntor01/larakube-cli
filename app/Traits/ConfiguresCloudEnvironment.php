@@ -2,7 +2,9 @@
 
 namespace App\Traits;
 
+use App\Contracts\HasPromptableHosts;
 use App\Contracts\PlexProvisionable;
+use App\Data\GlobalConfigData;
 use App\Data\RegistryData;
 use App\Enums\RegistryProvider;
 
@@ -69,9 +71,9 @@ trait ConfiguresCloudEnvironment
 
         // 🌐 Ensure Web Domain is set for this env (fires for any non-local env).
         // Re-prompt when the host is missing, the {name}.com placeholder, OR a
-        // local .dev.test host — which must never ship to a remote environment.
+        // local .kube host — which must never ship to a remote environment.
         $currentHost = $config->getHost($environment, 'web');
-        if (! $currentHost || $currentHost === "{$config->getName()}.com" || str_contains((string) $currentHost, '.dev.test')) {
+        if (! $currentHost || $currentHost === "{$config->getName()}.com" || $this->isLocalDomain((string) $currentHost)) {
             $this->newLine();
             $this->info(' 🌐 ARCHITECTURAL ALIGNMENT');
             $this->line("   Remote deployments require a real web domain for '{$environment}'.");
@@ -86,6 +88,31 @@ trait ConfiguresCloudEnvironment
             );
 
             $config->setHost($environment, 'web', $host);
+        }
+
+        // 🌐 Sweep every client-facing non-web host (Reverb WS, S3/CDN public
+        // endpoint, …). Uses the same missing/local guard as the web check above.
+        // Components declare promptable services via HasPromptableHosts; anything
+        // blank or local at deploy time will break the app just like the web host.
+        foreach ($config->getComponents($environment) as $component) {
+            if (! $component instanceof HasPromptableHosts) {
+                continue;
+            }
+            foreach ($component->getPromptableHostServices() as $service => $label) {
+                $current = (string) $config->getHost($environment, $service);
+                if ($current !== '' && ! $this->isLocalDomain($current)) {
+                    continue;
+                }
+                $serviceHost = text(
+                    label: "Real {$label} host for '{$environment}'?",
+                    placeholder: 'leave blank to derive from web host',
+                    default: $current,
+                    required: false,
+                );
+                if ($serviceHost !== '') {
+                    $config->setHost($environment, $service, $serviceHost);
+                }
+            }
         }
 
         $this->saveProjectConfig($projectPath, $config);
@@ -224,26 +251,95 @@ trait ConfiguresCloudEnvironment
             label: 'Which environment are you configuring for GitHub Actions?',
         );
 
+        $projectPath = getcwd();
         $envFile = ".env.{$environment}";
 
-        $this->laraKubeWarn("🛡 SECURITY CHECK: GitHub Actions will use your local '{$envFile}' as the source of truth.");
-        $this->line('  Please ensure you have set your production-ready values (APP_KEY, APP_URL, etc.) in this file.');
-        $this->newLine();
+        // GitHub repo guard — fail fast before any prompts.
+        $remote = trim((string) shell_exec('git remote get-url origin 2>/dev/null'));
+        if (empty($remote)) {
+            $this->laraKubeError('No GitHub remote found. Create a GitHub repository and add it as origin first:');
+            $this->line('    git remote add origin git@github.com:<owner>/<repo>.git');
 
-        if (! confirm("Are you ready to upload '{$envFile}' and your Kubeconfig to GitHub?", true)) {
-            $this->laraKubeInfo('Action cancelled. Please update your environment file and try again.');
+            return 1;
+        }
+
+        $repoFlag = '';
+        if (preg_match('/(?:github\.com|github)[:\/](.*?)(?:\.git)?$/', $remote, $m)) {
+            $repoFlag = '-R '.$m[1];
+            $this->info("  🛰 Targeting repository: {$m[1]}");
+        } else {
+            $this->laraKubeWarn("Could not parse GitHub repository from remote URL: {$remote}");
+        }
+
+        $this->laraKubeWarn("🛡 SECURITY CHECK: GitHub Actions will use your local '{$envFile}' as the source of truth.");
+
+        // Domain guard — same check as cloud:deploy and configureBase. Fires when
+        // the web host is missing or still a local .kube/.dev.test value. Prompts
+        // for the real domain and rewrites APP_URL + ASSET_URL in the env file
+        // before uploading, so the secret never ships a local URL.
+        $config = $this->getProjectConfigObject($projectPath);
+        $currentHost = $config->getHost($environment, 'web');
+
+        if (! $currentHost || $this->isLocalDomain((string) $currentHost)) {
+            $this->newLine();
+            $this->line('  <fg=red>APP_URL is still a local dev domain. Set the real production domain first.</>');
+            if ($currentHost) {
+                $this->line("  <fg=gray>Current:</> <fg=yellow>{$currentHost}</>");
+            }
+            $this->newLine();
+
+            $host = text(
+                label: "Real web domain for '{$environment}'?",
+                placeholder: $environment === 'production'
+                    ? "{$config->getName()}.com"
+                    : "{$environment}.{$config->getName()}.com",
+                default: $currentHost ?: '',
+                required: true,
+            );
+
+            $config->setHost($environment, 'web', $host);
+            $this->syncEnvFile($projectPath, ['APP_URL' => 'https://'.$host], false, $environment);
+            $this->alignEnvironmentAssetUrl($projectPath, $environment, $host);
+            $this->laraKubeInfo("Updated APP_URL and ASSET_URL to https://{$host}");
+        } else {
+            $this->line('  Please ensure you have set your production-ready values (APP_KEY, APP_URL, etc.) in this file.');
+        }
+
+        // Non-web client-facing hosts (Reverb, S3/CDN public endpoint, …).
+        // Same missing/local guard — these break CI deploys just like a local APP_URL.
+        foreach ($config->getComponents($environment) as $component) {
+            if (! $component instanceof HasPromptableHosts) {
+                continue;
+            }
+            foreach ($component->getPromptableHostServices() as $service => $label) {
+                $current = (string) $config->getHost($environment, $service);
+                if ($current !== '' && ! $this->isLocalDomain($current)) {
+                    continue;
+                }
+                $serviceHost = text(
+                    label: "Real {$label} host for '{$environment}'?",
+                    placeholder: 'leave blank to derive from web host',
+                    default: $current,
+                    required: false,
+                );
+                if ($serviceHost !== '') {
+                    $config->setHost($environment, $service, $serviceHost);
+                }
+            }
+        }
+
+        $this->saveProjectConfig($projectPath, $config);
+
+        if (! confirm("Upload '{$envFile}' and your Kubeconfig to GitHub?", true)) {
+            $this->laraKubeInfo('Action cancelled.');
 
             return 0;
         }
 
-        // 1. Configure Secrets (scoped kubeconfig + env). Abort if this fails —
+        // 1. Upload secrets (env file + scoped kubeconfig). Abort if this fails —
         //    there's no point generating a workflow with no/broken credentials.
-        $this->laraKubeInfo("Step 1: Configuring GitHub Secrets for '{$environment}' environment...");
-        $ghaArgs = ['environment' => $environment];
-        if ($rotate) {
-            $ghaArgs['--rotate'] = true;
-        }
-        if ($this->call('gha:configure', $ghaArgs) !== 0) {
+        $this->laraKubeInfo("Step 1: Configuring GitHub Secrets for '{$environment}'...");
+        if ($this->uploadGhaSecrets($projectPath, $environment, $repoFlag, $rotate) !== 0) {
             $this->laraKubeError('GitHub secret configuration failed — aborting before generating the workflow.');
 
             return 1;
@@ -308,6 +404,7 @@ trait ConfiguresCloudEnvironment
                 // literal text in the Blade), or Blade mangles the inner {{ }}.
                 'image_latest' => '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:latest',
                 'image_sha' => '${{ env.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ github.sha }}',
+                'composer_cache_key' => "composer-\${{ hashFiles('composer.lock') }}",
                 'dockerhub_user' => '${{ secrets.DOCKERHUB_USERNAME }}',
                 'dockerhub_token' => '${{ secrets.DOCKERHUB_TOKEN }}',
             ],
@@ -326,10 +423,12 @@ trait ConfiguresCloudEnvironment
     {
         $config = $this->getProjectConfigObject(getcwd());
 
-        // Only a private GHCR registry needs this pull secret. Docker Hub / public
-        // images don't use it (a Docker Hub pull secret is a separate follow-up).
+        // Only GHCR needs a K8s pull secret. Docker Hub (or any explicitly
+        // non-GHCR registry) skips this step.
+        // When no registry is explicitly configured the workflow defaults to
+        // ghcr.io/${{ github.repository }}, so we still need the pull secret.
         $registry = $config->getRegistry($environment);
-        if (! $registry || $registry->provider !== RegistryProvider::GHCR) {
+        if ($registry !== null && $registry->provider !== RegistryProvider::GHCR) {
             return;
         }
 
@@ -375,11 +474,383 @@ trait ConfiguresCloudEnvironment
         $this->laraKubeInfo("✅ GHCR pull secret created in '{$namespace}' (context: {$context}).");
     }
 
+    /**
+     * Upload the env-file secret + mint and upload a namespace-scoped kubeconfig.
+     * Extracted from the old gha:configure command so cloud:configure:gha owns the
+     * full flow end-to-end with no sub-command indirection.
+     */
+    protected function uploadGhaSecrets(string $projectPath, string $environment, string $repoFlag, bool $rotate = false): int
+    {
+        $gh = $this->getGhCommand();
+        $upperEnv = strtoupper($environment);
+        $envFile = ".env.{$environment}";
+
+        // Env file check.
+        if (! file_exists($projectPath.'/'.$envFile)) {
+            $this->laraKubeError("Crucial file '{$envFile}' is missing!");
+
+            return 1;
+        }
+
+        $envContent = (string) file_get_contents($projectPath.'/'.$envFile);
+        if (empty(trim($envContent))) {
+            $this->laraKubeError("File '{$envFile}' is empty! Cannot upload an empty environment.");
+
+            return 1;
+        }
+
+        // Local-URL scan — catches any remaining local values (localhost, 127.0.0.1)
+        // that the domain guard above didn't fix. Local TLD domains are already
+        // resolved by the domain guard that runs before this point.
+        if (! $this->confirmNoLocalUrls($envFile, $envContent)) {
+            return 1;
+        }
+
+        $base64Env = base64_encode($envContent);
+        $this->info('  📦 Env size: '.strlen($base64Env).' bytes (base64)');
+        $this->setGithubSecret($gh, "{$upperEnv}_ENV_FILE_BASE64", $base64Env, $repoFlag);
+
+        // Mint + upload a namespace-scoped kubeconfig.
+        $this->laraKubeInfo("Minting a namespace-scoped KUBECONFIG for {$environment}...");
+        $config = $this->getProjectConfigObject($projectPath);
+        $adminContext = $this->environmentContextOrCurrent($config, $environment);
+
+        if (! $adminContext) {
+            $this->laraKubeError("No cluster target for '{$environment}'.");
+            $this->line('  Run <fg=yellow;options=bold>larakube cloud:configure:base '.$environment.'</> (or cloud:init) first.');
+
+            return 1;
+        }
+
+        if (! $this->kubectlSupportsTokens()) {
+            $this->laraKubeError('kubectl >= 1.24 is required to mint a scoped token. Please upgrade kubectl.');
+
+            return 1;
+        }
+
+        $namespace = $config->getName().'-'.$environment;
+        $ctx = escapeshellarg($adminContext);
+        $ns = escapeshellarg($namespace);
+
+        shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
+
+        if (! $this->ensureScopedRbac($adminContext, $namespace, $config->getName(), $environment)) {
+            $this->laraKubeError('Failed to create the namespace-scoped ServiceAccount/Role in the cluster.');
+
+            return 1;
+        }
+
+        if ($rotate) {
+            $this->laraKubeInfo('Rotating: revoking the current deploy token before minting a fresh one...');
+            shell_exec("kubectl --context {$ctx} -n {$ns} delete secret ".escapeshellarg($this->deployerName().'-token').' --ignore-not-found 2>/dev/null');
+        }
+
+        $kubeConfigContent = $this->mintScopedKubeconfig($adminContext, $namespace);
+        if ($kubeConfigContent === null) {
+            $this->laraKubeError('Failed to mint the scoped token (the bound-token Secret was never populated).');
+
+            return 1;
+        }
+
+        $this->info('  🔒 Scoped to namespace: <fg=cyan>'.$namespace.'</> (a leaked secret can touch nothing else)');
+        $this->info('  📦 Kubeconfig size: '.strlen($kubeConfigContent).' bytes');
+        if (preg_match('/server: (https:\/\/.*)/', $kubeConfigContent, $matches)) {
+            $this->info("  🔗 Server Target: <fg=cyan>{$matches[1]}</>");
+        }
+
+        $this->setGithubSecret($gh, "{$upperEnv}_KUBECONFIG", $kubeConfigContent, $repoFlag);
+
+        // Stamp when the scoped CI credential was minted.
+        $data = $config->toArray();
+        $data['environments'][$environment]['cloud']['rbacGrantedAt'] = gmdate('c');
+        \App\Data\ConfigData::from($data)->saveToFile($projectPath);
+
+        $this->laraKubeInfo("GitHub Secrets configured successfully for '{$environment}' (namespace-scoped).");
+
+        return 0;
+    }
+
+    protected function setGithubSecret(string $gh, string $name, string $value, string $repoFlag): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'gh_secret');
+        file_put_contents($tmpFile, $value);
+
+        $command = 'cat '.escapeshellarg($tmpFile)." | {$gh} secret set ".escapeshellarg($name)." {$repoFlag} 2>&1";
+        exec($command, $output, $resultCode);
+        @unlink($tmpFile);
+
+        if ($resultCode !== 0) {
+            $this->laraKubeError("Failed to set GitHub secret: {$name}");
+            foreach ($output as $line) {
+                $this->line("  <fg=red>{$line}</>");
+            }
+            exit(1);
+        }
+
+        $this->info("  ✅ Secret '{$name}' uploaded successfully.");
+    }
+
+    protected function isLocalDomain(string $host): bool
+    {
+        if (str_contains($host, '.dev.test')) {
+            return true;
+        }
+        foreach (GlobalConfigData::ALLOWED_TLDS as $tld) {
+            if (str_contains($host, '.'.$tld)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function confirmNoLocalUrls(string $envFile, string $envContent): bool
+    {
+        $localTldPatterns = [];
+        foreach (GlobalConfigData::ALLOWED_TLDS as $tld) {
+            $escaped = preg_quote($tld, '/');
+            $localTldPatterns["/\\.{$escaped}(\\/|:|$)/"] = ".{$tld} (local dev domain)";
+        }
+
+        $localPatterns = array_merge($localTldPatterns, [
+            '/\blocalhost\b/' => 'localhost',
+            '/\b127\.0\.0\.1\b/' => '127.0.0.1',
+        ]);
+
+        $hits = [];
+        foreach (explode("\n", $envContent) as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+            [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
+            foreach ($localPatterns as $pattern => $label) {
+                if (preg_match($pattern, $value)) {
+                    $hits[] = [$key, $value, $label];
+                    break;
+                }
+            }
+        }
+
+        if (empty($hits)) {
+            return true;
+        }
+
+        $this->laraKubeWarn("{$envFile} contains local-only URLs — these won't work in production:");
+        foreach ($hits as [$key, $value, $label]) {
+            $this->line("    <fg=yellow>{$key}</>=<fg=red>{$value}</> <fg=gray>({$label})</>");
+        }
+        $this->newLine();
+
+        return confirm('Upload anyway?', false);
+    }
+
     protected function runRemoteCommand(array $cloud, string $remoteCommand): int
     {
         $sshCommand = "ssh -i {$cloud['key']} -p {$cloud['port']} {$cloud['user']}@{$cloud['ip']} ".escapeshellarg($remoteCommand);
         passthru($sshCommand, $exitCode);
 
         return (int) $exitCode;
+    }
+
+    // ── GitLab CI ────────────────────────────────────────────────────────────
+
+    /**
+     * Configure GitLab CI/CD for a single environment: upload secrets + regenerate
+     * the `.gitlab-ci.yml` that covers ALL cloud environments in this project.
+     */
+    protected function configureGitlab(?string $environment = null, bool $rotate = false): int
+    {
+        $environment ??= $this->askForCloudEnvironment(
+            label: 'Which environment are you configuring for GitLab CI?',
+        );
+
+        $projectPath = getcwd();
+        $envFile = ".env.{$environment}";
+
+        // GitLab remote guard
+        $remote = trim((string) shell_exec('git remote get-url origin 2>/dev/null'));
+        if (empty($remote)) {
+            $this->laraKubeError('No git remote found. Add your GitLab repo as origin first:');
+            $this->line('    git remote add origin git@gitlab.com:<group>/<repo>.git');
+
+            return 1;
+        }
+
+        $projectGitlabPath = '';
+        if (preg_match('/gitlab\.com[:\\/]([^:]+?)(?:\.git)?$/', $remote, $m)) {
+            $projectGitlabPath = $m[1];
+            $this->line("  <fg=gray>Targeting GitLab project:</> <fg=cyan>{$projectGitlabPath}</>");
+        } else {
+            $this->laraKubeWarn("Could not parse a GitLab project path from remote: {$remote}");
+        }
+
+        // Domain guard (same check as GHA)
+        $config = $this->getProjectConfigObject($projectPath);
+        $currentHost = $config->getHost($environment, 'web');
+
+        if (! $currentHost || $this->isLocalDomain((string) $currentHost)) {
+            $this->newLine();
+            $this->line('  <fg=red>APP_URL is still a local dev domain. Set the real production domain first.</>');
+            $host = text(
+                label: "Real web domain for '{$environment}'?",
+                placeholder: "{$config->getName()}.com",
+                default: $currentHost ?: '',
+                required: true,
+            );
+            $config->setHost($environment, 'web', $host);
+            $this->syncEnvFile($projectPath, ['APP_URL' => 'https://'.$host], false, $environment);
+            $this->alignEnvironmentAssetUrl($projectPath, $environment, $host);
+            $this->laraKubeInfo("Updated APP_URL and ASSET_URL to https://{$host}");
+            $this->saveProjectConfig($projectPath, $config);
+        }
+
+        // Upload secrets via glab (if available) or print manual instructions
+        $this->laraKubeInfo("Step 1: Uploading CI/CD variables for '{$environment}'...");
+        $this->uploadGitlabVariables($projectPath, $environment, $projectGitlabPath, $rotate);
+
+        // Regenerate .gitlab-ci.yml covering ALL cloud environments
+        $this->laraKubeInfo('Step 2: Generating GitLab CI pipeline...');
+        $code = $this->generateGitlabPipeline($projectPath, $config);
+        if ($code !== 0) {
+            return $code;
+        }
+
+        $this->laraKubeInfo("✅ GitLab CI configured for '{$environment}'!");
+        $this->line('  Push to the configured branch to trigger your deploy.');
+
+        return 0;
+    }
+
+    protected function uploadGitlabVariables(string $projectPath, string $environment, string $projectPath2, bool $rotate): void
+    {
+        $upperEnv = strtoupper($environment);
+        $envFile = ".env.{$environment}";
+
+        // Try glab CLI first
+        $glabPath = $this->resolveGlabCommand();
+
+        if (! $glabPath) {
+            $this->laraKubeWarn('`glab` CLI not found — print the variables to set manually in GitLab → Settings → CI/CD → Variables.');
+            $this->newLine();
+        }
+
+        // Build kubeconfig secret (scoped, same logic as GHA)
+        $config = $this->getProjectConfigObject($projectPath);
+        $cloud = $config->getCloud($environment);
+        $context = $cloud?->context ?? ($cloud?->ip ? 'larakube-'.$cloud->ip : '');
+
+        if ($context !== '') {
+            $kubeconfig = trim((string) shell_exec(
+                'kubectl config view --context '.escapeshellarg($context).' --minify --raw 2>/dev/null',
+            ));
+            $kubeconfigB64 = base64_encode($kubeconfig);
+
+            if ($glabPath) {
+                shell_exec("{$glabPath} variable set {$upperEnv}_KUBECONFIG ".escapeshellarg($kubeconfigB64).' --masked --protected 2>/dev/null');
+                $this->line("  <fg=gray>Uploaded</> {$upperEnv}_KUBECONFIG");
+            } else {
+                $this->line("  <fg=yellow>{$upperEnv}_KUBECONFIG</> = <fg=gray>(base64 kubeconfig — run: kubectl config view --context {$context} --minify --raw | base64)</>");
+            }
+        } else {
+            $this->laraKubeWarn("No cluster context for '{$environment}' — skipping kubeconfig upload. Run `larakube cloud:init` first.");
+        }
+
+        // Env file secret
+        $envFilePath = $projectPath.'/'.$envFile;
+        if (file_exists($envFilePath)) {
+            $envB64 = base64_encode((string) file_get_contents($envFilePath));
+
+            if ($glabPath) {
+                shell_exec("{$glabPath} variable set {$upperEnv}_ENV_FILE_BASE64 ".escapeshellarg($envB64).' --masked --protected 2>/dev/null');
+                $this->line("  <fg=gray>Uploaded</> {$upperEnv}_ENV_FILE_BASE64");
+            } else {
+                $this->line("  <fg=yellow>{$upperEnv}_ENV_FILE_BASE64</> = <fg=gray>(base64 of {$envFile} — run: base64 {$envFile})</>");
+            }
+        } else {
+            $this->laraKubeWarn("{$envFile} not found — create it before uploading.");
+        }
+    }
+
+    protected function generateGitlabPipeline(string $projectPath, \App\Data\ConfigData $config): int
+    {
+        $appName = $config->getName();
+        $podName = $config->getServerVariation()->getPodName($config);
+        $cloudEnvs = [];
+
+        foreach ($config->getCloudEnvironments() as $envName) {
+            $env = $config->getEnvironmentData($envName);
+            if (! $env?->cloud) {
+                continue;
+            }
+
+            $registry = $config->getRegistry($envName);
+            $registryProvider = $registry?->provider->value ?? 'gitlab';
+            $registryHost = $registry?->getRegistryHost() ?? '$CI_REGISTRY';
+            $imagePath = $registry?->image ?? '$CI_PROJECT_PATH';
+
+            $webHost = (string) $config->getWebHost($envName);
+
+            $cloudEnvs[$envName] = [
+                'branch' => 'main',
+                'upperName' => strtoupper($envName),
+                'namespace' => $appName.'-'.$envName,
+                'registry' => $registryProvider,
+                'imageLatest' => $registryProvider === 'gitlab'
+                    ? '$CI_REGISTRY/$CI_PROJECT_PATH:latest'
+                    : "{$registryHost}/{$imagePath}:latest",
+                'imageSha' => $registryProvider === 'gitlab'
+                    ? '$CI_REGISTRY/$CI_PROJECT_PATH:$CI_COMMIT_SHA'
+                    : "{$registryHost}/{$imagePath}:\$CI_COMMIT_SHA",
+                'webHost' => $webHost,
+            ];
+        }
+
+        if (empty($cloudEnvs)) {
+            $this->laraKubeWarn('No cloud environments with a deploy target found — run `larakube cloud:init` or `cloud:configure:base` first.');
+
+            return 1;
+        }
+
+        // Ask for deploy branch per environment
+        foreach ($cloudEnvs as $envName => &$meta) {
+            $branch = text(
+                label: "Which branch triggers the {$envName} deployment?",
+                default: $envName === 'production' ? 'main' : $envName,
+                required: true,
+            );
+            $meta['branch'] = $branch;
+        }
+        unset($meta);
+
+        $pipelineContent = view('k8s.cloud-pilot-deploy-gitlab', [
+            'config' => $config,
+            'appName' => $appName,
+            'podName' => $podName,
+            'cloudEnvs' => $cloudEnvs,
+        ])->render();
+
+        file_put_contents($projectPath.'/.gitlab-ci.yml', $pipelineContent);
+        $this->line('  <fg=gray>Pipeline written to:</> .gitlab-ci.yml');
+
+        return 0;
+    }
+
+    protected function resolveGlabCommand(): ?string
+    {
+        $candidates = array_filter([
+            trim(shell_exec('command -v glab 2>/dev/null') ?? ''),
+            '/usr/local/bin/glab',
+            '/opt/homebrew/bin/glab',
+            '/home/linuxbrew/.linuxbrew/bin/glab',
+        ]);
+
+        foreach ($candidates as $path) {
+            if ($path !== '' && @is_executable($path)) {
+                return $path;
+            }
+        }
+
+        return null;
     }
 }

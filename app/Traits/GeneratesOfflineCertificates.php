@@ -5,15 +5,23 @@ namespace App\Traits;
 trait GeneratesOfflineCertificates
 {
     /**
-     * Generates a local Certificate Authority (CA) and a server certificate
-     * that covers all provided domain names (SANs). Returns the paths to the
-     * generated files so they can be injected into Kubernetes.
+     * Generate a server TLS certificate covering all provided domains (SANs).
+     *
+     * Two modes:
+     * - Default (no company CA): generates a fresh LaraKube CA and self-signs.
+     * - Full-sign ($companyCaCrt + $companyCaKey provided): skips generating a CA;
+     *   signs the server cert with the company's CA instead. The browser already
+     *   trusts the company CA, so no extra trust step is needed on client machines.
      *
      * @param  array<string>  $domains
      * @return array{ca_crt: string, tls_crt: string, tls_key: string}
      */
-    public function generateSanCertificates(array $domains, string $outputDir): array
-    {
+    public function generateSanCertificates(
+        array $domains,
+        string $outputDir,
+        ?string $companyCaCrt = null,
+        ?string $companyCaKey = null,
+    ): array {
         $caKey = "$outputDir/ca.key";
         $caCrt = "$outputDir/ca.crt";
         $serverKey = "$outputDir/tls.key";
@@ -21,10 +29,8 @@ trait GeneratesOfflineCertificates
         $serverCrt = "$outputDir/tls.crt";
         $cnfFile = "$outputDir/openssl.cnf";
 
-        // Filter out empty domains and format for SANs
         $domains = array_values(array_filter($domains));
         $primaryDomain = $domains[0] ?? 'larakube.internal';
-
         $sanList = implode(',', array_map(fn ($d) => "DNS:$d", $domains));
 
         $cnfContent = <<<CNF
@@ -44,17 +50,20 @@ CNF;
 
         file_put_contents($cnfFile, $cnfContent);
 
-        // 1. Generate CA Key and Cert
-        exec('openssl genrsa -out '.escapeshellarg($caKey).' 2048 2>/dev/null');
-        exec('openssl req -x509 -new -nodes -key '.escapeshellarg($caKey).' -sha256 -days 3650 -out '.escapeshellarg($caCrt).' -subj "/CN=LaraKube Airgap CA" 2>/dev/null');
+        $fullSign = $companyCaCrt !== null && $companyCaKey !== null;
 
-        // 2. Generate Server Key
+        if ($fullSign) {
+            // Full-sign: use the company CA directly — no need to generate our own.
+            $caCrt = $companyCaCrt;
+            $caKey = $companyCaKey;
+        } else {
+            // Default: generate a fresh LaraKube CA.
+            exec('openssl genrsa -out '.escapeshellarg($caKey).' 2048 2>/dev/null');
+            exec('openssl req -x509 -new -nodes -key '.escapeshellarg($caKey).' -sha256 -days 3650 -out '.escapeshellarg($caCrt).' -subj "/CN=LaraKube Airgap CA" 2>/dev/null');
+        }
+
         exec('openssl genrsa -out '.escapeshellarg($serverKey).' 2048 2>/dev/null');
-
-        // 3. Generate CSR using the SAN config
         exec('openssl req -new -key '.escapeshellarg($serverKey).' -out '.escapeshellarg($serverCsr).' -config '.escapeshellarg($cnfFile).' -extensions v3_req 2>/dev/null');
-
-        // 4. Sign the CSR with the CA to generate the Server Cert
         exec('openssl x509 -req -in '.escapeshellarg($serverCsr).' -CA '.escapeshellarg($caCrt).' -CAkey '.escapeshellarg($caKey).' -CAcreateserial -out '.escapeshellarg($serverCrt).' -days 3650 -sha256 -extfile '.escapeshellarg($cnfFile).' -extensions v3_req 2>/dev/null');
 
         return [

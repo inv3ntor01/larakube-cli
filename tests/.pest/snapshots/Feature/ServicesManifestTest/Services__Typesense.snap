@@ -53,8 +53,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -133,7 +133,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: typesense-test.dev.test
+    - host: typesense-test.kube
       http:
         paths:
           - path: /
@@ -145,7 +145,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - typesense-test.dev.test
+        - typesense-test.kube
 
 
 --- FILE: base/typesense-companion-deployment.yaml ---
@@ -340,6 +340,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: typesense-test:latest
+    newName: typesense-test
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -441,7 +446,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - typesense-test.dev.test
+        - typesense-test.kube
 
 
 --- FILE: overlays/local/typesense-companion-ingress.yaml ---
@@ -454,7 +459,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: typesense-typesense-test.dev.test
+    - host: typesense.typesense-test.kube
       http:
         paths:
           - path: /
@@ -466,7 +471,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - typesense-typesense-test.dev.test
+        - typesense.typesense-test.kube
 
 
 --- FILE: overlays/local/typesense-ingress.yaml ---
@@ -479,7 +484,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: typesense-typesense-test.dev.test
+    - host: typesense.typesense-test.kube
       http:
         paths:
           - path: /
@@ -491,7 +496,7 @@ spec:
                   number: 8108
   tls:
     - hosts:
-        - typesense-typesense-test.dev.test
+        - typesense.typesense-test.kube
 
 
 --- FILE: overlays/local/typesense-volumes.yaml ---
@@ -569,8 +574,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -594,7 +599,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: typesense-test.dev.test
+    - host: typesense-test.kube
       http:
         paths:
           - path: /
@@ -606,7 +611,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - typesense-test.dev.test
+        - typesense-test.kube
       secretName: typesense-test-tls
 
 
@@ -627,6 +632,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: typesense-test:latest
+    newName: typesense-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

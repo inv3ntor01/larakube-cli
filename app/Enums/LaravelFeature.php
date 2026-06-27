@@ -67,7 +67,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
      * for any environment the user creates (staging, qa, …), not just the
      * conventional local/production pair:
      *
-     *   - local-only tooling (boost, ai, mcp, mailpit) → only 'local'
+     *   - local-only tooling (boost, ai, mcp) → only 'local'
      *   - ssr → every cloud (non-local) env
      *   - everything else (horizon, queues, reverb, scheduler, …) → all envs
      *
@@ -77,7 +77,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function appliesToEnvironment(string $environment): bool
     {
         return match ($this) {
-            self::BOOST, self::AI, self::MCP, self::MAILPIT => $environment === 'local',
+            self::BOOST, self::AI, self::MCP => $environment === 'local',
             self::SSR => $environment !== 'local',
             default => true,
         };
@@ -96,9 +96,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::AI => 'Laravel AI',
             self::MCP => 'Laravel MCP',
             self::BOOST => 'Laravel Boost',
-            self::MONITORING => 'Monitoring (Prometheus & Grafana)',
-            self::METALLB => 'MetalLB (LoadBalancer Provider)',
-            self::MAILPIT => 'Mailpit (Local SMTP)',
         };
     }
 
@@ -114,17 +111,12 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             return ! is_null($config?->getScoutDriver());
         }
 
-        return match ($this) {
-            self::MONITORING, self::METALLB, self::MAILPIT => true,
-            default => false,
-        };
+        return false;
     }
 
     public static function getAutoUsedComponents(): array
     {
-        return [
-            self::MAILPIT,
-        ];
+        return [];
     }
 
     public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
@@ -138,7 +130,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getPublicEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
         return match ($this) {
-            self::REVERB => [
+            self::REVERB => array_merge([
                 'REVERB_APP_ID' => 'larakube',
                 'REVERB_APP_KEY' => 'larakubekey',
                 'REVERB_HOST' => $config ? $config->getInternalFqdn($this, $environment) : 'reverb',
@@ -147,14 +139,18 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 // at the ingress, so the client connects via WSS on 443.
                 'REVERB_PORT' => $environment === 'local' ? '8080' : '443',
                 'REVERB_SCHEME' => $environment === 'local' ? 'http' : 'https',
-            ],
-            self::MAILPIT => $environment === 'local' ? [
-                'MAIL_MAILER' => 'smtp',
-                'MAIL_HOST' => $config ? $config->getInternalFqdn($this, $environment) : $this->getPodName(),
-                'MAIL_PORT' => '1025',
-                'MAIL_USERNAME' => 'null',
-                'MAIL_ENCRYPTION' => 'null',
-            ] : [],
+            ], $environment === 'local' ? [
+                // Browser → Reverb. The server-side REVERB_* above point Laravel
+                // at the in-cluster ClusterIP; the browser can't reach that, so
+                // Echo (import.meta.env.VITE_REVERB_*, read by @laravel/echo-*)
+                // connects through the reverb ingress over WSS on 443 instead.
+                // Cloud envs bake these as Vite build args at deploy time (see
+                // InteractsWithRemoteDeploy), so they're only emitted for local.
+                'VITE_REVERB_APP_KEY' => 'larakubekey',
+                'VITE_REVERB_HOST' => $config ? $config->getServiceHost('reverb', $environment) : 'reverb',
+                'VITE_REVERB_PORT' => '443',
+                'VITE_REVERB_SCHEME' => 'https',
+            ] : []),
             self::QUEUES => [
                 'QUEUE_CONNECTION' => 'database',
             ],
@@ -168,7 +164,11 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
                 'BOOST_PHP_EXECUTABLE_PATH' => '"larakube php"',
                 'BOOST_COMPOSER_EXECUTABLE_PATH' => '"larakube composer"',
                 'BOOST_NPM_EXECUTABLE_PATH' => '"larakube npm"',
-                'BOOST_VENDOR_BIN_EXECUTABLE_PATH' => '"larakube art"',
+                // Boost concatenates this prefix directly onto the tool name with
+                // no separator (binCommand: "{prefix}{tool}"), so it must be a
+                // path prefix, not a command word — "larakube art" produced the
+                // bogus `larakube artpint`. Mirror the default vendor/bin/ shape.
+                'BOOST_VENDOR_BIN_EXECUTABLE_PATH' => '"larakube php vendor/bin/"',
             ],
             default => [],
         };
@@ -180,9 +180,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::REVERB => [
                 'REVERB_APP_SECRET' => 'larakubesecret',
             ],
-            self::MAILPIT => $environment === 'local' ? [
-                'MAIL_PASSWORD' => 'null',
-            ] : [],
             default => [],
         };
     }
@@ -199,20 +196,13 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     {
         return match ($this) {
             self::REVERB => ['reverb' => 'Reverb WebSocket'],
-            self::MAILPIT => ['mailpit' => 'Mailpit Dashboard'],
-            self::MONITORING => [
-                'grafana' => 'Grafana Dashboard',
-                'prometheus' => 'Prometheus Dashboard',
-            ],
             default => [],
         };
     }
 
     /**
      * Only Reverb is a client-facing endpoint worth a vanity subdomain
-     * (ws.example.com). Mailpit and the monitoring dashboards are admin
-     * consoles — they still publish a derived host but the env wizard
-     * doesn't prompt for them.
+     * (ws.example.com).
      *
      * @return array<string, string>
      */
@@ -349,9 +339,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
 
     public function updateK8s(ConfigData $config): void
     {
-        if (in_array($this, [self::MAILPIT, self::MONITORING]) && ! $config->withCompanions) {
-            return;
-        }
 
         $k8sPath = $config->getK8sPath();
         $binaryPath = realpath($_SERVER['argv'][0]) ?: '/usr/local/bin/larakube';
@@ -429,8 +416,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::QUEUES => 'k8s.queues.deployment',
             self::REVERB => 'k8s.reverb.deployment',
             self::SSR => 'k8s.ssr.deployment',
-            self::MAILPIT => 'k8s.mailpit.deployment',
-            self::MONITORING => 'k8s.monitoring.prometheus',
             default => null,
         };
     }
@@ -443,8 +428,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             self::QUEUES => 'base/queues-deployment.yaml',
             self::REVERB => 'base/reverb-deployment.yaml',
             self::SSR => 'overlays/production/ssr-deployment.yaml',
-            self::MAILPIT => 'overlays/local/mailpit.yaml',
-            self::MONITORING => 'base/prometheus.yaml',
             default => null,
         };
     }
@@ -452,7 +435,10 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getNetworkViewName(): ?string
     {
         return match ($this) {
-            self::MONITORING => 'k8s.monitoring.grafana',
+            // Reverb is the one client-facing workload: the browser needs a host
+            // to dial for the WebSocket, so it gets a local ingress (cloud envs
+            // expose it via tunnel / a hand-configured host instead).
+            self::REVERB => 'k8s.reverb.ingress',
             default => null,
         };
     }
@@ -460,7 +446,7 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     public function getNetworkYamlDestination(): ?string
     {
         return match ($this) {
-            self::MONITORING => 'base/grafana.yaml',
+            self::REVERB => 'overlays/local/reverb-ingress.yaml',
             default => null,
         };
     }
@@ -514,22 +500,13 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
             ],
             self::REVERB => [
                 'base' => ['reverb-deployment.yaml'],
+                'local' => ['reverb-ingress.yaml'],
             ],
             self::SSR => [
                 'cloud' => ['ssr-deployment.yaml'],
             ],
-            self::MAILPIT => [
-                'local' => ['mailpit.yaml'],
-            ],
-            self::MONITORING => [
-                'base' => ['prometheus.yaml', 'grafana.yaml'],
-            ],
             default => [],
         };
-
-        if (in_array($this, [self::MAILPIT, self::MONITORING]) && ! ($config?->withCompanions ?? true)) {
-            return [];
-        }
 
         return $manifests;
     }
@@ -589,10 +566,6 @@ enum LaravelFeature: string implements HasArtisanCommands, HasAutoUsedComponents
     case SCOUT = 'scout';
     case OCTANE = 'octane';
     case SSR = 'ssr';
-    case MONITORING = 'monitoring';
-    case METALLB = 'metallb';
-    case MAILPIT = 'mailpit';
-
     case AI = 'ai';
     case MCP = 'mcp';
     case BOOST = 'boost';

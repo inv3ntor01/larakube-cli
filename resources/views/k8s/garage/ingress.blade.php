@@ -7,7 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3-{{ $config->getName() }}.dev.test
+    - host: s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -17,7 +17,7 @@ spec:
                 name: garage
                 port:
                   number: 3900
-    - host: s3-web-{{ $config->getName() }}.dev.test
+    - host: s3-web.{{ $config->getName() }}.{{ $config->getLocalTld() }}
       http:
         paths:
           - path: /
@@ -29,5 +29,5 @@ spec:
                   number: 3902
   tls:
     - hosts:
-        - s3-{{ $config->getName() }}.dev.test
-        - s3-web-{{ $config->getName() }}.dev.test
+        - s3.{{ $config->getName() }}.{{ $config->getLocalTld() }}
+        - s3-web.{{ $config->getName() }}.{{ $config->getLocalTld() }}

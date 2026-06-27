@@ -40,7 +40,7 @@ class UninstallCommand extends Command
         }
 
         $this->warn("  ⚠ This will delete the LaraKube CLI binary from: {$binaryPath}");
-        $this->warn("  ⚠ It will also recommend running 'untrust' to clean up SSL certs.");
+        $this->warn("  ⚠ It will also recommend running 'trust:remove' to clean up SSL certs.");
         $this->newLine();
 
         if (! confirm('Are you sure you want to uninstall the LaraKube CLI?', false)) {
@@ -50,7 +50,7 @@ class UninstallCommand extends Command
         }
 
         // 1. Recommend untrust
-        $this->info('  👉 Recommendation: Run "larakube untrust" BEFORE this command if you want to clean up system SSL trust.');
+        $this->info('  👉 Recommendation: Run "larakube trust:remove" BEFORE this command if you want to clean up system SSL trust.');
 
         // 2. Perform uninstallation
         $this->withSpin('Removing LaraKube CLI binary...', function () use ($binaryPath) {

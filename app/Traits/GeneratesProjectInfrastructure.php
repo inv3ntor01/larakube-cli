@@ -5,6 +5,7 @@ namespace App\Traits;
 use App\Contracts\HasKubernetesFiles;
 use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
 use App\Enums\Blueprint;
 use App\Enums\DeploymentStrategy;
 use App\Enums\LaravelFeature;
@@ -14,6 +15,7 @@ use Symfony\Component\Yaml\Yaml;
 trait GeneratesProjectInfrastructure
 {
     use InteractsWithHosts, InteractsWithProjectConfig, LaraKubeOutput;
+    use ManagesLocalCa;
 
     public function hardenViteConfig(ConfigData $config): void
     {
@@ -26,9 +28,6 @@ trait GeneratesProjectInfrastructure
 
         $content = file_get_contents($viteFile);
         $viteHost = $config->getServiceHost('vite', 'local');
-
-        // Check if the config is already "K8s Ready"
-        $isK8sReady = str_contains($content, "host: '{$viteHost}'") && str_contains($content, 'cors: true');
 
         // 1. Aggressive Cleanups (ONLY for new scaffolding)
         if ($config->isScaffolding) {
@@ -43,21 +42,23 @@ trait GeneratesProjectInfrastructure
             $content = preg_replace('/inertia\(\)/', 'inertia({ ssr: false })', $content);
         }
 
-        // 2. Network Alignment
-        $managed = true;
+        // 2. Network Alignment. Recognise our own managed `server: {}` block by its
+        // structural markers (not by hostname, which changes with the TLD/app name)
+        // so re-running heal after `config:tld` or a rename re-aligns the host
+        // instead of leaving it stale and merely advising.
+        $isManagedTemplate = str_contains($content, 'cors: true')
+            && str_contains($content, 'strictPort: true')
+            && str_contains($content, "ignored: ['**/.infrastructure/volume_data/**']");
 
-        if (! str_contains($content, 'server: {') || $config->isScaffolding) {
+        if (! str_contains($content, 'server: {')) {
             $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
-
-            if (! str_contains($content, 'server: {')) {
-                $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
-            } else {
-                $content = preg_replace("/origin:\s*['\"].*?\.dev\.test['\"]/", "origin: 'https://{$viteHost}'", $content);
-                $content = preg_replace("/host:\s*['\"].*?\.dev\.test['\"]/", "host: '{$viteHost}'", $content);
-            }
-
+            $content = preg_replace('/(defineConfig\s*\(\s*\{)/', "$1\n{$harden}", $content);
             file_put_contents($viteFile, $content);
-        } elseif (! $isK8sReady) {
+        } elseif ($isManagedTemplate) {
+            $content = preg_replace("/origin:\s*['\"][^'\"]+['\"]/", "origin: 'https://{$viteHost}'", $content, 1);
+            $content = preg_replace("/(hmr:\s*\{\s*host:\s*)['\"][^'\"]+['\"]/", "$1'{$viteHost}'", $content, 1);
+            file_put_contents($viteFile, $content);
+        } else {
             $harden = view('k8s.viteserver', ['viteHost' => $viteHost])->render();
             $this->laraKubeNewLine();
             $this->laraKubeWarn(" ⚠ VITE ADVISORY: Your {$viteFile} looks custom.");
@@ -67,15 +68,13 @@ trait GeneratesProjectInfrastructure
             $this->laraKubeNewLine();
 
             // The config is custom — stay hands-off (advise only, don't rewrite).
-            $managed = false;
         }
-
     }
 
     /**
      * Pure: rewrite ASSET_URL to $target only when it's empty or a local
-     * "*.dev.test" value. Leaves a real asset host (CDN) or an absent ASSET_URL
-     * untouched. Kept side-effect-free so the policy is unit-testable.
+     * "*.dev.test" or "*.kube" value. Leaves a real asset host (CDN) or an absent
+     * ASSET_URL untouched. Kept side-effect-free so the policy is unit-testable.
      */
     public function alignAssetUrlValue(string $content, string $target): string
     {
@@ -84,7 +83,9 @@ trait GeneratesProjectInfrastructure
         }
 
         $current = trim($m[1]);
-        if ($current !== '' && ! str_contains($current, '.dev.test')) {
+        $localTlds = array_map(fn ($t) => '.'.$t, GlobalConfigData::ALLOWED_TLDS);
+        $isLocalValue = $current !== '' && (str_contains($current, '.dev.test') || collect($localTlds)->contains(fn ($t) => str_contains($current, $t)));
+        if ($current !== '' && ! $isLocalValue) {
             return $content; // deliberate non-local value — don't clobber
         }
 
@@ -133,11 +134,10 @@ trait GeneratesProjectInfrastructure
      * production, staging, …) with that environment's web domain. Laravel's
      *
      * @vite prefixes asset URLs with ASSET_URL, so a leaked local "*.dev.test"
-     * value sends the deployed assets to the dev host (404 / unstyled page).
-     * Rewrites ONLY an empty or "*.dev.test" value — never a deliberate CDN/asset
-     * host — and is a no-op when ASSET_URL is absent (assets then resolve
-     * relative to APP_URL, which is fine). Skips local, which is meant to use the
-     * .dev.test host. Narrow on purpose, like the APP_URL sync.
+     * or local TLD value sends the deployed assets to the dev host (404 / unstyled).
+     * Rewrites ONLY an empty or local value — never a deliberate CDN/asset host —
+     * and is a no-op when ASSET_URL is absent (assets then resolve relative to
+     * APP_URL, which is fine). Skips local. Narrow on purpose, like the APP_URL sync.
      */
     protected function alignEnvironmentAssetUrl(string $projectPath, string $environment, ?string $webHost): void
     {
@@ -298,10 +298,10 @@ trait GeneratesProjectInfrastructure
         // 0. Copy certificates for local development (e.g. for Vite HTTPS)
         $projectCertsPath = $config->getPath().'/.infrastructure/traefik/certificates';
         @mkdir($projectCertsPath, 0755, true);
-        $cliCertsPath = base_path('resources/views/traefik/certificates');
-        @copy("$cliCertsPath/local-dev.pem", "$projectCertsPath/local-dev.pem");
-        @copy("$cliCertsPath/local-dev-key.pem", "$projectCertsPath/local-dev-key.pem");
-        @copy("$cliCertsPath/local-ca.pem", "$projectCertsPath/local-ca.pem");
+        $this->ensureAppCertExists($config->getName(), $config->getLocalTld());
+        @copy($this->getAppCertPath($config->getName()), "$projectCertsPath/local-dev.pem");
+        @copy($this->getAppKeyPath($config->getName()), "$projectCertsPath/local-dev-key.pem");
+        @copy($this->getLocalCaCertPath(), "$projectCertsPath/local-ca.pem");
 
         $this->laraKubeInfo('Generating Kubernetes manifests...');
 

@@ -14,6 +14,11 @@ use function Laravel\Prompts\text;
  * one prompt instead of re-implementing it. Admin consoles (search dashboards,
  * Mailpit, metrics) are intentionally NOT prompted — they get a derived ingress
  * host and stay editable by hand in .larakube.json.
+ *
+ * Cluster-base infra (monitoring/Grafana) is deliberately NOT prompted here
+ * either: it's opt-in PER environment via `monitor:init`, so `env` (which
+ * configures every env up front) is the wrong moment. Its host is prompted at
+ * install time by monitor:init and persisted to the same hosts map.
  */
 trait PromptsForHosts
 {
@@ -25,7 +30,7 @@ trait PromptsForHosts
     {
         $hosts = [];
 
-        // Web host: optional. Empty = no host configured (env still works on internal/dev.test domains).
+        // Web host: optional. Empty = no host configured (env still works on internal .kube domains).
         $webHost = text(
             label: "Web host for {$envName} (optional, e.g. staging.example.com)",
             placeholder: 'leave blank to skip',

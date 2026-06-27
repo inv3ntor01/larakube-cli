@@ -51,8 +51,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -131,7 +131,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: ssr-test.dev.test
+    - host: ssr-test.kube
       http:
         paths:
           - path: /
@@ -143,7 +143,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - ssr-test.dev.test
+        - ssr-test.kube
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -237,6 +237,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: ssr-test:latest
+    newName: ssr-test
+    newTag: local
+
 
 --- FILE: overlays/local/node-deployment.yaml ---
 # The hot-file URL is sourced from vite.config.js#server.origin (the only lever
@@ -306,7 +311,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: vite-ssr-test.dev.test
+    - host: vite.ssr-test.kube
       http:
         paths:
           - path: /
@@ -318,7 +323,7 @@ spec:
                   number: 5173
   tls:
     - hosts:
-        - vite-ssr-test.dev.test
+        - vite.ssr-test.kube
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -442,7 +447,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - ssr-test.dev.test
+        - ssr-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -488,8 +493,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -513,7 +518,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: ssr-test.dev.test
+    - host: ssr-test.kube
       http:
         paths:
           - path: /
@@ -525,7 +530,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - ssr-test.dev.test
+        - ssr-test.kube
       secretName: ssr-test-tls
 
 
@@ -546,6 +551,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: ssr-test:latest
+    newName: ssr-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---
@@ -596,8 +606,8 @@ spec:
             - containerPort: 13714
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"

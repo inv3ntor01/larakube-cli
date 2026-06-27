@@ -178,7 +178,7 @@ trait GathersInfrastructureConfig
             if (! $email) {
                 $email = text(
                     label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
-                    placeholder: 'admin@larakube.dev.test',
+                    placeholder: 'admin@example.com',
                     required: true,
                     validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
                 );
@@ -315,11 +315,10 @@ trait GathersInfrastructureConfig
             $config->setGithubActions(confirm(label: 'Would you like to use GitHub Actions?'));
         }
 
-        $config->withCompanions = confirm(
-            label: 'Would you like to include companion apps (e.g., PhpMyAdmin, RedisInsight)?',
-            default: true,
-            hint: 'Companion apps provide helpful UIs for debugging but increase local resource usage.',
-        );
+        // Companion data-tooling UIs (phpMyAdmin, RedisInsight, …) are no longer
+        // scaffolded per-project from this wizard — they're shared services added
+        // on demand via `larakube companion:add`. `withCompanions` defaults true
+        // and can still be toggled with `larakube up --companions|--no-companions`.
 
         $config->resolveDependencies();
 

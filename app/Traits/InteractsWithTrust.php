@@ -1,0 +1,324 @@
+<?php
+
+namespace App\Traits;
+
+use App\Data\GlobalConfigData;
+
+use function Laravel\Prompts\confirm;
+
+trait InteractsWithTrust
+{
+    use DetectsWsl, InteractsWithOs, LaraKubeOutput, ManagesLocalCa;
+
+    protected function installCaToKeychain(string $caPath): int
+    {
+        $tmpCa = (string) tempnam(sys_get_temp_dir(), 'larakube-ca');
+        file_put_contents($tmpCa, file_get_contents($caPath));
+
+        $os = PHP_OS_FAMILY;
+
+        if ($this->isWsl()) {
+            @mkdir(home_path('.larakube'), 0755, true);
+            $caFile = home_path('.larakube/larakube-local-ca.crt');
+            file_put_contents($caFile, file_get_contents($caPath));
+            @unlink($tmpCa);
+
+            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
+            passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $code);
+
+            $this->line('');
+            if ($code !== 0) {
+                $this->laraKubeWarn('Could not add the CA to the Windows user store automatically.');
+                $this->line('  👉 Re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> (right-click → Run as administrator),');
+                $this->line('     or in that elevated Windows terminal run:');
+                $this->line("       certutil -addstore -f Root \"{$winPath}\"");
+                $this->line('     …or double-click that .crt → Install Certificate → Local Machine → Trusted Root Certification Authorities.');
+
+                return 1;
+            }
+
+            $this->laraKubeInfo('✅ CA added to the Windows current-user store. Restart your browser.');
+            $this->line('  <fg=yellow>🪟 Windows note:</> if HTTPS still shows a warning, the current-user store wasn\'t enough on your setup —');
+            $this->line('     re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> so the CA registers machine-wide.');
+            $this->line('  <fg=gray>Firefox uses its own trust store — import the CA there separately if needed.</>');
+
+            return 0;
+        }
+
+        if ($this->isDarwin()) {
+            $this->info('  🔒 Installing to macOS System Keychain...');
+            passthru('sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '.escapeshellarg($tmpCa));
+        } elseif ($this->isLinux()) {
+            if (file_exists('/usr/local/share/ca-certificates/')) {
+                $this->info('  🔒 Installing to ca-certificates (Debian/Ubuntu)...');
+                passthru('sudo cp '.escapeshellarg($tmpCa).' /usr/local/share/ca-certificates/larakube-local-ca.crt');
+                passthru('sudo update-ca-certificates');
+            } elseif (file_exists('/etc/pki/ca-trust/source/anchors/')) {
+                $this->info('  🔒 Installing to ca-trust (Fedora/RHEL)...');
+                passthru('sudo cp '.escapeshellarg($tmpCa).' /etc/pki/ca-trust/source/anchors/larakube-local-ca.crt');
+                passthru('sudo update-ca-trust extract');
+            }
+        } else {
+            $this->warn("  ⚠ Automatic trust installation not supported for {$os}.");
+            $this->info("  👉 Manually trust: {$caPath}");
+        }
+
+        @unlink($tmpCa);
+
+        return 0;
+    }
+
+    protected function removeCaFromKeychain(): void
+    {
+        $os = PHP_OS_FAMILY;
+
+        if ($this->isWsl()) {
+            $this->info('  🪟 WSL2 detected. Removing from Windows Root Store...');
+            passthru('certutil.exe -delstore "Root" "LaraKube Local CA"');
+
+            return;
+        }
+
+        if ($this->isDarwin()) {
+            $this->info('  🔓 macOS detected. Removing from System Keychain...');
+            $caPath = $this->getLocalCaCertPath();
+
+            if (file_exists($caPath)) {
+                $tmpCa = (string) tempnam(sys_get_temp_dir(), 'larakube-untrust');
+                file_put_contents($tmpCa, file_get_contents($caPath));
+                $fingerprint = trim((string) shell_exec("openssl x509 -noout -fingerprint -sha1 -in {$tmpCa} | cut -d'=' -f2 | sed 's/://g'"));
+                @unlink($tmpCa);
+
+                if ($fingerprint) {
+                    passthru("sudo security delete-certificate -Z {$fingerprint} /Library/Keychains/System.keychain 2>/dev/null || sudo security delete-certificate -c \"LaraKube Local CA\" /Library/Keychains/System.keychain");
+                } else {
+                    passthru('sudo security delete-certificate -c "LaraKube Local CA" /Library/Keychains/System.keychain');
+                }
+            } else {
+                passthru('sudo security delete-certificate -c "LaraKube Local CA" /Library/Keychains/System.keychain');
+            }
+        } elseif ($this->isLinux()) {
+            if (file_exists('/usr/local/share/ca-certificates/larakube-local-ca.crt')) {
+                $this->info('  🔓 Linux (Debian/Ubuntu) detected. Removing ca-certificate...');
+                passthru('sudo rm -f /usr/local/share/ca-certificates/larakube-local-ca.crt');
+                passthru('sudo update-ca-certificates --fresh');
+            } elseif (file_exists('/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt')) {
+                $this->info('  🔓 Linux (Fedora/RHEL) detected. Removing ca-trust...');
+                passthru('sudo rm -f /etc/pki/ca-trust/source/anchors/larakube-local-ca.crt');
+                passthru('sudo update-ca-trust extract');
+            }
+        } else {
+            $this->warn("  ⚠ Automatic trust removal is not supported for {$os}.");
+        }
+    }
+
+    protected function isDnsmasqInstalled(): bool
+    {
+        return trim((string) shell_exec('which dnsmasq 2>/dev/null')) !== '';
+    }
+
+    protected function setupDnsmasq(): void
+    {
+        if (! $this->isDnsmasqInstalled()) {
+            $this->newLine();
+            $this->line('  <fg=yellow>💡 Optional:</> Install <fg=cyan>dnsmasq</> for automatic wildcard DNS resolution.');
+            $this->line('  <fg=gray>Without it, larakube up manages /etc/hosts entries for each hostname.</>');
+            $this->newLine();
+
+            if (! confirm('Install dnsmasq now?', false)) {
+                $this->line('  <fg=gray>Skipped — larakube up will manage /etc/hosts for you.</>');
+
+                return;
+            }
+
+            if (! $this->installDnsmasq()) {
+                return;
+            }
+        }
+
+        $this->configureDnsmasq();
+    }
+
+    protected function installDnsmasq(): bool
+    {
+        $os = PHP_OS_FAMILY;
+
+        if ($os === 'Darwin') {
+            $brewBin = trim((string) shell_exec('which brew 2>/dev/null'));
+            if ($brewBin === '') {
+                $this->warn('  Homebrew not found. Install it from https://brew.sh then run: brew install dnsmasq');
+
+                return false;
+            }
+            passthru('brew install dnsmasq', $code);
+
+            return $code === 0;
+        }
+
+        if ($os === 'Linux') {
+            if (file_exists('/usr/bin/apt-get')) {
+                passthru('sudo apt-get install -y dnsmasq', $code);
+            } elseif (file_exists('/usr/bin/dnf')) {
+                passthru('sudo dnf install -y dnsmasq', $code);
+            } else {
+                $this->warn('  Could not detect package manager. Install dnsmasq manually.');
+
+                return false;
+            }
+
+            return $code === 0;
+        }
+
+        $this->warn('  dnsmasq install not supported on this platform.');
+
+        return false;
+    }
+
+    /** Path to LaraKube's dnsmasq conf drop-in for the current platform, or null if unsupported. */
+    protected function getDnsmasqConfPath(): ?string
+    {
+        if ($this->isDarwin()) {
+            $brewPrefix = trim((string) shell_exec('brew --prefix 2>/dev/null')) ?: '/usr/local';
+
+            return $brewPrefix.'/etc/dnsmasq.d/larakube.conf';
+        }
+
+        if ($this->isLinux()) {
+            return '/etc/dnsmasq.d/larakube.conf';
+        }
+
+        return null;
+    }
+
+    /** Every TLD already wildcarded in an existing dnsmasq conf's content. */
+    protected function parseDnsmasqTlds(string $confContent): array
+    {
+        preg_match_all('/^address=\/\.([^\/]+)\/127\.0\.0\.1$/m', $confContent, $matches);
+
+        return $matches[1] ?? [];
+    }
+
+    /** dnsmasq conf content wildcarding every given TLD to 127.0.0.1. */
+    protected function buildDnsmasqConf(array $tlds): string
+    {
+        $lines = array_map(fn (string $tld) => "address=/.{$tld}/127.0.0.1", array_values(array_unique($tlds)));
+
+        // bind-interfaces + listen-address=127.0.0.1 prevents dnsmasq from trying to
+        // bind on OrbStack/Docker bridge interfaces (which fail with Permission denied).
+        return "listen-address=127.0.0.1\nbind-interfaces\n".implode("\n", $lines)."\n";
+    }
+
+    /**
+     * Ensure dnsmasq wildcards $tld (defaulting to the global TLD) to 127.0.0.1,
+     * in addition to every TLD it already covers — never replacing or removing an
+     * existing entry. Multiple projects can pin different TLDs via `config:tld
+     * --project`, and each one that opts into dnsmasq coverage should keep working
+     * even after another project (or the global default) changes its TLD.
+     * No-ops (no sudo, no restart) if $tld is already fully covered.
+     */
+    protected function configureDnsmasq(?string $tld = null): void
+    {
+        $tld = $tld ?? GlobalConfigData::load()->getLocalTld();
+        $confPath = $this->getDnsmasqConfPath();
+
+        if ($confPath === null) {
+            return;
+        }
+
+        $existingConf = file_exists($confPath) ? (string) file_get_contents($confPath) : '';
+        $existingTlds = $this->parseDnsmasqTlds($existingConf);
+        $tlds = array_unique(array_merge($existingTlds, [$tld]));
+
+        $resolverMissing = $this->isDarwin() && ! file_exists('/etc/resolver/'.$tld);
+
+        if (in_array($tld, $existingTlds, true) && ! $resolverMissing) {
+            return; // already covered — no sudo, no restart needed
+        }
+
+        $conf = $this->buildDnsmasqConf($tlds);
+
+        if ($this->isDarwin()) {
+            @mkdir(dirname($confPath), 0755, true);
+            file_put_contents($confPath, $conf);
+
+            passthru('sudo mkdir -p /etc/resolver');
+            foreach ($tlds as $coveredTld) {
+                if (file_exists('/etc/resolver/'.$coveredTld)) {
+                    continue;
+                }
+                $tmpResolver = (string) tempnam(sys_get_temp_dir(), 'lk-resolver');
+                file_put_contents($tmpResolver, "nameserver 127.0.0.1\n");
+                passthru('sudo cp '.escapeshellarg($tmpResolver).' /etc/resolver/'.escapeshellarg($coveredTld));
+                @unlink($tmpResolver);
+            }
+
+            // Stop any user-level instance first (can't bind port 53 without root).
+            // Suppress output — it's fine if there's nothing to stop.
+            shell_exec('brew services stop dnsmasq 2>/dev/null');
+            // Must run as root so dnsmasq can bind port 53.
+            passthru('sudo brew services restart dnsmasq');
+        } else {
+            $tmpConf = (string) tempnam(sys_get_temp_dir(), 'lk-dnsmasq');
+            file_put_contents($tmpConf, $conf);
+            passthru('sudo mkdir -p /etc/dnsmasq.d');
+            passthru('sudo cp '.escapeshellarg($tmpConf).' '.escapeshellarg($confPath));
+            @unlink($tmpConf);
+            passthru('sudo systemctl restart dnsmasq');
+        }
+
+        $covered = implode(', ', array_map(fn (string $t) => "*.{$t}", $tlds));
+        $this->laraKubeInfo("dnsmasq configured: {$covered} → 127.0.0.1");
+    }
+
+    protected function isCaTrusted(): bool
+    {
+        if ($this->isWsl()) {
+            $output = shell_exec('certutil.exe -user -verifystore Root "LaraKube Local CA" 2>/dev/null');
+
+            return $output !== null && str_contains((string) $output, 'LaraKube Local CA');
+        }
+
+        if ($this->isDarwin()) {
+            return ! empty(shell_exec('security find-certificate -c "LaraKube Local CA" /Library/Keychains/System.keychain 2>/dev/null'));
+        }
+
+        if ($this->isLinux()) {
+            return file_exists('/usr/local/share/ca-certificates/larakube-local-ca.crt')
+                || file_exists('/etc/pki/ca-trust/source/anchors/larakube-local-ca.crt');
+        }
+
+        return false;
+    }
+
+    protected function isDnsmasqConfigured(): bool
+    {
+        $tld = GlobalConfigData::load()->getLocalTld();
+
+        if ($this->isDarwin()) {
+            $brewPrefix = trim((string) shell_exec('brew --prefix 2>/dev/null')) ?: '/usr/local';
+
+            if (! file_exists($brewPrefix.'/etc/dnsmasq.d/larakube.conf') || ! file_exists('/etc/resolver/'.$tld)) {
+                return false;
+            }
+        } elseif ($this->isLinux()) {
+            if (! file_exists('/etc/dnsmasq.d/larakube.conf')) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        // Files exist — verify dnsmasq is actually running by probing DNS.
+        $result = shell_exec('dscacheutil -q host -a name larakube-probe.'.$tld.' 2>/dev/null');
+        if ($this->isDarwin()) {
+            return $result !== null && str_contains((string) $result, '127.0.0.1');
+        }
+
+        // Linux: use getent which respects /etc/resolv.conf + nsswitch
+        $result = shell_exec('getent hosts larakube-probe.'.$tld.' 2>/dev/null');
+
+        return $result !== null && str_contains((string) $result, '127.0.0.1');
+
+        return false;
+    }
+}

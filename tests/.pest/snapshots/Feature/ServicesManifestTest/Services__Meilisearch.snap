@@ -52,8 +52,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: meilisearch-test.dev.test
+    - host: meilisearch-test.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - meilisearch-test.dev.test
+        - meilisearch-test.kube
 
 
 --- FILE: base/meilisearch-deployment.yaml ---
@@ -305,6 +305,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: meilisearch-test:latest
+    newName: meilisearch-test
+    newTag: local
+
 
 --- FILE: overlays/local/meilisearch-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
@@ -316,7 +321,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: meilisearch-meilisearch-test.dev.test
+    - host: meilisearch.meilisearch-test.kube
       http:
         paths:
           - path: /
@@ -328,7 +333,7 @@ spec:
                   number: 7700
   tls:
     - hosts:
-        - meilisearch-meilisearch-test.dev.test
+        - meilisearch.meilisearch-test.kube
 
 
 --- FILE: overlays/local/meilisearch-volumes.yaml ---
@@ -463,7 +468,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - meilisearch-test.dev.test
+        - meilisearch-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -509,8 +514,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -534,7 +539,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: meilisearch-test.dev.test
+    - host: meilisearch-test.kube
       http:
         paths:
           - path: /
@@ -546,7 +551,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - meilisearch-test.dev.test
+        - meilisearch-test.kube
       secretName: meilisearch-test-tls
 
 
@@ -567,6 +572,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: meilisearch-test:latest
+    newName: meilisearch-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/meilisearch-volumes.yaml ---

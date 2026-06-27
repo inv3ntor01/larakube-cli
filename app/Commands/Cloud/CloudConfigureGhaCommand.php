@@ -3,14 +3,17 @@
 namespace App\Commands\Cloud;
 
 use App\Traits\ConfiguresCloudEnvironment;
+use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\InteractsWithEnvironments;
+use App\Traits\InteractsWithGlobalConfig;
 use App\Traits\InteractsWithProjectConfig;
+use App\Traits\InteractsWithScopedRbac;
 use App\Traits\LaraKubeOutput;
 use LaravelZero\Framework\Commands\Command;
 
 class CloudConfigureGhaCommand extends Command
 {
-    use ConfiguresCloudEnvironment, InteractsWithEnvironments, InteractsWithProjectConfig, LaraKubeOutput;
+    use ConfiguresCloudEnvironment, GeneratesProjectInfrastructure, InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, InteractsWithScopedRbac, LaraKubeOutput;
 
     protected $signature = 'cloud:configure:gha
         {environment? : The environment to configure}

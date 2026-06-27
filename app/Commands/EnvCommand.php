@@ -28,7 +28,8 @@ class EnvCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'env {name? : The name of the new environment}';
+    protected $signature = 'env {name? : The name of the new environment}
+                            {--offline : Mark this environment for air-gapped / offline distribution}';
 
     /**
      * The console command description.
@@ -78,6 +79,9 @@ class EnvCommand extends Command
         if (! $config->hasEnvironment($envName)) {
             $this->laraKubeInfo("Creating environment '{$envName}'...");
             $envData = $this->gatherEnvironmentData($config, $envName);
+            if ($this->option('offline')) {
+                $envData->offline = true;
+            }
             $config->addEnvironment($envName, $envData);
         } else {
             $this->laraKubeInfo("Environment '{$envName}' already exists in DNA; keeping current settings.");
@@ -97,25 +101,32 @@ class EnvCommand extends Command
         $this->laraKubeInfo("Environment '{$envName}' is now part of your project DNA.");
         $this->newLine();
 
-        // 5. Offer to set up the CI/CD deploy workflow for this env now. It's a
-        // separate concern (cloud:configure also uploads GitHub secrets via the
-        // `gh` CLI, which needs auth), so we ask rather than force it.
-        $configureCicd = confirm(
-            label: "Set up the GitHub Actions deploy workflow for '{$envName}' now?",
-            default: false,
-            hint: 'Generates .github/workflows/larakube-deploy-'.$envName.'.yml (you pick its trigger branch) and uploads secrets.',
-        );
+        $isOffline = $config->environments[$envName]->offline ?? false;
 
-        if ($configureCicd) {
-            $this->call('cloud:configure:gha', ['environment' => $envName]);
+        // 5. Offline environments don't need CI/CD — they deploy via bundles.
+        //    For online environments, offer to set up the GitHub Actions workflow.
+        if (! $isOffline) {
+            $configureCicd = confirm(
+                label: "Set up the GitHub Actions deploy workflow for '{$envName}' now?",
+                default: false,
+                hint: 'Generates .github/workflows/larakube-deploy-'.$envName.'.yml (you pick its trigger branch) and uploads secrets.',
+            );
 
-            return;
+            if ($configureCicd) {
+                $this->call('cloud:configure:gha', ['environment' => $envName]);
+
+                return;
+            }
         }
 
         $this->line('  <fg=gray>Next steps:</>');
         $this->line("  1. Preview the merged manifests:  <fg=yellow>larakube kustomize {$envName}</>");
-        $this->line("  2. Set up CI/CD (per-env workflow + branch):  <fg=yellow>larakube cloud:configure:gha {$envName}</>");
-        $this->line("  3. Or deploy manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
+        if ($isOffline) {
+            $this->line("  2. Build the air-gapped bundle:   <fg=yellow>larakube bundle:build {$envName} --tar</>");
+        } else {
+            $this->line("  2. Set up CI/CD (per-env workflow + branch):  <fg=yellow>larakube cloud:configure:gha {$envName}</>");
+            $this->line("  3. Or deploy manually:  <fg=yellow>larakube cloud:deploy {$envName}</>");
+        }
     }
 
     /**

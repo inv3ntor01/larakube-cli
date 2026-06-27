@@ -2,7 +2,11 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\InstallsK3s;
+use App\Traits\InteractsWithKustomize;
+use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
+use App\Traits\PrunesKubeContext;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -11,7 +15,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use LaraKubeOutput;
+    use InstallsK3s, InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
 
     /**
      * The name and signature of the console command.
@@ -34,7 +38,7 @@ class ClusterSetupCommand extends Command
         // 1. Select engine. Native k3s is the lightest option and the default on
         //    Linux; k3d (k3s-in-Docker) pays a container/VM tax on top of k3s and
         //    is the only choice on macOS/Windows (no native Linux kernel there).
-        if (PHP_OS_FAMILY === 'Linux') {
+        if ($this->isLinux()) {
             $engine = select(
                 label: 'Which Kubernetes engine would you like to use?',
                 options: [
@@ -62,10 +66,21 @@ class ClusterSetupCommand extends Command
                 return 1;
             }
 
-            return $this->installK3d();
+            $result = $this->installK3d();
+        } else {
+            $result = $this->installK3s();
         }
 
-        return $this->installK3s();
+        // 3. Make sure a kustomize that can build our multi-doc patches is available:
+        //    probes the machine's own kustomize and installs a pinned standalone only when
+        //    it can't build them (k3s/WSL, or an older v5 like v5.0.4). A capable kubectl
+        //    (recent macOS/OrbStack) uses its own — no download. Runs on the "already
+        //    exists" path too.
+        if ($result === 0) {
+            $this->ensureKustomizeReady();
+        }
+
+        return $result;
     }
 
     /**
@@ -120,10 +135,18 @@ class ClusterSetupCommand extends Command
         // --- 🛡️ UNIVERSAL WORKSPACE BRIDGE ---
         // Instead of asking for a specific folder, we mount the entire user root
         // so that projects can be located anywhere (Desktop, Codes, etc.)
-        $userRoot = PHP_OS_FAMILY === 'Darwin' ? '/Users' : '/home';
+        $userRoot = $this->isDarwin() ? '/Users' : '/home';
+
+        // Clear any stale k3d-larakube kubeconfig entry from a prior cluster (e.g.
+        // destroyed by an older CLI without this cleanup) so the fresh create + merge
+        // yields a clean, connectable context. Safe here — we're committed to creating
+        // a new cluster, so no live context is being removed.
+        $this->pruneKubeContext(['k3d-larakube']);
 
         $this->laraKubeInfo('Creating LaraKube local cluster...');
         $this->info("  🛡 Universal workspace bridge: {$userRoot}");
+
+        $k3dImage = 'rancher/k3s:'.str_replace('+', '-', $this->k3sVersion());
 
         // Create k3d cluster with standard ports exposed
         // And mount the user root so hostPath mounts work correctly
@@ -131,6 +154,7 @@ class ClusterSetupCommand extends Command
                    '-p "80:80@loadbalancer" '.
                    '-p "443:443@loadbalancer" '.
                    "-v \"{$userRoot}:{$userRoot}@all\" ".
+                   "--image {$k3dImage} ".
                    '--agents 1 '.
                    '--k3s-arg "--disable=traefik@server:*" '.
                    '--wait';
@@ -145,7 +169,7 @@ class ClusterSetupCommand extends Command
 
     protected function installK3s(): int
     {
-        if (PHP_OS_FAMILY !== 'Linux') {
+        if (! $this->isLinux()) {
             $this->laraKubeError('Native k3s installation is only supported on Linux. Please use k3d instead.');
 
             return 1;
@@ -155,7 +179,7 @@ class ClusterSetupCommand extends Command
         // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
         // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
         // below work without sudo.
-        passthru('curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" sh -', $installCode);
+        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik'], ['K3S_KUBECONFIG_MODE' => '644']), $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');
@@ -192,7 +216,9 @@ class ClusterSetupCommand extends Command
 
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
         // never touches ~/.kube/config — so kubectl and `larakube context` can't
-        // see it until we merge it in.
+        // see it until we merge it in. Prune any stale k3s-larakube entry first so
+        // the fresh merge starts clean (no dangling current-context from a prior run).
+        $this->pruneKubeContext(['k3s-larakube']);
         $this->mergeK3sKubeconfig();
 
         $this->laraKubeInfo('✅ Native k3s cluster is ready!');
@@ -228,8 +254,8 @@ class ClusterSetupCommand extends Command
         $raw = preg_replace('/^(\s*user: )default$/m', '${1}'.$contextName, $raw);
         $raw = preg_replace('/^(current-context: )default$/m', '${1}'.$contextName, $raw);
 
-        $home = getenv('HOME') ?: '';
-        if ($home === '') {
+        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        if (! $home) {
             $this->laraKubeWarn('Could not determine your home directory; skipping kubeconfig merge.');
 
             return;

@@ -4,6 +4,7 @@ namespace App\Traits;
 
 use App\Dashboard\DashboardConnector;
 use App\Dashboard\Requests\SendActivityLogRequest;
+use App\Data\GlobalConfigData;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -28,7 +29,7 @@ trait HasConsoleInteraction
         try {
             return Http::timeout(5)
                 ->withoutVerifying()
-                ->post('https://console.dev.test/api/projects/register', $projectData)
+                ->post('https://console.'.GlobalConfigData::load()->getLocalTld().'/api/projects/register', $projectData)
                 ->successful();
         } catch (Throwable) {
             return false;

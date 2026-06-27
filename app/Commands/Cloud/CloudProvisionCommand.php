@@ -2,6 +2,7 @@
 
 namespace App\Commands\Cloud;
 
+use App\Traits\InstallsK3s;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithRemoteSsh;
 use App\Traits\InteractsWithServerHardening;
@@ -15,14 +16,21 @@ use LaravelZero\Framework\Commands\Command;
 
 class CloudProvisionCommand extends Command
 {
-    use InteractsWithProjectConfig, InteractsWithRemoteSsh, InteractsWithServerHardening, LaraKubeOutput;
+    use InstallsK3s, InteractsWithProjectConfig, InteractsWithRemoteSsh, InteractsWithServerHardening, LaraKubeOutput;
 
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'cloud:provision
+    protected $signature = 'cloud:init
         {target? : What to provision — "vps" (default) or "doks". Omit to be asked.}
         {--context= : (DOKS only) target a specific kube-context}';
+
+    /**
+     * Backward-compatible alias for the pre-rename command name.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['cloud:provision'];
 
     /**
      * The console command description.
@@ -48,7 +56,7 @@ class CloudProvisionCommand extends Command
 
         // DOKS is a separate flow — delegate to its dedicated command.
         if ($target === 'doks') {
-            return (int) $this->call('cloud:provision:doks', array_filter([
+            return (int) $this->call('cloud:init:doks', array_filter([
                 '--context' => $this->option('context'),
             ]));
         }
@@ -85,7 +93,7 @@ class CloudProvisionCommand extends Command
         );
 
         // Resolve ~ in keyPath
-        $keyPath = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $keyPath);
+        $keyPath = str_replace('~', home_path(), $keyPath);
 
         if (! file_exists($keyPath)) {
             $this->laraKubeError("SSH key not found at: {$keyPath}");
@@ -98,7 +106,7 @@ class CloudProvisionCommand extends Command
         if (! $email) {
             $email = text(
                 label: 'What is your email address? (used for SSL/Let\'sEncrypt)',
-                placeholder: 'admin@larakube.dev.test',
+                placeholder: 'admin@example.com',
                 required: true,
                 validate: fn (string $value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Please enter a valid email address.',
             );
@@ -115,9 +123,11 @@ class CloudProvisionCommand extends Command
 
         $this->laraKubeInfo('Connection successful!');
 
+        $config = $this->getProjectConfigObject(getcwd());
+
         // 1. Install K3s
         if (confirm('Install K3s on the remote server?', true)) {
-            $this->installK3s($user, $ip, $port, $keyPath);
+            $this->installK3s($user, $ip, $port, $keyPath, $config);
         }
 
         // 2. Create larakube user if it's root
@@ -161,14 +171,20 @@ class CloudProvisionCommand extends Command
     /**
      * Install K3s on the remote server.
      */
-    protected function installK3s($user, $ip, $port, $keyPath): void
+    protected function installK3s($user, $ip, $port, $keyPath, $config): void
     {
         $this->laraKubeInfo('Hardening OS and Installing K3s on remote server...');
+
+        $installK3s = $this->k3sInstallCommand($this->k3sVersion($config), [
+            '--disable=traefik',
+            '--write-kubeconfig-mode 644',
+            '--kubelet-arg=fail-swap-on=false',
+        ]);
 
         // 1. Create Swap (Crucial for 512MB droplets)
         // 2. Enable IP Forwarding
         // 3. Install K3s (optimized for single-node)
-        $remoteCommand = <<<'BASH'
+        $remoteCommand = <<<BASH
     if [ ! -f /swapfile ]; then
     echo "Creating 1GB Swap file for stability..."
     fallocate -l 1G /swapfile
@@ -183,7 +199,7 @@ class CloudProvisionCommand extends Command
     grep -qxF 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' | tee -a /etc/sysctl.conf
 
     echo "Installing K3s..."
-    curl -sfL https://get.k3s.io | sh -s - --disable=traefik --write-kubeconfig-mode 644
+    {$installK3s}
     BASH;
 
         $this->runRemoteCommand($user, $ip, $port, $keyPath, $remoteCommand);
@@ -337,16 +353,15 @@ BASH;
     {
         $this->laraKubeInfo('Deploying Traefik (Single-Node Hero) to remote cluster...');
 
-        // Ensure we are using the correct context
-        exec("kubectl config use-context {$contextName}");
-
+        $kubectl = 'kubectl --context '.escapeshellarg($contextName);
         $namespace = 'traefik';
-        shell_exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
+
+        shell_exec("{$kubectl} create namespace {$namespace} --dry-run=client -o yaml | {$kubectl} apply -f -");
 
         // 1. Create ConfigMap for Traefik dynamic configuration
         $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
         file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
-        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+        shell_exec("{$kubectl} create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | {$kubectl} apply -f -");
 
         // 2. Create Secret for SSL certificates
         $certDir = base_path('resources/views/traefik/certificates');
@@ -360,7 +375,7 @@ BASH;
         if ($devPemContent && $devKeyPemContent) {
             file_put_contents($tmpDevPem, $devPemContent);
             file_put_contents($tmpDevKeyPem, $devKeyPemContent);
-            shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
+            shell_exec("{$kubectl} create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | {$kubectl} apply -f -");
         } else {
             $this->laraKubeWarn('Could not find local dev certificates. Skipping SSL secret creation.');
         }
@@ -368,7 +383,7 @@ BASH;
         // 3. Apply Traefik Cloud manifest
         $tmpInstall = sys_get_temp_dir().'/traefik-cloud.yaml';
         file_put_contents($tmpInstall, view('k8s.traefik-cloud', ['email' => $this->getEmail()])->render());
-        shell_exec("kubectl apply -f {$tmpInstall} --request-timeout=60s --validate=false");
+        shell_exec("{$kubectl} apply -f {$tmpInstall} --request-timeout=60s --validate=false");
 
         $this->laraKubeInfo('Traefik deployed and configured with HostPort and ACME (Let\'sEncrypt).');
 

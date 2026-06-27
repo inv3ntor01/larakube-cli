@@ -51,8 +51,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -131,7 +131,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: franken-sqlite.dev.test
+    - host: franken-sqlite.kube
       http:
         paths:
           - path: /
@@ -143,7 +143,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-sqlite.dev.test
+        - franken-sqlite.kube
 
 
 --- FILE: overlays/local/app-volumes.yaml ---
@@ -235,6 +235,11 @@ resources:
 
 patches:
   - path: patches.yaml
+
+images:
+  - name: franken-sqlite:latest
+    newName: franken-sqlite
+    newTag: local
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -337,7 +342,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - franken-sqlite.dev.test
+        - franken-sqlite.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -383,8 +388,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -408,7 +413,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: franken-sqlite.dev.test
+    - host: franken-sqlite.kube
       http:
         paths:
           - path: /
@@ -420,7 +425,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-sqlite.dev.test
+        - franken-sqlite.kube
       secretName: franken-sqlite-tls
 
 
@@ -440,6 +445,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: franken-sqlite:latest
+    newName: franken-sqlite
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Tools;
 
+use App\Data\GlobalConfigData;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
@@ -39,11 +40,12 @@ class LocalHealthCheckTool extends Tool
         }
 
         // 3. Check Traefik
-        $traefikCheck = shell_exec('curl -sk --connect-timeout 2 https://console.dev.test > /dev/null 2>&1; echo $?');
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $traefikCheck = shell_exec('curl -sk --connect-timeout 2 https://console.'.$tld.' > /dev/null 2>&1; echo $?');
         if (trim($traefikCheck) === '0') {
-            $report[] = '- ✅ **Networking:** Traefik ingress is routing console.dev.test.';
+            $report[] = "- ✅ **Networking:** Traefik ingress is routing console.{$tld}.";
         } else {
-            $report[] = '- ⚠️ **Networking:** Local domains (dev.test) might not be resolved or Traefik is down.';
+            $report[] = "- ⚠️ **Networking:** Local domains (.{$tld}) might not be resolved or Traefik is down.";
         }
 
         return Response::text(implode("\n", $report));

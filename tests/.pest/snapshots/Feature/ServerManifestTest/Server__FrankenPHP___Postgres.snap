@@ -57,8 +57,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: franken-postgres.dev.test
+    - host: franken-postgres.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-postgres.dev.test
+        - franken-postgres.kube
 
 
 --- FILE: base/postgres-deployment.yaml ---
@@ -283,8 +283,6 @@ namespace: franken-postgres-local
 
 resources:
   - app-volumes.yaml
-  - postgres-companion-ingress.yaml
-  - postgres-companion.yaml
   - postgres-volumes.yaml
   - ../../base
   - infrastructure.yaml
@@ -293,6 +291,11 @@ resources:
 patches:
   - path: postgres-patch.yaml
   - path: patches.yaml
+
+images:
+  - name: franken-postgres:latest
+    newName: franken-postgres
+    newTag: local
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -390,70 +393,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - franken-postgres.dev.test
-
-
---- FILE: overlays/local/postgres-companion-ingress.yaml ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: postgres-companion
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  rules:
-    - host: postgres-franken-postgres.dev.test
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: postgres-companion
-                port:
-                  number: 80
-  tls:
-    - hosts:
-        - postgres-franken-postgres.dev.test
-
-
---- FILE: overlays/local/postgres-companion.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres-companion
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: postgres-companion
-  template:
-    metadata:
-      labels:
-        app: postgres-companion
-    spec:
-      containers:
-        - name: companion
-          image: adminer:latest
-          ports:
-            - containerPort: 8080
-          env:
-            - name: ADMINER_DEFAULT_SERVER
-              value: postgres
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-companion
-spec:
-  selector:
-    app: postgres-companion
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
-  type: ClusterIP
+        - franken-postgres.kube
 
 
 --- FILE: overlays/local/postgres-patch.yaml ---
@@ -545,8 +485,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -570,7 +510,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: franken-postgres.dev.test
+    - host: franken-postgres.kube
       http:
         paths:
           - path: /
@@ -582,7 +522,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - franken-postgres.dev.test
+        - franken-postgres.kube
       secretName: franken-postgres-tls
 
 
@@ -604,6 +544,11 @@ patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
 
+images:
+  - name: franken-postgres:latest
+    newName: franken-postgres
+    newTag: production-latest
+
 
 --- FILE: overlays/production/namespace.yaml ---
 apiVersion: v1
@@ -614,31 +559,12 @@ metadata:
 
 --- FILE: overlays/production/postgres-volumes.yaml ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: franken-postgres-postgres-pv
-  labels:
-    larakube-project: franken-postgres
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath:
-    path: /STABLE_TEST_PATH/.infrastructure/volume_data/postgres
-    type: DirectoryOrCreate
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: franken-postgres-postgres-pvc
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
-  volumeName: franken-postgres-postgres-pv
   resources:
     requests:
       storage: 1Gi

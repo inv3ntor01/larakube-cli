@@ -52,8 +52,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -132,7 +132,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: minio-test.dev.test
+    - host: minio-test.kube
       http:
         paths:
           - path: /
@@ -144,7 +144,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
 
 
 --- FILE: base/minio-deployment.yaml ---
@@ -310,6 +310,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: minio-test:latest
+    newName: minio-test
+    newTag: local
+
 
 --- FILE: overlays/local/minio-ingress.yaml ---
 apiVersion: networking.k8s.io/v1
@@ -321,7 +326,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: s3-minio-test.dev.test
+    - host: s3.minio-test.kube
       http:
         paths:
           - path: /
@@ -331,7 +336,7 @@ spec:
                 name: minio
                 port:
                   number: 9000
-    - host: s3-console-minio-test.dev.test
+    - host: s3-console.minio-test.kube
       http:
         paths:
           - path: /
@@ -343,8 +348,8 @@ spec:
                   number: 9001
   tls:
     - hosts:
-        - s3-minio-test.dev.test
-        - s3-console-minio-test.dev.test
+        - s3.minio-test.kube
+        - s3-console.minio-test.kube
 
 
 --- FILE: overlays/local/minio-volumes.yaml ---
@@ -479,7 +484,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -525,8 +530,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -550,7 +555,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: minio-test.dev.test
+    - host: minio-test.kube
       http:
         paths:
           - path: /
@@ -562,7 +567,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - minio-test.dev.test
+        - minio-test.kube
       secretName: minio-test-tls
 
 
@@ -583,6 +588,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: minio-test:latest
+    newName: minio-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/minio-volumes.yaml ---

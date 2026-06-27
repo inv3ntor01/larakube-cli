@@ -17,7 +17,7 @@ function envContext(): object
     };
 }
 
-test('environmentContextName matches the name cloud:provision creates', function () {
+test('environmentContextName matches the name cloud:init creates', function () {
     expect(envContext()->environmentContextName('159.223.43.95'))->toBe('larakube-159.223.43.95');
 });
 

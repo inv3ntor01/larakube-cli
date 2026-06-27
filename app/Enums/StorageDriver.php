@@ -17,6 +17,7 @@ use App\Contracts\HasSelectOptions;
 use App\Contracts\PlexProvisionable;
 use App\Contracts\RemovableWhenManaged;
 use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
 use App\Traits\DerivesHostsFromServices;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\ProvidesCommandOptions;
@@ -219,7 +220,7 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
 
     public function getPublicEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
     {
-        $s3Host = $config ? $config->getServiceHost('s3', $environment) : 's3.dev.test';
+        $s3Host = $config ? $config->getServiceHost('s3', $environment) : 's3.'.GlobalConfigData::load()->getLocalTld();
 
         $envs = [
             'FILESYSTEM_DISK' => 's3',

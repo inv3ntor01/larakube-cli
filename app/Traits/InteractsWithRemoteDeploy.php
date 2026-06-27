@@ -18,7 +18,9 @@ use App\Enums\RegistryProvider;
  */
 trait InteractsWithRemoteDeploy
 {
-    /** The kube-context cloud:provision creates for a host. Pure. */
+    use DeploysMonitoringExporters, InteractsWithKustomize;
+
+    /** The kube-context cloud:init creates for a host. Pure. */
     public function remoteContextName(string $ip): string
     {
         return 'larakube-'.$ip;
@@ -36,19 +38,114 @@ trait InteractsWithRemoteDeploy
      * `--load` it into the local docker so `docker save` can stream it. The
      * platform is resolved from the target node (see resolveDeployPlatform), so
      * an arm64 Pi gets a native arm64 build instead of an unrunnable amd64 one.
-     * Pure.
+     * When $dotenvPath is provided it is mounted as a BuildKit secret (id=dotenv)
+     * so VITE_* vars reach Vite without being baked into any image layer. Pure.
      */
-    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
+    public function buildProductionImageCommand(string $image, string $dockerfile, string $path, string $platform = 'linux/amd64', string $dotenvPath = ''): string
     {
+        $secret = $dotenvPath !== '' ? '--secret id=dotenv,src='.escapeshellarg($dotenvPath).' ' : '';
+
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($image).' -f '.escapeshellarg($dockerfile).' '
+            .$secret
             .escapeshellarg($path).' --load';
+    }
+
+    /**
+     * Executes necessary local commands (composer install, wayfinder) before
+     * building the docker image. `npm run build` is intentionally NOT run here —
+     * the `assets` Docker stage handles it with the correct VITE_* values sourced
+     * from the mounted .env secret, keeping the host's public/build/ untouched.
+     */
+    public function runPreDeploymentSteps(ConfigData $config): bool
+    {
+        $this->laraKubeInfo('Running Pre-Deployment Build Steps...');
+
+        $bin = escapeshellarg($_SERVER['argv'][0] ?? 'larakube');
+        $pm = escapeshellarg($config->getPackageManager()->value);
+
+        // 1. Composer install
+        $this->line('  <fg=gray>📦 composer install</>');
+        $composerCmd = "$bin composer install --optimize-autoloader --no-interaction --no-progress";
+        passthru($composerCmd, $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Composer install failed. Is your local dev cluster running (`larakube up`)?');
+
+            return false;
+        }
+
+        // 2. Node install (needed so node_modules exist for the Docker COPY context)
+        $this->line("  <fg=gray>🛠  {$pm} install</>");
+        $installCmd = $config->getPackageManager()->installCommand();
+        $installCmdStr = preg_replace('/^([a-z]+)\b/', "$bin $1", $installCmd);
+        passthru($installCmdStr, $code);
+        if ($code !== 0) {
+            $this->laraKubeError('Node dependencies install failed.');
+
+            return false;
+        }
+
+        // 3. Wayfinder — generates TypeScript route types that Vite needs before
+        //    npm run build. Must run on the host (requires PHP + artisan).
+        if ($config->usesWayfinder()) {
+            $this->line('  <fg=gray>🏎  wayfinder:generate</>');
+            passthru("$bin php artisan wayfinder:generate --with-form", $code);
+            if ($code !== 0) {
+                $this->laraKubeError('Wayfinder generation failed.');
+
+                return false;
+            }
+        }
+
+        // 4. npm run build is intentionally skipped here. The `assets` Docker
+        //    stage runs it with the correct per-environment VITE_* build-args
+        //    (passed via --build-arg), so the right hostnames are always baked
+        //    and the developer's local public/build/ is left untouched.
+        $this->line("  <fg=gray>💎 {$pm} run build → deferred to Docker assets stage</>");
+
+        $this->newLine();
+
+        return true;
+    }
+
+    /**
+     * Collect VITE_* key-value pairs for a given environment from the project
+     * config. Used by createDotenvBuildSecret to augment the .env file that is
+     * mounted into the Docker assets stage, ensuring the correct hostnames are
+     * baked into the JS bundle without touching the host's .env files.
+     *
+     * @return array<string, string>
+     */
+    public function collectViteBuildArgs(ConfigData $config, string $environment, ?string $reverbAppKey = null): array
+    {
+        $webHost = $config->getWebHost($environment);
+        if (empty($webHost)) {
+            return [];
+        }
+
+        $appUrl = 'https://'.$webHost;
+        $args = [
+            'VITE_APP_URL' => $appUrl,
+            'VITE_ASSET_URL' => $appUrl,
+        ];
+
+        $reverbHost = $config->getHost($environment, 'reverb');
+        if ($reverbHost && $config->hasFeature(\App\Enums\LaravelFeature::REVERB, $environment)) {
+            $args['VITE_REVERB_HOST'] = $reverbHost;
+            $args['VITE_REVERB_PORT'] = '443';
+            $args['VITE_REVERB_SCHEME'] = 'https';
+            if ($reverbAppKey !== null && $reverbAppKey !== '') {
+                $args['VITE_REVERB_APP_KEY'] = $reverbAppKey;
+            }
+        }
+
+        return $args;
     }
 
     /**
      * Stream a local image into the remote node's k3s containerd. `k3s ctr`
      * needs root, hence sudo (the larakube user must have passwordless sudo for
-     * it — set up by cloud:provision). Pure.
+     * it — set up by cloud:init). Pure.
      */
     public function sideloadOverSshCommand(string $image, string $sshBase): string
     {
@@ -56,29 +153,32 @@ trait InteractsWithRemoteDeploy
     }
 
     /**
-     * `kubectl kustomize | sed image-rewrite | kubectl apply`, all against the
+     * `kustomize build | sed image-rewrite | kubectl apply`, the apply against the
      * env's context. Mirrors what the GHA workflow does, but for the sideloaded
-     * local tag instead of a registry image. Pure.
+     * local tag instead of a registry image. The build half uses the resolved
+     * kustomize (standalone when the host's embedded one is too old for `patches:`,
+     * e.g. k3s/WSL) — it renders locally, so it needs no context.
      */
     public function applyWithImageRewriteCommand(string $context, string $overlayPath, string $fromImage, string $toImage): string
     {
         $ctx = escapeshellarg($context);
 
-        return 'kubectl --context '.$ctx.' kustomize '.escapeshellarg($overlayPath)
+        return $this->kustomizeBuildCommand($overlayPath)
             .' | sed '.escapeshellarg('s|image: '.$fromImage.'|image: '.$toImage.'|g')
             .' | kubectl --context '.$ctx.' apply -f -';
     }
 
     /**
-     * Same kustomize|sed|apply, but driven by a standalone (scoped) kubeconfig
-     * file instead of a named admin context — used for the dogfooded deploy where
-     * the namespace-locked `deployer` token does the apply. Pure.
+     * Same build|sed|apply, but the apply is driven by a standalone (scoped)
+     * kubeconfig file instead of a named admin context — used for the dogfooded
+     * deploy where the namespace-locked `deployer` token does the apply. The build
+     * half renders locally via the resolved kustomize, so it carries no kubeconfig.
      */
     public function applyWithImageRewriteUsingKubeconfig(string $kubeconfigPath, string $overlayPath, string $fromImage, string $toImage): string
     {
         $kc = 'KUBECONFIG='.escapeshellarg($kubeconfigPath).' kubectl';
 
-        return $kc.' kustomize '.escapeshellarg($overlayPath)
+        return $this->kustomizeBuildCommand($overlayPath)
             .' | sed '.escapeshellarg('s|image: '.$fromImage.'|image: '.$toImage.'|g')
             .' | '.$this->dropNamespaceDocCommand()
             .' | '.$kc.' apply -f -';
@@ -163,12 +263,39 @@ trait InteractsWithRemoteDeploy
      * Build a registry image reference command (build + push). Pure.
      * Cross-compiles for the resolved target platform (the cluster nodes' arch
      * for a managed context; defaults to linux/amd64), then pushes to registry.
+     * When $dotenvPath is provided it is mounted as a BuildKit secret (id=dotenv).
      */
-    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64'): string
+    public function buildAndPushImageCommand(string $registryImage, string $dockerfile, string $path, string $platform = 'linux/amd64', string $dotenvPath = ''): string
     {
+        $secret = $dotenvPath !== '' ? '--secret id=dotenv,src='.escapeshellarg($dotenvPath).' ' : '';
+
         return 'docker buildx build --platform '.$platform.' --target deploy '
             .'-t '.escapeshellarg($registryImage).' -f '.escapeshellarg($dockerfile).' '
+            .$secret
             .escapeshellarg($path).' --push';
+    }
+
+    /**
+     * Create a temporary .env file for the Docker assets stage BuildKit secret.
+     * Reads the project's .env.{environment} (APP_KEY and all runtime vars), then
+     * appends the VITE_* values derived from the project config so they are baked
+     * into the JS bundle. The caller is responsible for deleting the temp file
+     * (use a try/finally block). Returns the absolute path to the temp file.
+     */
+    public function createDotenvBuildSecret(ConfigData $config, string $environment, ?string $reverbAppKey = null): string
+    {
+        $envPath = $config->getPath().'/.env.'.$environment;
+        $content = file_exists($envPath) ? (string) file_get_contents($envPath) : '';
+
+        $viteVars = $this->collectViteBuildArgs($config, $environment, $reverbAppKey);
+        foreach ($viteVars as $key => $value) {
+            $content .= "\n{$key}={$value}";
+        }
+
+        $tmpPath = (string) tempnam(sys_get_temp_dir(), 'lk_dotenv_build_');
+        file_put_contents($tmpPath, $content);
+
+        return $tmpPath;
     }
 
     /**
@@ -293,7 +420,7 @@ trait InteractsWithRemoteDeploy
         $cloud = $config->getCloud($environment);
 
         if (! $cloud || ! $cloud->ip) {
-            $this->laraKubeError("No cloud connection configured for '{$environment}'. Run `larakube cloud:provision` first.");
+            $this->laraKubeError("No cloud connection configured for '{$environment}'. Run `larakube cloud:init` first.");
 
             return 1;
         }
@@ -306,7 +433,7 @@ trait InteractsWithRemoteDeploy
         $this->line("  <fg=gray>Target:</> <fg=cyan>{$context}</>  <fg=gray>namespace:</> <fg=cyan>{$namespace}</>");
 
         if (! $this->remoteContextReachable($context)) {
-            $this->laraKubeError("Context '{$context}' is missing or unreachable. Re-run `larakube cloud:provision`.");
+            $this->laraKubeError("Context '{$context}' is missing or unreachable. Re-run `larakube cloud:init`.");
 
             return 1;
         }
@@ -316,11 +443,20 @@ trait InteractsWithRemoteDeploy
         $dockerfile = "{$path}/Dockerfile.php";
         $ssh = $this->sshBaseCommand($cloud->user, $cloud->ip, $cloud->port, $cloud->key);
 
+        if (! $this->runPreDeploymentSteps($config)) {
+            return 1;
+        }
+
         // 1. Build the production image for the node's architecture (resolved
         //    over SSH, so an arm64 node gets a native arm64 build).
         $platform = $this->resolveDeployPlatform($cloud, $context, $ssh);
+        $dotenvPath = $this->createDotenvBuildSecret($config, $environment);
         $this->laraKubeInfo("Building production image '{$image}' ({$platform})...");
-        passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform), $code);
+        try {
+            passthru($this->buildProductionImageCommand($image, $dockerfile, $path, $platform, $dotenvPath), $code);
+        } finally {
+            @unlink($dotenvPath);
+        }
         if ($code !== 0) {
             $this->laraKubeError('Image build failed.');
 
@@ -342,7 +478,13 @@ trait InteractsWithRemoteDeploy
         shell_exec("kubectl --context {$ctx} create namespace {$ns} --dry-run=client -o yaml | kubectl --context {$ctx} apply -f -");
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $image);
+        $result = $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $image);
+
+        if ($result === 0) {
+            $this->ensureMonitoringExporters($config, $namespace, 'kubectl --context '.escapeshellarg($context));
+        }
+
+        return $result;
     }
 
     /**
@@ -361,7 +503,7 @@ trait InteractsWithRemoteDeploy
         // VPS (larakube-<ip>) OR managed (cloud.context) — resolved one way.
         $context = $this->environmentContextOrCurrent($config, $environment);
         if (! $context) {
-            $this->laraKubeError("No cluster context for '{$environment}'. Run `cloud:configure:base` or `cloud:provision` first.");
+            $this->laraKubeError("No cluster context for '{$environment}'. Run `cloud:configure:base` or `cloud:init` first.");
 
             return 1;
         }
@@ -389,11 +531,20 @@ trait InteractsWithRemoteDeploy
         $this->laraKubeInfo('Verifying registry credentials...');
         // Try a simple docker info to check if already logged in. If not, the push will fail with clear error.
 
+        if (! $this->runPreDeploymentSteps($config)) {
+            return 1;
+        }
+
         // 2. Build and push the production image to registry, for the cluster's
         //    node architecture (no SSH here — read it from the nodes via kubectl).
         $platform = $this->resolveDeployPlatform($config->getCloud($environment), $context, null);
+        $dotenvPath = $this->createDotenvBuildSecret($config, $environment);
         $this->laraKubeInfo("Building and pushing image to {$registry->getRegistryHost()} ({$platform})...");
-        passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform), $code);
+        try {
+            passthru($this->buildAndPushImageCommand($registryImage, $dockerfile, $path, $platform, $dotenvPath), $code);
+        } finally {
+            @unlink($dotenvPath);
+        }
         if ($code !== 0) {
             $this->laraKubeError('Image build/push failed. Ensure Docker credentials are configured and you have push access.');
 
@@ -424,7 +575,7 @@ trait InteractsWithRemoteDeploy
         }
 
         // 4-5. env-sync + apply + rollout THROUGH a namespace-scoped credential.
-        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:latest", $deployImage);
+        return $this->applyScopedDeploy($config, $environment, $context, $namespace, "{$name}:{$environment}-latest", $deployImage);
     }
 
     /**
@@ -565,6 +716,9 @@ trait InteractsWithRemoteDeploy
 
             // 6. Apply the overlay via the scoped credential, retrying briefly for
             //    RBAC propagation lag right after the RoleBinding was created.
+            //    Ensure a kustomize that can build our multi-doc patches first (installs a
+            //    pinned standalone when this machine's kustomize can't, e.g. k3s/WSL).
+            $this->ensureKustomizeReady();
             $overlay = $config->getK8sPath().'/overlays/'.$environment;
             $applyCmd = $this->applyWithImageRewriteUsingKubeconfig($kubeconfigPath, $overlay, $fromImage, $toImage);
             $this->laraKubeInfo('Applying Kubernetes manifests...');
@@ -593,6 +747,9 @@ trait InteractsWithRemoteDeploy
         } finally {
             @unlink($kubeconfigPath);
         }
+
+        // Deploy monitoring exporters if monitoring is active on this cluster.
+        $this->ensureMonitoringExporters($config, $namespace, 'kubectl --context '.escapeshellarg($adminContext));
 
         $this->laraKubeInfo("✅ Deployed '{$name}' to '{$environment}' (namespace-scoped, ns: {$namespace}).");
 

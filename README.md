@@ -18,7 +18,7 @@ LaraKube is a high-performance **Kubernetes Control Plane** for Laravel. It tran
 
 LaraKube provides a streamlined, Spin Pro-inspired deployment experience, but with the power of Kubernetes.
 
-1.  `larakube cloud:provision`: Transforms a fresh VPS into a K3s cluster.
+1.  `larakube cloud:init`: Transforms a fresh VPS into a K3s cluster.
 2.  `larakube cloud:configure`: Sets up your project and GitOps pipeline.
 3.  `git push`: Deploys your application with zero downtime.
 

@@ -59,8 +59,7 @@ spec:
 {!! $first ? '' : "---\n" !!}@php($first = false)
 {{-- Scheduler is a CronJob (different pod path) — same per-env override so its
      wait isn't computed for local, plus the image-pull secret it needs to pull a
-     private image on a managed cluster. --}}
-apiVersion: batch/v1
+     private image on a managed cluster. --}}apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: scheduler

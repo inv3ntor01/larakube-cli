@@ -54,8 +54,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -134,7 +134,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: kitchen-sink.dev.test
+    - host: kitchen-sink.kube
       http:
         paths:
           - path: /
@@ -146,7 +146,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - kitchen-sink.dev.test
+        - kitchen-sink.kube
 
 
 --- FILE: base/queues-deployment.yaml ---
@@ -180,8 +180,8 @@ spec:
           args: ["php", "artisan", "queue:work"]
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -270,8 +270,8 @@ spec:
             - containerPort: 8081
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -363,8 +363,8 @@ spec:
               args: ["php", "artisan", "schedule:run"]
               resources:
                 requests:
-                  cpu: "100m"
-                  memory: "256Mi"
+                  cpu: "50m"
+                  memory: "128Mi"
                 limits:
                   cpu: "1"
                   memory: "1Gi"
@@ -492,12 +492,18 @@ namespace: kitchen-sink-local
 
 resources:
   - app-volumes.yaml
+  - reverb-ingress.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
 
 patches:
   - path: patches.yaml
+
+images:
+  - name: kitchen-sink:latest
+    newName: kitchen-sink
+    newTag: local
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -840,7 +846,32 @@ metadata:
 spec:
   tls:
     - hosts:
-        - kitchen-sink.dev.test
+        - kitchen-sink.kube
+
+
+--- FILE: overlays/local/reverb-ingress.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reverb
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: reverb.kitchen-sink.kube
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: reverb
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - reverb.kitchen-sink.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -886,8 +917,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -913,8 +944,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -940,8 +971,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -954,7 +985,6 @@ spec:
 
           command: ["sh", "-c", "until curl -sf http://web/up; do echo 'Waiting for dependencies...'; sleep 2; done;"]
 ---
-
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -973,8 +1003,8 @@ spec:
             - name: php
               resources:
                 requests:
-                  cpu: "100m"
-                  memory: "256Mi"
+                  cpu: "50m"
+                  memory: "128Mi"
                 limits:
                   cpu: "1"
                   memory: "1Gi"
@@ -990,7 +1020,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: kitchen-sink.dev.test
+    - host: kitchen-sink.kube
       http:
         paths:
           - path: /
@@ -1002,7 +1032,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - kitchen-sink.dev.test
+        - kitchen-sink.kube
       secretName: kitchen-sink-tls
 
 
@@ -1022,6 +1052,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: kitchen-sink:latest
+    newName: kitchen-sink
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

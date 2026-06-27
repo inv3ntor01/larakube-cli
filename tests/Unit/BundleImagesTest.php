@@ -42,6 +42,22 @@ test('imageTarName produces filesystem-safe tarball names', function () {
         ->and($r->imageTarName('minio/minio:RELEASE.2025-09-07T16-13-09Z'))->toBe('minio-minio-RELEASE.2025-09-07T16-13-09Z.tar');
 });
 
+test('bundle build app image tag follows {name}:{env}-latest, not :latest', function () {
+    // AssemblesBundle::bundleImages() returns :latest as the base tag — Kustomize's
+    // images: rewrite block in the local/production overlays rewrites it at apply time.
+    // BundleBuildCommand::handle() overrides the app key to :{env}-latest before
+    // calling docker build and docker save, so local and production bundles never
+    // collide on the same Docker daemon.
+    $config = ConfigData::from(['name' => 'shop']);
+    $env = 'airgap';
+
+    $images = bundleAssembler()->bundleImages($config);
+    $images['app'] = $config->getName().':'.$env.'-latest'; // what the command does
+
+    expect($images['app'])->toBe('shop:airgap-latest')
+        ->and($images['app'])->not->toBe('shop:latest');
+});
+
 test('bundleManifest records app, env, arch and the deduped image list', function () {
     $manifest = bundleAssembler()->bundleManifest(
         ConfigData::from(['name' => 'shop']), 'production', 'amd64', ['shop:latest', 'redis:7.4', 'redis:7.4'],

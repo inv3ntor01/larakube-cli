@@ -55,7 +55,7 @@ trait GuardsSharedStorage
             if ($context !== null && $context !== '' && ! $this->nfsStorageClassPresent($context)) {
                 $this->laraKubeWarn("⚠ '{$environment}' uses shared storage, but the NFS provisioner isn't installed.");
                 $this->line('  The shared ReadWriteMany PVC will stay Pending until you run');
-                $this->line('  <fg=yellow>larakube cloud:provision:nfs</> on this cluster.');
+                $this->line('  <fg=yellow>larakube cloud:init:nfs</> on this cluster.');
                 $this->newLine();
 
                 return $this->allowStorageOverride();
@@ -150,7 +150,7 @@ trait GuardsSharedStorage
         return $risky;
     }
 
-    /** Is the larakube-nfs StorageClass (cloud:provision:nfs) installed on this cluster? */
+    /** Is the larakube-nfs StorageClass (cloud:init:nfs) installed on this cluster? */
     protected function nfsStorageClassPresent(string $context): bool
     {
         exec('kubectl --context '.escapeshellarg($context).' get storageclass '.escapeshellarg(ConfigData::NFS_STORAGE_CLASS).' -o name 2>/dev/null', $out, $code);

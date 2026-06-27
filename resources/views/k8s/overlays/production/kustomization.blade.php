@@ -11,3 +11,8 @@ resources:
 # Add production-specific patches here
 patches:
   - path: deployment-patch.yaml
+
+images:
+  - name: {{ $config->getName() }}:latest
+    newName: {{ $config->getName() }}
+    newTag: {{ $environment }}-latest

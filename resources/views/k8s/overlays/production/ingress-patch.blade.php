@@ -8,7 +8,7 @@ metadata:
 {!! preg_replace('/^/m', '    ', trim(view($view, ['config' => $config])->render())) !!}
 @else
     traefik.ingress.kubernetes.io/router.tls: "true"
-@if($config->getStrategy($environment) === \App\Enums\DeploymentStrategy::SINGLE_NODE)
+@if($config->getStrategy($environment) === \App\Enums\DeploymentStrategy::SINGLE_NODE && !($config->environments[$environment]?->offline ?? false))
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 @endif
 @endif
@@ -41,6 +41,6 @@ spec:
   tls:
     - hosts:
         - {{ $config->getWebHost($environment) }}
-@if($config->getStrategy($environment) === \App\Enums\DeploymentStrategy::SINGLE_NODE)
+@if($config->getStrategy($environment) === \App\Enums\DeploymentStrategy::SINGLE_NODE && !($config->environments[$environment]?->offline ?? false))
       secretName: {{ $config->getName() }}-tls
 @endif

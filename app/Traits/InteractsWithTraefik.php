@@ -2,9 +2,13 @@
 
 namespace App\Traits;
 
+use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
+use App\Enums\SharedClusterService;
+
 trait InteractsWithTraefik
 {
-    use LaraKubeOutput;
+    use LaraKubeOutput, ManagesLocalCa;
 
     /**
      * Ensure Traefik and its dependencies are installed and configured.
@@ -34,49 +38,241 @@ trait InteractsWithTraefik
             return true;
         });
 
+        // Bring up the shared services Traefik fronts (Mailpit + the dashboard
+        // ingress) so a standalone `traefik:setup` lands them too. The same
+        // registry is reconciled on every `up` via reconcileSharedCluster().
+        // Both are local-only services, so their host derives from the dev TLD.
+        $localTld = GlobalConfigData::load()->getLocalTld();
+
+        $this->withSpin('Starting shared Mailpit (catch-all SMTP)...', function () use ($localTld) {
+            $this->applySharedService(SharedClusterService::MAILPIT, SharedClusterService::MAILPIT->hostFor($localTld));
+
+            return true;
+        });
+
+        $this->withSpin('Publishing Traefik dashboard ingress...', function () use ($localTld) {
+            $this->applySharedService(SharedClusterService::TRAEFIK_DASHBOARD, SharedClusterService::TRAEFIK_DASHBOARD->hostFor($localTld));
+
+            return true;
+        });
+
         @unlink($tmpInstall);
     }
 
     /**
      * Create the ConfigMap and Secret required for Traefik local SSL.
+     * Called once when Traefik is first installed.
      */
     protected function createTraefikInfrastructure(): void
     {
         $namespace = 'traefik';
         shell_exec("kubectl create namespace {$namespace} --dry-run=client -o yaml | kubectl apply -f -");
 
-        // 1. Create ConfigMap for Traefik dynamic configuration
+        $this->ensureSystemCertExists();
+        $this->applyTraefikCertResources($namespace);
+    }
+
+    /**
+     * Ensure this app's cert is in the Traefik cert pool.
+     * Called on every `larakube up` so new apps join automatically. Pass the
+     * project's getLocalTld() so a project-pinned TLD override gets a
+     * matching cert; omit it to fall back to the developer's global TLD.
+     *
+     * Also re-validates the system/default cert (console, traefik, mailpit,
+     * companions) against the current global TLD — without this, changing the
+     * TLD via `config:tld` left the default cert frozen on the old TLD, so
+     * shared hosts like mailpit.{tld} served a mismatched cert (no valid HTTPS)
+     * until Traefik was reinstalled. ensureSystemCertExists() is a no-op when
+     * the cert already covers the current TLD.
+     */
+    protected function refreshTraefikCerts(string $appName, ?string $tld = null): void
+    {
+        $this->ensureSystemCertExists();
+        $this->ensureAppCertExists($appName, $tld);
+        $this->applyTraefikCertResources('traefik');
+    }
+
+    /**
+     * Reconcile every cluster-wide, TLD-carrying shared artifact on a local `up`.
+     *
+     * Certs first (so every shared host below is served valid HTTPS by the
+     * default cert), then each registered SharedClusterService. The set of
+     * shared services is the single registry in the SharedClusterService enum —
+     * add a new cluster-wide global (Uptime Kuma, a status page, …) as a case
+     * there and it is reconciled here automatically, with no new method or call
+     * site. Every step is internally guarded + idempotent, so this is safe to
+     * run unconditionally on each local up — `up` is the single propagation
+     * point for a `config:tld` change.
+     */
+    protected function reconcileSharedCluster(ConfigData $config): void
+    {
+        $appName = $config->getName();
+        $tld = $config->getLocalTld();
+
+        $this->withSpin('Syncing local TLS certificates...', function () use ($appName, $tld) {
+            $this->refreshTraefikCerts($appName, $tld);
+
+            return true;
+        });
+
+        // This is the LOCAL up path, so we reconcile only the services that target
+        // the local environment (Mailpit, the Console, the Traefik dashboard, and
+        // the local Grafana ingress). Cloud-targeting reconciles (prod Grafana)
+        // are driven by their own installers (monitor:init --context).
+        //
+        // Each host is resolved through getSharedServiceHost(): a name-less GLOBAL
+        // host on the developer's global TLD by default, but a .larakube.json
+        // hosts[serviceKey] entry can override it — the same map the cloud paths
+        // read, so host resolution is data-driven, not Grafana-special-cased.
+        foreach (SharedClusterService::cases() as $service) {
+            if (! $service->targetsEnvironment('local')) {
+                continue;
+            }
+
+            $this->withSpin($service->reconcileLabel(), function () use ($service, $config) {
+                $this->applySharedService($service, $config->getSharedServiceHost($service, 'local'));
+
+                return true;
+            });
+        }
+    }
+
+    /**
+     * Render a shared service's manifest at the given host and kubectl-apply it.
+     *
+     * The caller resolves $host (via SharedClusterService::hostFor()) from the
+     * target environment's domain — the dev TLD locally, the env's real domain on
+     * a cloud cluster — so this method stays environment-agnostic.
+     *
+     * Install-gated services (those with a presenceProbe) are skipped when their
+     * probe finds nothing — `up` re-points an existing install but never auto-
+     * installs one, so a declined service stays declined. Always-on services
+     * (no probe) get their namespace auto-created first. Idempotent: an unchanged
+     * manifest is a no-op; a `config:tld` change re-points the Ingress host.
+     */
+    protected function applySharedService(SharedClusterService $service, string $host): void
+    {
+        $probe = $service->presenceProbe();
+        if ($probe !== null && trim((string) shell_exec("kubectl get {$probe} --no-headers 2>/dev/null")) === '') {
+            return;
+        }
+
+        if ($service->namespace() !== null) {
+            exec('kubectl create namespace '.escapeshellarg($service->namespace()).' --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null');
+        }
+
+        $tmp = sys_get_temp_dir()."/larakube-shared-{$service->value}.yaml";
+        file_put_contents($tmp, view($service->template(), ['host' => $host])->render());
+        shell_exec("kubectl apply -f {$tmp} 2>/dev/null");
+        @unlink($tmp);
+
+        $this->syncSharedServiceDeploymentEnv($service, $host);
+    }
+
+    /**
+     * Re-sync any host-carrying Deployment env that a service's Ingress-only
+     * reconcile doesn't touch (the Console's APP_URL/ASSET_URL). Without this a
+     * config:tld change re-points the ingress but leaves the Deployment serving
+     * on the old host until `console --update`. Idempotent: `kubectl set env`
+     * only rolls the Deployment when a value actually changes, and the whole
+     * thing is skipped unless the Deployment already exists.
+     */
+    protected function syncSharedServiceDeploymentEnv(SharedClusterService $service, string $host): void
+    {
+        $sync = $service->deploymentEnvSync($host);
+        if ($sync === null) {
+            return;
+        }
+
+        $deployment = escapeshellarg($sync['deployment']);
+        $namespace = escapeshellarg($sync['namespace']);
+
+        $exists = trim((string) shell_exec("kubectl get deployment {$deployment} -n {$namespace} --no-headers 2>/dev/null"));
+        if ($exists === '') {
+            return;
+        }
+
+        $pairs = '';
+        foreach ($sync['env'] as $key => $value) {
+            $pairs .= ' '.escapeshellarg("{$key}={$value}");
+        }
+
+        shell_exec("kubectl set env deployment {$deployment} -n {$namespace}{$pairs} 2>/dev/null");
+    }
+
+    /**
+     * Rebuild traefik-config ConfigMap and traefik-certificates Secret from all
+     * locally-generated certs, then restart Traefik to pick up changes.
+     */
+    protected function applyTraefikCertResources(string $namespace): void
+    {
+        // 1. ConfigMap — dynamic YAML listing all cert pairs
         $tmpCertsYml = sys_get_temp_dir().'/traefik-certs.yml';
-        file_put_contents($tmpCertsYml, view('traefik.dev-certs')->render());
+        file_put_contents($tmpCertsYml, $this->buildTraefikCertsYml());
+        // Server-side apply avoids storing base64 cert blobs in the
+        // last-applied-configuration annotation (256 KB limit overflows with multiple certs).
+        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply --server-side --field-manager=larakube --force-conflicts -f -");
+        @unlink($tmpCertsYml);
 
-        shell_exec("kubectl create configmap traefik-config -n {$namespace} --from-file=traefik-certs.yml={$tmpCertsYml} --dry-run=client -o yaml | kubectl apply -f -");
+        // 2. Secret — all cert files from ~/.larakube/certificates/
+        $fromFiles = ' --from-file=system-dev.pem='.escapeshellarg($this->getSystemCertPath())
+            .' --from-file=system-dev-key.pem='.escapeshellarg($this->getSystemKeyPath());
 
-        // 2. Create Secret for SSL certificates
-        $certDir = base_path('resources/views/traefik/certificates');
-        $tmpDevPem = sys_get_temp_dir().'/local-dev.pem';
-        $tmpDevKeyPem = sys_get_temp_dir().'/local-dev-key.pem';
-        file_put_contents($tmpDevPem, file_get_contents("{$certDir}/local-dev.pem"));
-        file_put_contents($tmpDevKeyPem, file_get_contents("{$certDir}/local-dev-key.pem"));
+        foreach ($this->getAllLocalAppCerts() as $appName => $paths) {
+            $fromFiles .= ' --from-file='.escapeshellarg("{$appName}-dev.pem={$paths['crt']}");
+            $fromFiles .= ' --from-file='.escapeshellarg("{$appName}-dev-key.pem={$paths['key']}");
+        }
 
-        shell_exec("kubectl create secret generic traefik-certificates -n {$namespace} --from-file=local-dev.pem={$tmpDevPem} --from-file=local-dev-key.pem={$tmpDevKeyPem} --dry-run=client -o yaml | kubectl apply -f -");
+        shell_exec("kubectl create secret generic traefik-certificates -n {$namespace}{$fromFiles} --dry-run=client -o yaml | kubectl apply --server-side --field-manager=larakube --force-conflicts -f -");
 
-        // Force Traefik to restart to pick up changes (ONLY if it exists)
+        // 3. Restart Traefik to pick up changes (only if it exists)
         $exists = shell_exec("kubectl get deployment traefik -n {$namespace} 2>/dev/null");
         if ($exists) {
             shell_exec("kubectl rollout restart deployment traefik -n {$namespace}");
         }
-
-        @unlink($tmpCertsYml);
-        @unlink($tmpDevPem);
-        @unlink($tmpDevKeyPem);
     }
 
     /**
-     * Check if Traefik is currently active in the cluster.
+     * Check if any Ingress Controller is currently active in the cluster.
+     *
+     * Tries increasingly broad detection strategies:
+     *  1. Label-based: standard ingress-controller labels (catches Helm k3s Traefik,
+     *     nginx-ingress, and any other conformant install).
+     *  2. Name-based: a LoadBalancer named "traefik" in any namespace (catches
+     *     hand-rolled installs or older templates with no labels).
+     *  3. Namespace-wide: any LoadBalancer in kube-system (last-resort catch-all).
      */
     protected function isTraefikInstalled(): bool
     {
-        return shell_exec('kubectl get svc traefik -n traefik 2>/dev/null') !== null;
+        // 1. Label-based: standard ingress-controller labels.
+        // Note: kubectl does not support combining -l (label) and --field-selector
+        // in the same call, so we use -l alone and trust the label accuracy.
+        $output = trim((string) shell_exec(
+            'kubectl get svc -A -l app.kubernetes.io/name=traefik,app.kubernetes.io/component=ingress-controller -o name 2>/dev/null',
+        ));
+
+        // 1b. Label-based: nginx-ingress variants
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -A -l app=ingress-nginx,app.kubernetes.io/name=ingress-nginx -o name 2>/dev/null',
+            ));
+        }
+
+        // 2. Name-based: a LoadBalancer named "traefik" anywhere (hand-rolled installs)
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -A --field-selector metadata.name=traefik,spec.type=LoadBalancer -o name 2>/dev/null',
+            ));
+        }
+
+        // 3. Last resort: any LoadBalancer in kube-system
+        if ($output === '') {
+            $output = trim((string) shell_exec(
+                'kubectl get svc -n kube-system --field-selector spec.type=LoadBalancer -o name 2>/dev/null',
+            ));
+        }
+
+        return $output !== '';
     }
 
     /**

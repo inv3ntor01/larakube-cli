@@ -92,7 +92,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         // Write volumes
         if ($viewName = $this->getStorageViewName()) {
             $storageDest = $this->getStorageYamlDestination();
-            $vols = view($viewName, ['config' => $config, 'driver' => $this])->render();
 
             foreach ($config->getEnvironments() as $env) {
                 // Skip envs where this service is externally managed — it has
@@ -103,6 +102,7 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
                 }
                 $dest = "overlays/$env/{$storageDest}";
                 if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
+                    $vols = view($viewName, ['config' => $config, 'driver' => $this, 'environment' => $env])->render();
                     file_put_contents("$k8sPath/{$dest}", $vols);
                 }
             }
@@ -114,21 +114,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             if (! $config->isLocked(".infrastructure/k8s/{$dest}")) {
                 $patch = view($viewName, ['config' => $config, 'driver' => $this])->render();
                 file_put_contents("$k8sPath/{$dest}", $patch);
-            }
-        }
-
-        // Write companion manifests (Local only)
-        if ($this->hasCompanion() && $config->withCompanions) {
-            $compDest = "overlays/local/{$this->value}-companion.yaml";
-            if (! $config->isLocked(".infrastructure/k8s/{$compDest}")) {
-                $content = view('k8s.companion.deployment', ['config' => $config, 'driver' => $this])->render();
-                file_put_contents("$k8sPath/{$compDest}", $content);
-            }
-
-            $ingressDest = "overlays/local/{$this->value}-companion-ingress.yaml";
-            if (! $config->isLocked(".infrastructure/k8s/{$ingressDest}")) {
-                $ingress = view('k8s.companion.ingress', ['config' => $config, 'driver' => $this])->render();
-                file_put_contents("$k8sPath/{$ingressDest}", $ingress);
             }
         }
     }
@@ -237,11 +222,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::SQLITE => [],
         };
 
-        if ($this->hasCompanion() && ($config?->withCompanions ?? true)) {
-            $manifests['local'][] = "{$this->value}-companion.yaml";
-            $manifests['local'][] = "{$this->value}-companion-ingress.yaml";
-        }
-
         return $manifests;
     }
 
@@ -268,32 +248,6 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
             self::MONGODB => 'mongo:7.0',
             self::SQLITE => '',
         };
-    }
-
-    public function getCompanionDockerImage(): ?string
-    {
-        return match ($this) {
-            self::MYSQL, self::MARIADB => 'phpmyadmin:latest',
-            self::POSTGRESQL => 'adminer:latest',
-            self::MONGODB => 'mongo-express:latest',
-            self::SQLITE => null,
-            default => null,
-        };
-    }
-
-    public function getCompanionPort(): int
-    {
-        return match ($this) {
-            self::MYSQL, self::MARIADB => 80,
-            self::POSTGRESQL => 8080,
-            self::MONGODB => 8081,
-            default => 80,
-        };
-    }
-
-    public function hasCompanion(): bool
-    {
-        return ! is_null($this->getCompanionDockerImage());
     }
 
     public function getEnvironmentVariables(?ConfigData $config = null, string $environment = 'local'): array
@@ -349,28 +303,16 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
 
     public function getHosts(ConfigData $config, string $environment = 'local'): array
     {
-        // Database admin consoles only publish in local — exposing them
-        // through cloud ingress would be a security disaster, and the
-        // dev.test pattern doesn't make sense outside k3d anyway.
-        if ($environment !== 'local') {
-            return [];
-        }
-
-        $appName = $config->getName();
-
-        return match ($this) {
-            self::MYSQL => ["mysql-{$appName}.dev.test" => 'MySQL Console'],
-            self::MARIADB => ["mariadb-{$appName}.dev.test" => 'MariaDB Console'],
-            self::POSTGRESQL => ["postgres-{$appName}.dev.test" => 'PostgreSQL Console'],
-            self::MONGODB => ["mongodb-{$appName}.dev.test" => 'MongoDB Console'],
-            self::SQLITE => [],
-            default => [],
-        };
+        // Databases publish no ingress host of their own. Admin consoles are no
+        // longer per-project — they're the shared CompanionDriver apps in
+        // larakube-system (phpmyadmin.kube, etc.), surfaced via ManagesCompanions,
+        // not a `mariadb.<project>.kube` route here. See showCompanionAccess().
+        return [];
     }
 
     /**
      * Database consoles aren't user-overrideable — they're either the
-     * baked-in local dev.test pattern or absent (in cloud envs).
+     * baked-in local .kube domains or absent (in cloud envs).
      */
     public function getHostServices(): array
     {
@@ -587,7 +529,39 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return match ($this) {
             self::POSTGRESQL => 'psql -U postgres -v ON_ERROR_STOP=1',
-            self::MYSQL, self::MARIADB => 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            self::MYSQL => 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            self::MARIADB => 'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            default => '',
+        };
+    }
+
+    /**
+     * Dump the self-hosted pod's application database to stdout (used by
+     * plex:migrate). The self-hosted app DB is always named "laravel"; env vars
+     * (MYSQL_ROOT_PASSWORD / POSTGRES_PASSWORD) are expanded by the pod's shell.
+     */
+    public function selfHostedDumpCommand(): string
+    {
+        return match ($this) {
+            self::POSTGRESQL => 'pg_dump -U postgres --no-owner --clean --if-exists laravel',
+            self::MYSQL => 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" laravel',
+            self::MARIADB => 'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" laravel',
+            default => '',
+        };
+    }
+
+    /**
+     * Restore a SQL dump (piped on stdin) into a specific database in the Commons
+     * pod. $targetDb is the tenant identifier (already created via commonsTenantSql).
+     */
+    public function commonsRestoreCommand(string $targetDb): string
+    {
+        $db = escapeshellarg($targetDb);
+
+        return match ($this) {
+            self::POSTGRESQL => "psql -U postgres -v ON_ERROR_STOP=1 -d {$db}",
+            self::MYSQL => "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            self::MARIADB => "mariadb -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
             default => '',
         };
     }
@@ -601,7 +575,8 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
     {
         return match ($this) {
             self::POSTGRESQL => "pg_dump -U postgres --no-owner {$db}",
-            self::MYSQL, self::MARIADB => "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            self::MYSQL => "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
+            self::MARIADB => "mariadb-dump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" {$db}",
             default => '',
         };
     }
@@ -611,6 +586,24 @@ enum DatabaseDriver: string implements AsDependency, HasArtisanCommands, HasComm
         // The Commons service name IS the driver value — no remapping. SQLite is
         // a local file, never a shared service.
         return $this === self::SQLITE ? null : $this->value;
+    }
+
+    public function exporterImage(): ?string
+    {
+        return match ($this) {
+            self::MYSQL, self::MARIADB => 'prom/mysqld-exporter:v0.15.1',
+            self::POSTGRESQL => 'prometheuscommunity/postgres-exporter:v0.15.0',
+            default => null,
+        };
+    }
+
+    public function exporterPort(): int
+    {
+        return match ($this) {
+            self::MYSQL, self::MARIADB => 9104,
+            self::POSTGRESQL => 9187,
+            default => 0,
+        };
     }
 
     /**

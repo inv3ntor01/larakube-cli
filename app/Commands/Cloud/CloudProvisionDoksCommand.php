@@ -3,6 +3,7 @@
 namespace App\Commands\Cloud;
 
 use App\Data\ConfigData;
+use App\Data\GlobalConfigData;
 use App\Enums\ManagedProvider;
 use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
@@ -21,7 +22,14 @@ class CloudProvisionDoksCommand extends Command
 {
     use InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithGlobalConfig, InteractsWithProjectConfig, LaraKubeOutput, PromotesIngressDns, ResolvesEnvironmentContext;
 
-    protected $signature = 'cloud:provision:doks {--context= : Target a specific kube-context}';
+    protected $signature = 'cloud:init:doks {--context= : Target a specific kube-context}';
+
+    /**
+     * Backward-compatible alias for the pre-rename command name.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['cloud:provision:doks'];
 
     protected $description = 'Provision a DigitalOcean Kubernetes (DOKS) cluster with Traefik and Let\'s Encrypt TLS';
 
@@ -137,11 +145,14 @@ class CloudProvisionDoksCommand extends Command
         // Managed target + storageClass — no provider prompt, we know it's DOKS.
         $config = $this->recordManagedTarget($config, $environment, $projectPath, $context, ManagedProvider::DOKS);
 
-        // Web domain — skip the {name}.com placeholder and any local .dev.test host.
+        // Web domain — skip the {name}.com placeholder and any local .kube host.
         $currentHost = $config->getHost($environment, 'web');
+        $localTldPatterns = array_map(fn ($t) => '.'.$t, GlobalConfigData::ALLOWED_TLDS);
+        $isLocalHost = str_contains((string) $currentHost, '.dev.test')
+            || collect($localTldPatterns)->contains(fn ($p) => str_contains((string) $currentHost, $p));
         $isPlaceholder = ! $currentHost
             || $currentHost === "{$config->getName()}.com"
-            || str_contains((string) $currentHost, '.dev.test');
+            || $isLocalHost;
 
         $host = text(
             label: "Web domain for '{$environment}'",

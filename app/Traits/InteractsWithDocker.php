@@ -59,7 +59,7 @@ trait InteractsWithDocker
     {
 
         $appName = basename($path);
-        $localImage = "$appName:latest";
+        $localImage = "$appName:local";
 
         // Check if we have a local image, otherwise fallback to base
         $imageExists = shell_exec("docker images -q {$localImage} 2>/dev/null");
@@ -88,7 +88,7 @@ trait InteractsWithDocker
         $path = $config->getPath();
 
         // Build Primary Project Image (Includes PHP, Node, and correct permissions)
-        $this->buildTargetedImage($appName, "$path/Dockerfile.php", $path, $uid, $gid);
+        $this->buildTargetedImage("$appName:local", "$path/Dockerfile.php", $path, $uid, $gid);
     }
 
     /**
@@ -111,13 +111,12 @@ trait InteractsWithDocker
         return $cluster !== '' ? $cluster : null;
     }
 
-    protected function buildTargetedImage(string $tag, string $dockerfile, string $path, int $uid, int $gid): void
+    protected function buildTargetedImage(string $imageTag, string $dockerfile, string $path, int $uid, int $gid): void
     {
         if (! file_exists($dockerfile)) {
             return;
         }
 
-        $imageTag = "$tag:latest";
         $this->laraKubeInfo("Building local image '$imageTag'...");
 
         $target = '';
@@ -308,7 +307,7 @@ trait InteractsWithDocker
         $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
 
         $appName = basename($path);
-        $image = "$appName:latest";
+        $image = "$appName:local";
 
         // Fallback if image doesn't exist
         $imageExists = shell_exec("docker images -q {$image} 2>/dev/null");

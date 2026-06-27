@@ -7,4 +7,4 @@ metadata:
 spec:
   tls:
     - hosts:
-        - {{ $config->getName() }}.dev.test
+        - {{ $config->getWebHost('local') }}

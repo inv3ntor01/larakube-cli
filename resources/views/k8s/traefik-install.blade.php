@@ -139,6 +139,10 @@ kind: Service
 metadata:
   name: traefik
   namespace: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: ingress-controller
+    app.kubernetes.io/managed-by: larakube
 spec:
   type: LoadBalancer
   selector:
@@ -154,28 +158,8 @@ spec:
       port: 8080
       name: admin
 
----
-
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: traefik-dashboard
-  namespace: traefik
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  rules:
-    - host: traefik.dev.test
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: traefik
-                port:
-                  number: 8080
-  tls:
-    - hosts:
-        - traefik.dev.test
+{{-- The traefik-dashboard Ingress (traefik.{tld}) is intentionally NOT here.
+     Its host carries the TLD, so it must be re-applied on every `up` (not
+     written once at install) or a `config:tld` change leaves it stale. It
+     lives in k8s/traefik-dashboard.blade.php (the SharedClusterService::TRAEFIK_DASHBOARD
+     case), reconciled by InteractsWithTraefik::reconcileSharedCluster(). --}}

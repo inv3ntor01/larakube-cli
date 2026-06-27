@@ -25,7 +25,7 @@ interface HasHosts
      *
      * Local-only consoles (database UIs, Mailpit, etc.) typically return []
      * here even when they publish hosts in getHosts() — they're baked into
-     * the dev.test pattern and aren't meaningful in cloud envs.
+     * the local .kube domains and aren't meaningful in cloud envs.
      *
      * @return array<string, string> Key: service name, Value: human label.
      */

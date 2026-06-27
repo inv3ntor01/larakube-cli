@@ -7,6 +7,8 @@ use App\Enums\AiProvider;
 
 trait InteractsWithGlobalConfig
 {
+    use InteractsWithOs;
+
     protected function getGlobalConfig(): GlobalConfigData
     {
         return GlobalConfigData::load();
@@ -14,29 +16,35 @@ trait InteractsWithGlobalConfig
 
     protected function getGhConfigPath(): string
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-
-        return $home.'/.larakube/gh-config';
+        return home_path('.larakube/gh-config');
     }
 
     protected function getGhCommand(?string $workDir = null, bool $interactive = false): string
     {
-        // 1. Check for local 'gh' installation (robust check)
-        $localGh = trim(shell_exec('command -v gh 2>/dev/null') ?? '');
-        if ($localGh && @is_executable($localGh)) {
-            return $localGh;
+        // command -v uses the non-interactive shell PATH which may miss tools
+        // installed by Homebrew or similar. Check common locations as a fallback.
+        $candidates = array_filter([
+            trim(shell_exec('command -v gh 2>/dev/null') ?? ''),
+            '/usr/local/bin/gh',
+            '/opt/homebrew/bin/gh',
+            '/home/linuxbrew/.linuxbrew/bin/gh',
+        ]);
+
+        foreach ($candidates as $path) {
+            if ($path !== '' && @is_executable($path)) {
+                return $path;
+            }
         }
 
-        // 2. Fallback to Docker
+        // Fall back to running gh inside a throw-away Docker container.
         return $this->getGhDockerCommand($workDir, $interactive);
     }
 
     protected function getGhDockerCommand(?string $workDir = null, bool $interactive = false): string
     {
         $workDir = $workDir ?? getcwd();
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
         $ghConfigPath = $this->getGhConfigPath();
-        $dockerConfigPath = $home.'/.docker';
+        $dockerConfigPath = home_path('.docker');
 
         if (! is_dir($ghConfigPath)) {
             @mkdir($ghConfigPath, 0700, true);
@@ -66,13 +74,25 @@ trait InteractsWithGlobalConfig
 
     protected function getDefaultEmail(): string
     {
-        return 'admin@larakube.dev.test';
+        return 'admin@example.com';
     }
 
     protected function setEmail(string $email): void
     {
         $config = $this->getGlobalConfig();
         $config->setEmail($email);
+        $config->save();
+    }
+
+    protected function getLocalTld(): string
+    {
+        return $this->getGlobalConfig()->getLocalTld();
+    }
+
+    protected function setLocalTld(string $tld): void
+    {
+        $config = $this->getGlobalConfig();
+        $config->setLocalTld($tld);
         $config->save();
     }
 
@@ -108,15 +128,13 @@ trait InteractsWithGlobalConfig
 
     protected function checkCaTrust(): bool
     {
-        $os = PHP_OS_FAMILY;
-
-        if ($os === 'Darwin') {
+        if ($this->isDarwin()) {
             $output = shell_exec('security find-certificate -c "Server Side Up CA" 2>/dev/null');
 
             return ! empty($output);
         }
 
-        if ($os === 'Linux') {
+        if ($this->isLinux()) {
             return file_exists('/usr/local/share/ca-certificates/larakube-local-ca.crt');
         }
 

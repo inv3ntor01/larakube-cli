@@ -2,6 +2,7 @@
 
 namespace App\Commands\Traefik;
 
+use App\Data\GlobalConfigData;
 use App\Traits\InteractsWithHosts;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\LaraKubeOutput;
@@ -38,9 +39,10 @@ class DashboardCommand extends Command
         $this->laraKubeInfo('Opening Traefik Network Dashboard...');
 
         // 🛡 Automated Host Mapping & SSL Trust
-        $this->ensureHostsAreSet(['traefik.dev.test'], 'larakube-system');
+        $tld = GlobalConfigData::load()->getLocalTld();
+        $this->ensureHostsAreSet(['traefik.'.$tld], 'larakube-system');
 
-        $url = 'https://traefik.dev.test/dashboard/';
+        $url = 'https://traefik.'.$tld.'/dashboard/';
 
         if (! $this->isSslTrusted()) {
             $this->newLine();

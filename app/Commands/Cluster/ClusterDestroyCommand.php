@@ -3,6 +3,7 @@
 namespace App\Commands\Cluster;
 
 use App\Traits\LaraKubeOutput;
+use App\Traits\PrunesKubeContext;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -11,7 +12,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class ClusterDestroyCommand extends Command
 {
-    use LaraKubeOutput;
+    use LaraKubeOutput, PrunesKubeContext;
 
     /**
      * The name and signature of the console command.
@@ -56,6 +57,11 @@ class ClusterDestroyCommand extends Command
     protected function destroyK3d(): int
     {
         $this->withSpin('Deleting k3d cluster...', fn () => passthru('k3d cluster delete larakube'));
+
+        // Remove the stale kubeconfig entry so a later cluster:setup is seamless
+        // (otherwise a dangling current-context breaks k9s/kubectl on WSL).
+        $this->pruneKubeContext(['k3d-larakube']);
+
         $this->laraKubeInfo('✅ k3d cluster destroyed.');
 
         return 0;
@@ -68,6 +74,10 @@ class ClusterDestroyCommand extends Command
 
             return 1;
         }
+
+        // Prune the kubeconfig context BEFORE uninstalling — k3s-uninstall.sh may
+        // remove the k3s-provided kubectl, so do it while kubectl is still around.
+        $this->pruneKubeContext(['k3s-larakube']);
 
         $this->withSpin('Uninstalling k3s...', fn () => passthru('/usr/local/bin/k3s-uninstall.sh'));
         $this->laraKubeInfo('✅ k3s service uninstalled.');

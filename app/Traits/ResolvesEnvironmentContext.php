@@ -24,7 +24,7 @@ use function Laravel\Prompts\text;
  */
 trait ResolvesEnvironmentContext
 {
-    /** The kube-context cloud:provision creates for a host. Pure. */
+    /** The kube-context cloud:init creates for a host. Pure. */
     public function environmentContextName(string $ip): string
     {
         return 'larakube-'.$ip;
@@ -137,7 +137,7 @@ trait ResolvesEnvironmentContext
         $user = text(label: 'SSH user', default: 'larakube', required: true);
         $port = (int) text(label: 'SSH port', default: '22', required: true);
         $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+        $key = str_replace('~', home_path(), $key);
 
         $data = $config->toArray();
         $data['environments'][$environment]['cloud'] = [
@@ -148,7 +148,7 @@ trait ResolvesEnvironmentContext
         ];
         ConfigData::from($data)->saveToFile($projectPath);
 
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future commands won't ask again.");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud) — future commands won't ask again.");
 
         return $this->getProjectConfig($projectPath);
     }
@@ -182,7 +182,7 @@ trait ResolvesEnvironmentContext
         $user = text(label: 'SSH user', default: 'larakube', required: true);
         $port = (int) text(label: 'SSH port', default: '22', required: true);
         $key = text(label: 'SSH private key path', default: home_path('.ssh/id_rsa'), required: true);
-        $key = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $key);
+        $key = str_replace('~', home_path(), $key);
 
         $data['environments'][$environment]['cloud'] = [
             'ip' => $m[1],
@@ -192,7 +192,7 @@ trait ResolvesEnvironmentContext
         ];
 
         ConfigData::from($data)->saveToFile($projectPath);
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud) — future commands won't ask again.");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud) — future commands won't ask again.");
 
         return $this->getProjectConfig($projectPath);
     }
@@ -200,7 +200,7 @@ trait ResolvesEnvironmentContext
     /**
      * Persist a MANAGED deploy target ({context, provider}) for an environment and
      * default its storageClass from the provider — no provider prompt, for callers
-     * that already know it (e.g. `cloud:provision:doks`). Returns the reloaded config.
+     * that already know it (e.g. `cloud:init:doks`). Returns the reloaded config.
      */
     protected function recordManagedTarget(ConfigData $config, string $environment, string $projectPath, string $context, ManagedProvider $provider): ConfigData
     {
@@ -227,7 +227,7 @@ trait ResolvesEnvironmentContext
         }
 
         ConfigData::from($data)->saveToFile($projectPath);
-        $this->laraKubeInfo("Saved to .larakube.json (environments.{$environment}.cloud).");
+        $this->laraKubeInfo("Saved to .larakube.local.json (environments.{$environment}.cloud).");
 
         return $this->getProjectConfig($projectPath);
     }

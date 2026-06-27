@@ -103,7 +103,7 @@ trait InteractsWithClusterContext
         $context = trim($context);
 
         // 'k3s-larakube' is the context name cluster:setup gives a *local* native
-        // k3s install. Remote k3s (cloud:provision) is named "larakube-<ip>", so
+        // k3s install. Remote k3s (cloud:init) is named "larakube-<ip>", so
         // it stays correctly classified as non-local.
         $localKeywords = ['k3d', 'minikube', 'docker-desktop', 'orbstack', 'kind', 'colima', 'k3s-larakube'];
 
@@ -200,5 +200,28 @@ trait InteractsWithClusterContext
         }
 
         return true;
+    }
+
+    /**
+     * Warn and require explicit confirmation before running a local-cluster-only
+     * action (Traefik, Mailpit) against a context that doesn't look local.
+     * Unlike a command's own `--force` flag, this alert is never silently
+     * skippable — `--force` should only skip the generic "are you sure", not
+     * the "you're about to do this on what looks like the wrong cluster" check.
+     */
+    protected function confirmLocalOnlyAction(string $action): bool
+    {
+        if ($this->isLocalContext()) {
+            return true;
+        }
+
+        $context = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? 'Unknown');
+
+        $this->laraKubeWarn('🚨 SECURITY ALERT: Current Kubernetes context does not look local!');
+        $this->line("   Context: <fg=cyan;options=bold>{$context}</>");
+        $this->line("   {$action} is local-dev infrastructure and should not run on a remote/production cluster.");
+        $this->newLine();
+
+        return confirm('Are you ABSOLUTELY sure you want to proceed?', false);
     }
 }

@@ -15,10 +15,18 @@ function remoteDeploy(): object
     return new class
     {
         use InteractsWithRemoteDeploy;
+
+        // Pin to the `kubectl kustomize` fallback so the command-builder assertions are
+        // deterministic regardless of whether a standalone kustomize is installed on the
+        // test host. The standalone form is covered by InteractsWithKustomizeTest.
+        protected function kustomizeBin(): ?string
+        {
+            return null;
+        }
     };
 }
 
-test('the per-host context name matches what cloud:provision creates', function () {
+test('the per-host context name matches what cloud:init creates', function () {
     expect(remoteDeploy()->remoteContextName('159.223.43.95'))->toBe('larakube-159.223.43.95');
 });
 
@@ -68,6 +76,22 @@ test('the registry build honours the resolved platform and defaults to amd64', f
         ->toContain('--platform linux/amd64');   // unchanged default
 });
 
+test('a dotenv secret path is passed as a BuildKit --secret flag when provided', function () {
+    $cmd = remoteDeploy()->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj', 'linux/amd64', '/tmp/lk_dotenv_build_xyz');
+
+    expect($cmd)
+        ->toContain("--secret id=dotenv,src='/tmp/lk_dotenv_build_xyz'")
+        ->toContain('--target deploy')
+        ->toContain('--load')
+        ->not->toContain('--build-arg');
+});
+
+test('no --secret flag appears when no dotenv path is given', function () {
+    $cmd = remoteDeploy()->buildProductionImageCommand('app:prod', '/proj/Dockerfile.php', '/proj');
+
+    expect($cmd)->not->toContain('--secret');
+});
+
 test('the sideload streams the saved image into the remote k3s containerd', function () {
     $r = remoteDeploy();
     $ssh = $r->sshBaseCommand('larakube', '159.223.43.95', 22, '/home/me/.ssh/id_rsa');
@@ -84,7 +108,8 @@ test('apply rewrites the local :latest tag to the sideloaded tag, on the env con
     );
 
     expect($cmd)
-        ->toContain("kubectl --context 'larakube-159.223.43.95' kustomize")
+        ->toContain('kubectl kustomize')                                       // build renders locally — no --context needed
+        ->not->toContain("--context 'larakube-159.223.43.95' kustomize")       // context only on the apply
         ->toContain('sed')
         ->toContain('s|image: app-one:latest|image: app-one:abc123|g')
         ->toContain("kubectl --context 'larakube-159.223.43.95' apply -f -");
@@ -96,7 +121,8 @@ test('the scoped apply drives kubectl via the scoped kubeconfig, not a named con
     );
 
     expect($cmd)
-        ->toContain("KUBECONFIG='/tmp/lk_kubeconfig_x' kubectl kustomize")
+        ->toContain('kubectl kustomize')                                       // build renders locally — no kubeconfig needed
+        ->not->toContain("KUBECONFIG='/tmp/lk_kubeconfig_x' kubectl kustomize") // kubeconfig only on the apply
         ->toContain('s|image: app-one:latest|image: app-one:abc123|g')
         ->toContain("KUBECONFIG='/tmp/lk_kubeconfig_x' kubectl apply -f -")
         ->not->toContain('--context')      // never falls back to the admin context

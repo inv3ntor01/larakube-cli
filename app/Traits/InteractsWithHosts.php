@@ -2,11 +2,39 @@
 
 namespace App\Traits;
 
+use App\Data\GlobalConfigData;
+use App\Enums\SharedClusterService;
+
 use function Laravel\Prompts\confirm;
 
 trait InteractsWithHosts
 {
-    use DetectsWsl, InteractsWithProjectConfig, LaraKubeOutput;
+    use DetectsWsl, InteractsWithOs, InteractsWithProjectConfig, InteractsWithTrust, LaraKubeOutput;
+
+    /**
+     * Resolve the externally-reachable IP for cluster ingress.
+     *
+     * Tries LoadBalancer IP first (cloud / Docker Desktop), then falls back to
+     * the node's InternalIP. On WSL2 + native k3s the LoadBalancer has no
+     * external IP assigned, so the node IP is the only reliable address that
+     * works from both WSL and the Windows browser.
+     */
+    protected function resolveIngressIp(): string
+    {
+        // Prefer the LoadBalancer IP when cloud assigns one.
+        $lbIp = trim((string) shell_exec(
+            "kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null",
+        ));
+        if ($lbIp !== '') {
+            return $lbIp;
+        }
+
+        // Fall back to the node's InternalIP — the canonical routable address
+        // for WSL2 / bare-metal k3s where no cloud LoadBalancer IP exists.
+        return trim((string) shell_exec(
+            "kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}' 2>/dev/null",
+        )) ?: '127.0.0.1';
+    }
 
     /**
      * Check and optionally update the hosts file(s) based on project context.
@@ -20,6 +48,7 @@ trait InteractsWithHosts
     {
         $projectPath = getcwd();
         $appName = $customAppName ?? basename($projectPath);
+        $config = null;
 
         if (empty($customHosts)) {
             $config = $this->getProjectConfig($projectPath);
@@ -40,24 +69,34 @@ trait InteractsWithHosts
             return;
         }
 
+        // If dnsmasq is already wildcarding this project's TLD (its own pinned
+        // override, or the developer's global default), individual /etc/hosts
+        // entries are redundant — skip the prompt entirely.
+        $tld = $config?->getLocalTld() ?? GlobalConfigData::load()->getLocalTld();
+
+        if ($this->dnsmasqCoversKube($tld)) {
+            return;
+        }
+
+        // dnsmasq is set up but doesn't know about this TLD yet (e.g. this project
+        // pinned a different TLD than the global default) — offer to extend it
+        // instead of falling straight to /etc/hosts. Additive only: the TLDs it
+        // already covers stay covered.
+        if ($this->isDnsmasqInstalled()
+            && confirm("dnsmasq is set up but doesn't cover .{$tld} yet — extend it to cover this project too? (requires sudo)")
+        ) {
+            $this->configureDnsmasq($tld);
+
+            return;
+        }
+
         // 🪟 WSL: the Windows browser can't see WSL's /etc/hosts, so also sync
         // the Windows hosts file. Done first/independently of the Linux sync.
         if ($this->isWsl()) {
             $this->ensureWindowsHostsAreSet($requiredHosts, $appName);
         }
 
-        // 🛡 SMART IP DETECTION
-        // On Mac and Windows, Docker Desktop/OrbStack maps published ports to 127.0.0.1.
-        // On Linux, we use the actual LoadBalancer IP because it's natively routable.
-        $isLinux = PHP_OS_FAMILY === 'Linux';
-        $externalIp = '127.0.0.1';
-
-        if ($isLinux) {
-            $detectedIp = shell_exec("kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null");
-            if (! empty($detectedIp)) {
-                $externalIp = $detectedIp;
-            }
-        }
+        $externalIp = $this->resolveIngressIp();
         $hostList = implode(' ', $requiredHosts);
         $newEntry = "$externalIp $hostList";
         $blockIdentifier = "# LaraKube: $appName";
@@ -113,13 +152,137 @@ trait InteractsWithHosts
     }
 
     /**
+     * Sync cluster-wide shared service hosts (Mailpit, Traefik dashboard, Console,
+     * Grafana) into /etc/hosts and the Windows hosts file on WSL.
+     *
+     * Called after reconcileSharedCluster() in UpCommand, so the shared services
+     * are already deployed. Without this, their ingress hosts existed only in the
+     * cluster and were never written to the local hosts file — browsers couldn't
+     * resolve them.
+     *
+     * Unlike ensureHostsAreSet() this is fully automated (no confirm prompt) because
+     * the hosts are managed by LaraKube itself, not user project config, and they
+     * only contain the cluster ingress IP (not a wildcard catch-all).
+     */
+    protected function syncClusterServiceHosts(): void
+    {
+        $domain = GlobalConfigData::load()->getLocalTld();
+
+        $hosts = [];
+        foreach (SharedClusterService::cases() as $service) {
+            if (! $service->targetsEnvironment('local')) {
+                continue;
+            }
+            $hosts[] = $service->host($domain);
+        }
+
+        if ($hosts === []) {
+            return;
+        }
+
+        // On WSL also sync the Windows hosts file (browsers run on Windows, not WSL).
+        if ($this->isWsl()) {
+            $this->syncWindowsHosts($hosts, 'larakube-shared');
+        }
+
+        $this->syncHostsEntries($hosts, 'larakube-shared');
+    }
+
+    /**
+     * Write a list of hosts to /etc/hosts for the given app name block.
+     * Automated (no confirm prompt) — caller owns the UX decision.
+     *
+     * @param  array<int, string>  $hosts
+     */
+    protected function syncHostsEntries(array $hosts, string $appName): void
+    {
+        if ($hosts === [] || ! file_exists('/etc/hosts')) {
+            return;
+        }
+
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $hosts);
+        $blockId = "# LaraKube: {$appName}";
+        $current = (string) file_get_contents('/etc/hosts');
+        $updated = $this->applyHostsBlock($current, $blockId, $entry);
+
+        if (rtrim($updated) === rtrim($current)) {
+            return;
+        }
+
+        $tmpPath = sys_get_temp_dir().'/larakube_hosts';
+        file_put_contents($tmpPath, $updated);
+        exec("sudo cp $tmpPath /etc/hosts");
+        @unlink($tmpPath);
+    }
+
+    /**
+     * Write cluster-wide shared service hosts to the Windows hosts file from WSL.
+     * Idempotent: skips if already up to date.
+     *
+     * @param  array<int, string>  $hosts
+     */
+    protected function syncWindowsHosts(array $hosts, string $appName): void
+    {
+        $winHosts = '/mnt/c/Windows/System32/drivers/etc/hosts';
+        if (! file_exists($winHosts)) {
+            return;
+        }
+
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $hosts);
+        $blockId = "# LaraKube: {$appName}";
+        $current = (string) file_get_contents($winHosts);
+        $updated = $this->applyHostsBlock($current, $blockId, $entry);
+
+        if (rtrim($updated) === rtrim($current)) {
+            return;
+        }
+
+        $contentTmp = sys_get_temp_dir().'/larakube_win_hosts';
+        $scriptTmp = sys_get_temp_dir().'/larakube_win_hosts_sync.ps1';
+        file_put_contents($contentTmp, $updated);
+
+        $winContent = trim((string) shell_exec('wslpath -w '.escapeshellarg($contentTmp).' 2>/dev/null'));
+        if ($winContent === '') {
+            @unlink($contentTmp);
+
+            return;
+        }
+
+        file_put_contents(
+            $scriptTmp,
+            "Copy-Item -LiteralPath '{$winContent}' -Destination 'C:\\Windows\\System32\\drivers\\etc\\hosts' -Force\n",
+        );
+        $winScript = trim((string) shell_exec('wslpath -w '.escapeshellarg($scriptTmp).' 2>/dev/null'));
+
+        if ($winScript === '') {
+            @unlink($contentTmp);
+            @unlink($scriptTmp);
+
+            return;
+        }
+
+        $startProcess = 'Start-Process -FilePath powershell -Verb RunAs -Wait '
+            ."-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{$winScript}'";
+
+        exec('powershell.exe -NoProfile -Command '.escapeshellarg($startProcess).' 2>/dev/null');
+
+        @unlink($contentTmp);
+        @unlink($scriptTmp);
+    }
+
+    /**
      * Sync project domains into the Windows hosts file from WSL.
      *
      * The Windows hosts file requires Administrator rights, so we don't write to
      * /mnt/c/... directly (it would fail with permission denied). Instead we drop
      * a tiny .ps1 and run it elevated via PowerShell's Start-Process -Verb RunAs
-     * (the standard UAC prompt). Windows reaches the WSL2 cluster ingress on
-     * 127.0.0.1, so that's the mapped address.
+     * (the standard UAC prompt).
+     *
+     * On WSL2 with native k3s, the ingress runs on the WSL node's InternalIP
+     * (e.g. 172.31.x.x) — NOT 127.0.0.1 — because Windows and WSL have separate
+     * loopback interfaces. Windows can reach the WSL node IP directly.
      *
      * @param  array<int, string>  $requiredHosts
      */
@@ -132,7 +295,8 @@ trait InteractsWithHosts
         }
 
         $blockIdentifier = "# LaraKube: $appName";
-        $entry = '127.0.0.1 '.implode(' ', $requiredHosts);
+        $ingressIp = $this->resolveIngressIp();
+        $entry = "{$ingressIp} ".implode(' ', $requiredHosts);
 
         $current = (string) file_get_contents($winHosts);
         $updated = $this->applyHostsBlock($current, $blockIdentifier, $entry);
@@ -215,6 +379,31 @@ trait InteractsWithHosts
         $stripped = $stripped ?? $current;
 
         return rtrim($stripped)."\n\n{$blockIdentifier}\n{$entryLine}\n";
+    }
+
+    /**
+     * True when dnsmasq is already wildcarding *.{tld} → 127.0.0.1 locally,
+     * meaning individual /etc/hosts entries would be redundant.
+     */
+    protected function dnsmasqCoversKube(?string $tld = null): bool
+    {
+        $tld = $tld ?? GlobalConfigData::load()->getLocalTld();
+
+        if ($this->isDarwin()) {
+            if (! file_exists('/etc/resolver/'.$tld)) {
+                return false;
+            }
+            $result = shell_exec('dscacheutil -q host -a name larakube-probe.'.$tld.' 2>/dev/null');
+
+            return $result !== null && str_contains((string) $result, '127.0.0.1');
+        }
+
+        if (! file_exists('/etc/dnsmasq.d/larakube.conf')) {
+            return false;
+        }
+        $result = shell_exec('getent hosts larakube-probe.'.$tld.' 2>/dev/null');
+
+        return $result !== null && str_contains((string) $result, '127.0.0.1');
     }
 
     /**

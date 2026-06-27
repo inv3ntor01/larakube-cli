@@ -66,19 +66,77 @@ local-dev tunneling story — different use case.)
 - `cloud:provision` already installs k3s + hardens — should mostly "just work"
   on a Pi once arch is handled and SSH is reachable.
 
+## 📦 Bundle path is actually the *better* Pi deploy story
+
+`cloud:deploy` requires Docker on the Pi and a live SSH connection during the
+build. The **bundle path** sidesteps both:
+
+- Build on your Mac (`bundle:build airgap --arch=arm64`) — native arm64 build on
+  Apple Silicon, no emulation.
+- Copy to the Pi via SD card, USB stick, or `rsync` over LAN.
+- `sudo ./larakube bundle:install` on the Pi — installs k3s offline, imports all
+  images, generates certs. No Docker, no internet required.
+
+This means the airgap bundle feature and the Pi story are the **same feature**.
+The bundle already supports `--arch=arm64`; the only missing piece is the tunnel.
+
+## 🌐 Cloudflare Tunnel — Phase 3 design
+
+CGNAT (common in PH ISPs and most home connections worldwide) blocks all inbound
+traffic, so port-forwarding and Let's Encrypt HTTP-01 are both dead ends. The
+correct answer is **Cloudflare Tunnel** (`cloudflared`): the Pi dials *out* to
+Cloudflare's edge; Cloudflare handles DNS, TLS, and inbound routing. No static
+IP, no open ports, free tier.
+
+### How it would integrate
+
+**`bundle:build --tunnel` (or env-level flag)**
+- Download `cloudflared` binary for target arch from GitHub releases.
+- Write a `cloudflared-install.sh` helper into the bundle (configures systemd service).
+- Record `tunnelEnabled: true` in `bundle.json`.
+
+**`bundle:install` — tunnel branch**
+- If `cloudflared` binary exists in bundle dir:
+  - Prompt for the Cloudflare **tunnel token** (user creates the tunnel on
+    dash.cloudflare.com → Zero Trust → Networks → Tunnels, copies the token).
+  - Install `cloudflared` to `/usr/local/bin/cloudflared`.
+  - Write `/etc/systemd/system/cloudflared.service` with the token.
+  - `systemctl enable --now cloudflared`.
+  - Skip the self-signed CA step entirely — Cloudflare terminates TLS at the
+    edge with a real cert; internal traffic Pi→Cloudflare is already encrypted
+    by the tunnel.
+
+**Traefik adjustment**
+- When tunnel mode is active, Traefik only needs to listen on an internal port
+  (e.g. `8080`) — no need to bind 443 publicly.
+- Cloudflare Tunnel routes `https://app.yourdomain.com → http://localhost:8080`.
+- `larakube-reset` should also stop/disable `cloudflared.service`.
+
+### What the user needs
+1. A Cloudflare account (free).
+2. A domain pointed at Cloudflare (can be a cheap `.com` or a free subdomain via
+   Cloudflare for Teams if they don't have one).
+3. Create the tunnel in the dashboard, copy the token — that's it.
+
+No router access, no ISP cooperation, no static IP purchase.
+
 ## 🚦 Phases
 
-1. **Arch-aware deploy** — node-arch detection + `cloud.arch` override; thread the
-   platform through the buildx commands. (The real unlock.)
-2. **Pi quickstart docs** — `deployment/raspberry-pi.md`: provision over LAN SSH,
-   cgroups note, LAN-vs-internet, Cloudflare Tunnel for CGNAT, TLS implications,
-   and the "move it to DOKS" upgrade path (the portability promise in action).
-3. **(Later) Tunnel integration** — optional Cloudflare-Tunnel wiring so edge
-   nodes are internet-reachable without port-forwarding.
+1. **Arch-aware deploy** ✅ BUILT — node-arch detection + `cloud.arch` override.
+2. **Pi quickstart docs** — `deployment/raspberry-pi.md`: cgroups note,
+   bundle-path walkthrough, LAN vs internet, Cloudflare Tunnel for CGNAT,
+   and the "move to DOKS" upgrade path.
+3. **Cloudflare Tunnel integration** ✅ BUILT — `--tunnel` on `bundle:build`
+   downloads cloudflared for target arch + sets `tunnelEnabled: true` in
+   `bundle.json`; `bundle:install` prompts for token, installs
+   `/usr/local/bin/cloudflared`, writes `/etc/systemd/system/cloudflared.service`,
+   runs `systemctl enable --now cloudflared`; `larakube-reset` stops/removes it.
+   Manual test §21 in `plans/testing-checklist.md` (Manual Test Guide section).
 
 ## ✅ Verification
 
-- Deploy the same blueprint to a Pi (arm64) — image builds `linux/arm64`,
-  side-loads, pod runs (no `exec format error`).
-- Re-target the env at a DOKS context + registry and `cloud:deploy` — the *same*
-  project lands on managed Kubernetes with no blueprint changes beyond the target.
+- `bundle:build airgap --arch=arm64 --tunnel` on Apple Silicon Mac.
+- Copy bundle to Pi, run `bundle:install` — enter Cloudflare tunnel token.
+- App is live at `https://app.yourdomain.com` with a real cert, no port-forwarding.
+- Re-target the env at DOKS + registry and `cloud:deploy` — same blueprint, no
+  changes beyond the deploy target (the portability promise).

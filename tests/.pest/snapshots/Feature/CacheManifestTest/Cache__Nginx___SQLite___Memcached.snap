@@ -57,8 +57,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -137,7 +137,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: memcached-test.dev.test
+    - host: memcached-test.kube
       http:
         paths:
           - path: /
@@ -149,7 +149,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
 
 
 --- FILE: base/memcached-deployment.yaml ---
@@ -287,6 +287,11 @@ resources:
 patches:
   - path: patches.yaml
 
+images:
+  - name: memcached-test:latest
+    newName: memcached-test
+    newTag: local
+
 
 --- FILE: overlays/local/patches.yaml ---
 ---
@@ -388,7 +393,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -434,8 +439,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -459,7 +464,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: memcached-test.dev.test
+    - host: memcached-test.kube
       http:
         paths:
           - path: /
@@ -471,7 +476,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - memcached-test.dev.test
+        - memcached-test.kube
       secretName: memcached-test-tls
 
 
@@ -491,6 +496,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: memcached-test:latest
+    newName: memcached-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

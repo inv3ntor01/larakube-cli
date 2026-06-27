@@ -10,6 +10,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ResolvesEnvironmentContext;
 
+use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
@@ -43,13 +44,17 @@ class PlexLeaveCommand extends Command
 
         $env = (string) $this->argument('environment');
         if ($env === 'local') {
-            $this->laraKubeError('Plex is a cloud topology — pick a cloud environment.');
+            $this->laraKubeWarn('You are leaving Plex in a local environment.');
+            $this->line('  <fg=gray>Local Plex commons data is ephemeral and lost on <fg=yellow>larakube down</>.</>');
+            $this->newLine();
 
-            return 1;
+            if (! confirm('Continue anyway?', false)) {
+                return 0;
+            }
         }
 
         $appName = $config->getName();
-        $tenant = $this->plexTenantIdentifier($appName);
+        $tenant = $this->plexTenantIdentifier($appName, $env);
 
         // Target the env's own Commons context (no switching); fall back to the
         // current context if no deploy target is recorded.

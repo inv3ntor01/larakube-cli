@@ -30,7 +30,7 @@ class CloudHardenCommand extends Command
         // Pull the server from a project env when we can; otherwise ask.
         [$user, $ip, $port, $keyPath] = $this->resolveConnection();
 
-        $keyPath = str_replace('~', $_SERVER['HOME'] ?? getenv('HOME'), $keyPath);
+        $keyPath = str_replace('~', home_path(), $keyPath);
         if (! file_exists($keyPath)) {
             $this->laraKubeError("SSH key not found at: {$keyPath}");
 
@@ -82,7 +82,7 @@ class CloudHardenCommand extends Command
 
     /**
      * SSH connection details — from a project env's cloud config when present,
-     * else prompted (so the command also works standalone, like cloud:provision).
+     * else prompted (so the command also works standalone, like cloud:init).
      *
      * @return array{0:string,1:string,2:int,3:string}
      */

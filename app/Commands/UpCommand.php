@@ -4,6 +4,7 @@ namespace App\Commands;
 
 use App\Contracts\HasReloadCommand;
 use App\Data\ConfigData;
+use App\Traits\DeploysMonitoringExporters;
 use App\Traits\EnsuresHostDependencies;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\HasConsoleInteraction;
@@ -12,10 +13,13 @@ use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithDocker;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithHosts;
+use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithProjectConfig;
 use App\Traits\InteractsWithSslTrust;
 use App\Traits\InteractsWithTraefik;
 use App\Traits\LaraKubeOutput;
+use App\Traits\ManagesCompanions;
+use App\Traits\ManagesLocalCa;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
@@ -24,7 +28,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {
-    use EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput;
+    use DeploysMonitoringExporters, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithKustomize, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
 
     /**
      * The name and signature of the console command.
@@ -150,12 +154,17 @@ class UpCommand extends Command
                 return 1;
             }
 
+            // Ensure a kustomize that can build our multi-doc patches: probes this machine's
+            // kustomize and installs a pinned standalone only if it can't build them (k3s/WSL,
+            // or an older v5); a capable kubectl uses its own. Self-heals on upgrade.
+            $this->ensureKustomizeReady();
+
             $validationResult = ['result' => 0, 'output' => []];
 
             $this->withSpin('Validating Kubernetes manifests...', function () use (&$validationResult, $path) {
                 $output = [];
                 $result = 0;
-                exec("kubectl kustomize {$path} 2>&1", $output, $result);
+                exec($this->kustomizeBuildCommand($path).' 2>&1', $output, $result);
 
                 $validationResult = [
                     'result' => $result,
@@ -241,6 +250,7 @@ class UpCommand extends Command
 
         $appName = $config->getName() ?? basename($projectPath);
         $path = ".infrastructure/k8s/overlays/{$environment}";
+
         $namespace = $this->getNamespace($environment, $appName);
 
         if (! is_dir(getcwd().'/'.$path)) {
@@ -271,11 +281,23 @@ class UpCommand extends Command
                     $this->setupTraefik();
                 }
             }
+
+            // Re-apply every cluster-wide, TLD-carrying shared artifact (certs +
+            // the SharedClusterService registry: Traefik dashboard, Mailpit,
+            // Console, Grafana) so a config:tld change propagates. Each step is
+            // internally guarded + idempotent. Add new shared globals to the
+            // SharedClusterService enum — this call site never changes.
+            $this->reconcileSharedCluster($config);
+
+            // Shared services are now deployed — sync their hosts to /etc/hosts and
+            // the Windows hosts file so browsers can resolve them (Mailpit, Traefik
+            // dashboard, Console, Grafana). Automated; no confirm prompt.
+            $this->syncClusterServiceHosts();
         }
 
         // 1. Build image if local (Docker-Compose logic: only if missing or forced)
         if ($environment === 'local' && ! $this->option('no-build')) {
-            $imageTag = "{$appName}:latest";
+            $imageTag = "{$appName}:local";
 
             if ($this->option('build') || ! $this->imageExists($imageTag)) {
                 // Forced, or no image in Docker yet → build (which also sideloads).
@@ -337,18 +359,19 @@ class UpCommand extends Command
                         continue;
                     }
 
-                    // LOCAL only: filter to service connection variables (others read from .env mount).
-                    // REMOTE: include all non-secret variables (no .env mount exists).
-                    if ($environment === 'local' && ! in_array($key, $serviceConnectionNames, true)) {
-                        continue;
-                    }
-
                     // HEURISTIC GUARD: Is it a known secret OR does it look like one?
                     $isSecret = in_array($key, $knownSecrets) ||
                                 str_contains($key, 'PASSWORD') ||
                                 str_contains($key, 'SECRET') ||
                                 str_contains($key, 'KEY') ||
                                 str_contains($key, 'TOKEN');
+
+                    // LOCAL only: public (non-secret) vars are filtered to service connection
+                    // variables — the rest come from the .env file mount. Secret vars always
+                    // pass through so laravel-secrets is always created (pods require it).
+                    if ($environment === 'local' && ! $isSecret && ! in_array($key, $serviceConnectionNames, true)) {
+                        continue;
+                    }
 
                     $literal = ' --from-literal='.escapeshellarg("$key=$value");
 
@@ -407,7 +430,14 @@ class UpCommand extends Command
             exec("kubectl scale deployment --all --replicas=0 -n $namespace 2>/dev/null");
         });
 
-        passthru("kubectl apply -k $path");
+        passthru($this->kustomizeApplyCommand($path));
+
+        // 5a. If monitoring is active, deploy service-level exporters into this namespace
+        if ($this->isMonitoringActive()) {
+            $this->withSpin('Wiring monitoring exporters...', function () use ($config, $namespace) {
+                $this->ensureMonitoringExporters($config, $namespace);
+            });
+        }
 
         // 5. Restart deployments to pick up new ConfigMap/Secret changes
         $this->laraKubeInfo('Restarting deployments to apply potential configuration changes...');
@@ -429,6 +459,16 @@ class UpCommand extends Command
         }
 
         $this->renderHotReloadTip($config, $environment);
+
+        if ($environment === 'local') {
+            $this->ensureProjectCompanions($config, $appName);
+            $this->syncCompanionHosts($config);
+        }
+
+        $this->newLine();
+        $this->showServiceLinks($config, $environment);
+
+        $this->showCompanionAccess($config, $appName, $environment);
 
         $this->renderStarPrompt();
 

@@ -155,7 +155,7 @@ class EnvironmentData extends Data
          * externalized. Set true for apps that genuinely need a shared cross-node
          * folder (e.g. a sitemap written by a worker and served by web): LaraKube
          * points the shared PVC at the in-cluster NFS StorageClass (RWX) instead of
-         * an emptyDir. Requires the NFS provisioner — `larakube cloud:provision:nfs`.
+         * an emptyDir. Requires the NFS provisioner — `larakube cloud:init:nfs`.
          */
         public bool $sharedStorage = false,
         /**
@@ -170,5 +170,18 @@ class EnvironmentData extends Data
          * @var array<string, mixed>
          */
         public array $resources = [],
+        /**
+         * Mark this environment for offline / air-gapped distribution.
+         * When true, `bundle:build` will auto-select this env and the CLI
+         * ships a standalone Kustomize binary inside the tarball so the
+         * remote server never depends on its host kubectl version.
+         */
+        public bool $offline = false,
+        /**
+         * Persistent tunnel configuration for environments behind CGNAT or
+         * without open inbound ports. Null = no tunnel (direct ingress only).
+         * Configure with `larakube cloud:configure:tunnel <env>`.
+         */
+        public ?TunnelData $tunnel = null,
     ) {}
 }

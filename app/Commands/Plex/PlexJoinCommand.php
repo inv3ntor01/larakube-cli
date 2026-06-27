@@ -4,7 +4,6 @@ namespace App\Commands\Plex;
 
 use App\Contracts\PlexProvisionable;
 use App\Data\ConfigData;
-use App\Enums\DatabaseDriver;
 use App\Enums\StorageDriver;
 use App\Traits\InteractsWithPlex;
 use App\Traits\InteractsWithProjectConfig;
@@ -46,13 +45,17 @@ class PlexJoinCommand extends Command
         $env = (string) $this->argument('environment');
 
         if ($env === 'local') {
-            $this->laraKubeError('Plex is a cloud topology — local stays per-project. Pick a cloud environment.');
+            $this->laraKubeWarn('You are joining Plex in a local environment.');
+            $this->line('  <fg=gray>Plex commons data will be lost when you run <fg=yellow>larakube down</>. Use a cloud environment for persistent deployments.</>');
+            $this->newLine();
 
-            return 1;
+            if (! confirm('Continue anyway?', false)) {
+                return 0;
+            }
         }
 
         $appName = $config->getName();
-        $tenant = $this->plexTenantIdentifier($appName);
+        $tenant = $this->plexTenantIdentifier($appName, $env);
 
         // 1. Which of this app's services are Commons-eligible?
         $services = $this->resolveTenantServices($config);
@@ -66,18 +69,23 @@ class PlexJoinCommand extends Command
 
         // 2. Target the environment's OWN context (never the current/global one) —
         //    recording the deploy target once if it isn't saved yet. No switching.
-        [$config, $context] = $this->resolveEnvironmentContext($config, $env, $projectPath);
+        //    For local: skip cloud-capture; null context = current kubectl context (K3D).
+        if ($env === 'local') {
+            $context = null;
+        } else {
+            [$config, $context] = $this->resolveEnvironmentContext($config, $env, $projectPath);
 
-        if (! $context) {
-            $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:provision` (or set environments.{$env}.cloud).");
+            if (! $context) {
+                $this->laraKubeError("No deploy target for '{$env}'. Run `larakube cloud:init` (or set environments.{$env}.cloud).");
 
-            return 1;
+                return 1;
+            }
         }
 
         $this->plexContext = $context;
 
         if (! $this->environmentContextReachable($context)) {
-            $this->laraKubeError("Cluster context '{$context}' is unreachable. Check the server / re-run cloud:provision.");
+            $this->laraKubeError("Cluster context '{$context}' is unreachable. Check the server / re-run cloud:init.");
 
             return 1;
         }
@@ -271,98 +279,6 @@ class PlexJoinCommand extends Command
     }
 
     /**
-     * Ensure a Commons exists (offer to bootstrap) and that it offers every
-     * service this tenant needs.
-     */
-    protected function ensureCommons(array $services): bool
-    {
-        $spec = $this->getCommonsSpec();
-
-        if ($spec === null) {
-            if (! $this->option('yes') && ! confirm('No Commons on this cluster yet. Create one now?', true)) {
-                $this->laraKubeError('A Commons is required to join. Run `larakube plex:init` first.');
-
-                return false;
-            }
-
-            // Demand-driven bootstrap: provision EXACTLY the services this tenant
-            // needs (non-interactive via --services), on THIS env's own cluster
-            // (--context), not a blanket default on the current context.
-            $bootstrap = ['--services' => implode(',', $services)];
-            if ($this->plexContext) {
-                $bootstrap['--context'] = $this->plexContext;
-            }
-            $this->call('plex:init', $bootstrap);
-            $spec = $this->getCommonsSpec();
-
-            if ($spec === null) {
-                $this->laraKubeError('Commons bootstrap failed. Run `larakube plex:init` and retry.');
-
-                return false;
-            }
-        }
-
-        $offered = $this->enabledCommonsServices($spec);
-        $missing = array_diff($services, $offered);
-
-        if (! empty($missing)) {
-            $this->laraKubeError('The Commons does not offer: '.implode(', ', $missing).'.');
-            $this->laraKubeLine('  Re-run `larakube plex:init` to add it, then join again.');
-
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Create/refresh this tenant's database + login in the Commons via
-     * `kubectl exec` into the engine's pod. The engine-specific SQL and admin
-     * client come from the DatabaseDriver enum (commonsTenantSql /
-     * commonsAdminClient), so this one path serves Postgres, MySQL and MariaDB.
-     * `sh -c` wraps the client so the pod expands its password env var.
-     */
-    protected function allocateDatabase(DatabaseDriver $driver, string $tenant, string $password): bool
-    {
-        $ns = $this->plexNamespace();
-        $sql = $driver->commonsTenantSql($tenant, $tenant, $password);
-        if ($sql === null) {
-            return true; // not a relational Commons backend — nothing to allocate.
-        }
-
-        $tmp = tempnam(sys_get_temp_dir(), 'larakube_plex_sql');
-        file_put_contents($tmp, $sql);
-
-        $service = $driver->value;
-        $client = $driver->commonsAdminClient();
-        $output = [];
-        $code = 0;
-        $this->withSpin("Allocating database '{$tenant}' in the Commons...", function () use ($ns, $service, $client, $tmp, &$output, &$code) {
-            exec(
-                $this->plexKubectl().' exec -i -n '.escapeshellarg($ns).' deploy/'.$service.' -- '.
-                'sh -c '.escapeshellarg($client).' < '.escapeshellarg($tmp).' 2>&1',
-                $output,
-                $code,
-            );
-
-            return $code === 0;
-        });
-
-        @unlink($tmp);
-
-        if ($code !== 0) {
-            $this->laraKubeError("Could not allocate the tenant database in the Commons {$driver->getLabel()}.");
-            foreach (array_slice($output, -4) as $line) {
-                $this->laraKubeLine('    '.$line);
-            }
-
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
      * Read the shared Commons S3 credentials from the plex-admin Secret. Returns
      * ['access' => ..., 'secret' => ...] or null if the secret/keys are missing.
      */
@@ -426,7 +342,9 @@ class PlexJoinCommand extends Command
     protected function writeTenantConfig(string $projectPath, ConfigData $config, string $env, string $tenant, string $password, ?int $redisIndex, array $services, ?array $s3 = null): void
     {
         $values = $this->commonsEnvValues($tenant, $password, $redisIndex, $services, $s3);
-        $envFile = $env === 'production' ? '.env.production' : ".env.{$env}";
+        // Local reads .env (what the hostPath-mounted pod loads); cloud envs use
+        // .env.{env}. The old production special-case was a no-op and missed local.
+        $envFile = $env === 'local' ? '.env' : ".env.{$env}";
 
         if ($config->isLocked($envFile)) {
             $this->laraKubeWarn("{$envFile} is locked — add these manually:");
@@ -463,8 +381,18 @@ class PlexJoinCommand extends Command
         $this->laraKubeNewLine();
         $this->laraKubeInfo('✅ Joined the Commons.');
         $this->line('  Next:');
+
+        // Local joins write straight to .env and apply via `larakube up` — the
+        // git-commit + cloud:configure:gha steps are cloud-only ceremony.
+        if ($env === 'local') {
+            $this->line('    1. <fg=yellow>larakube up</> — apply the Commons connection to your local cluster.');
+            $this->line('    2. The app now uses the Commons, not its own pods.');
+
+            return;
+        }
+
         $this->line('    1. <fg=yellow>git add . && git commit</> (blueprint + regenerated manifests now target the Commons)');
-        $this->line("    2. <fg=yellow>larakube gha:configure {$env}</> (re-upload the .env.{$env} secret)");
+        $this->line("    2. <fg=yellow>larakube cloud:configure:gha {$env}</> (re-upload the .env.{$env} secret)");
         $this->line('    3. Deploy as usual — the app now uses the Commons, not its own pods.');
     }
 }

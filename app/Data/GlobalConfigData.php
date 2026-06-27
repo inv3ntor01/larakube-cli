@@ -3,17 +3,37 @@
 namespace App\Data;
 
 use App\Enums\AiProvider;
+use App\Traits\InteractsWithJsonFile;
 use Illuminate\Support\Carbon;
+use Spatie\LaravelData\Data;
+use stdClass;
 
-class GlobalConfigData
+class GlobalConfigData extends Data
 {
+    use InteractsWithJsonFile;
+
     const string CONFIG_FILE = 'config.json';
 
+    const string DEFAULT_TLD = 'kube';
+
+    /** Valid TLDs the user may choose. */
+    const array ALLOWED_TLDS = ['kube', 'localhost', 'test', 'local', 'internal'];
+
     public function __construct(
-        protected ?string $email = null,
-        protected string $aiProvider = 'gemini',
-        protected array $aiKeys = [],
-        protected ?string $lastStarPromptAt = null,
+        public ?string $email = null,
+        public string $aiProvider = 'anthropic',
+        public array $aiKeys = [],
+        public ?string $lastStarPromptAt = null,
+        public string $localTld = self::DEFAULT_TLD,
+        /** Cloudflare named-tunnel token reused across share sessions (optional). */
+        public ?string $shareToken = null,
+        /**
+         * Per-app named-tunnel URLs stored after the first `larakube share` with a token.
+         * Shape: ['appname' => ['web' => 'https://…', 'hmr' => 'https://…', 'storage' => 'https://…']]
+         *
+         * @var array<string, array<string, string>>
+         */
+        public array $shareUrls = [],
     ) {}
 
     public function getEmail(): ?string
@@ -26,9 +46,19 @@ class GlobalConfigData
         $this->email = $email;
     }
 
+    public function getLocalTld(): string
+    {
+        return $this->localTld ?: self::DEFAULT_TLD;
+    }
+
+    public function setLocalTld(string $tld): void
+    {
+        $this->localTld = ltrim(strtolower(trim($tld)), '.');
+    }
+
     public function getAiProvider(): AiProvider
     {
-        return AiProvider::tryFrom($this->aiProvider) ?? AiProvider::GEMINI;
+        return AiProvider::tryFrom($this->aiProvider) ?? AiProvider::ANTHROPIC;
     }
 
     public function setAiProvider(AiProvider|string $aiProvider): void
@@ -64,53 +94,54 @@ class GlobalConfigData
         $this->lastStarPromptAt = $lastStarPromptAt->toString();
     }
 
-    public static function fromArray(array $data): self
+    public function getShareToken(): ?string
     {
-        return new self(
-            email: $data['email'] ?? null,
-            aiProvider: $data['ai_provider'] ?? 'gemini',
-            aiKeys: $data['ai_keys'] ?? [],
-        );
+        return $this->shareToken;
     }
 
-    public function toArray(): array
+    public function setShareToken(?string $token): void
     {
-        return [
-            'email' => $this->email,
-            'ai_provider' => $this->aiProvider,
-            'ai_keys' => $this->aiKeys,
-        ];
+        $this->shareToken = $token;
+    }
+
+    /** Stored named-tunnel URLs for one app (returns empty array if not yet configured). */
+    public function getShareUrls(string $appName): array
+    {
+        return $this->shareUrls[$appName] ?? [];
+    }
+
+    /** Persist named-tunnel URLs for one app (merges with any existing keys). */
+    public function setShareUrls(string $appName, array $urls): void
+    {
+        $this->shareUrls[$appName] = array_filter(array_merge(
+            $this->shareUrls[$appName] ?? [],
+            $urls,
+        ));
     }
 
     public static function load(): self
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-        $path = $home.'/.larakube/'.self::CONFIG_FILE;
+        $path = home_path('.larakube/'.self::CONFIG_FILE);
 
-        if (! file_exists($path)) {
-            return new self;
-        }
+        $data = self::readJsonFile($path);
 
-        $data = json_decode(file_get_contents($path), true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            return new self;
-        }
-
-        return self::fromArray($data);
+        return $data === null ? new self : self::from($data);
     }
 
     public function save(): void
     {
-        $home = $_SERVER['HOME'] ?? getenv('HOME');
-        $dir = $home.'/.larakube';
+        $dir = home_path('.larakube');
         $path = $dir.'/'.self::CONFIG_FILE;
 
         if (! is_dir($dir)) {
             @mkdir($dir, 0700, true);
         }
 
-        file_put_contents($path, json_encode($this->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        @chmod($path, 0600);
+        $data = $this->toArray();
+        if (empty($data['shareUrls'])) {
+            $data['shareUrls'] = new stdClass; // {} not [] in JSON
+        }
+
+        self::atomicWriteJson($path, $data, 0600);
     }
 }

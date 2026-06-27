@@ -57,8 +57,8 @@ spec:
               value: "true"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -137,7 +137,7 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: http
 spec:
   rules:
-    - host: redis-test.dev.test
+    - host: redis-test.kube
       http:
         paths:
           - path: /
@@ -149,7 +149,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-test.dev.test
+        - redis-test.kube
 
 
 --- FILE: base/redis-deployment.yaml ---
@@ -280,14 +280,17 @@ namespace: redis-test-local
 
 resources:
   - app-volumes.yaml
-  - redis-companion-ingress.yaml
-  - redis-companion.yaml
   - ../../base
   - infrastructure.yaml
   - config-patch.yaml
 
 patches:
   - path: patches.yaml
+
+images:
+  - name: redis-test:latest
+    newName: redis-test
+    newTag: local
 
 
 --- FILE: overlays/local/patches.yaml ---
@@ -390,70 +393,7 @@ metadata:
 spec:
   tls:
     - hosts:
-        - redis-test.dev.test
-
-
---- FILE: overlays/local/redis-companion-ingress.yaml ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: redis-companion
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  rules:
-    - host: redis-redis-test.dev.test
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: redis-companion
-                port:
-                  number: 80
-  tls:
-    - hosts:
-        - redis-redis-test.dev.test
-
-
---- FILE: overlays/local/redis-companion.yaml ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: redis-companion
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: redis-companion
-  template:
-    metadata:
-      labels:
-        app: redis-companion
-    spec:
-      containers:
-        - name: companion
-          image: rediscommander/redis-commander:latest
-          ports:
-            - containerPort: 8081
-          env:
-            - name: REDIS_HOSTS
-              value: local:redis:6379
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis-companion
-spec:
-  selector:
-    app: redis-companion
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8081
-  type: ClusterIP
+        - redis-test.kube
 
 
 --- FILE: overlays/production/app-volumes.yaml ---
@@ -499,8 +439,8 @@ spec:
           imagePullPolicy: IfNotPresent
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "1Gi"
@@ -524,7 +464,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   rules:
-    - host: redis-test.dev.test
+    - host: redis-test.kube
       http:
         paths:
           - path: /
@@ -536,7 +476,7 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - redis-test.dev.test
+        - redis-test.kube
       secretName: redis-test-tls
 
 
@@ -556,6 +496,11 @@ resources:
 patches:
   - path: ingress-patch.yaml
   - path: deployment-patch.yaml
+
+images:
+  - name: redis-test:latest
+    newName: redis-test
+    newTag: production-latest
 
 
 --- FILE: overlays/production/namespace.yaml ---

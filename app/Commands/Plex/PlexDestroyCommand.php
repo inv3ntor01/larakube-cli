@@ -7,6 +7,7 @@ use App\Traits\InteractsWithProjectConfig;
 use App\Traits\LaraKubeOutput;
 use App\Traits\ResolvesEnvironmentContext;
 
+use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\text;
 
 use LaravelZero\Framework\Commands\Command;
@@ -37,9 +38,13 @@ class PlexDestroyCommand extends Command
 
         $env = (string) $this->argument('environment');
         if ($env === 'local') {
-            $this->laraKubeError('Plex is a cloud topology — pick a cloud environment.');
+            $this->laraKubeWarn('You are destroying a Plex Commons in a local environment.');
+            $this->line('  <fg=gray>This deletes the <fg=red>larakube-shared</> namespace and ALL tenant data on K3D.</> <fg=yellow>This cannot be undone.</>');
+            $this->newLine();
 
-            return 1;
+            if (! confirm('Destroy the local Commons?', false)) {
+                return 0;
+            }
         }
 
         $context = $this->environmentContextOrCurrent($config, $env);
