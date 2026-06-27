@@ -263,8 +263,8 @@ class NewCommand extends Command
         $pkgCommand = $this->getNodeInstallationCommand($image);
         $baseDir = dirname($projectPath);
 
-        $cmd = 'docker run --rm -it -v '.$baseDir.":/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
-               "sh -c '$pkgCommand && composer global require laravel/installer && $(composer global config bin-dir --absolute)/laravel new $appName $extraFlags && chown -R $uid:$gid {$appName}'";
+        $cmd = "docker run --rm -it -v $baseDir:/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
+               "sh -c '$pkgCommand && composer config -g bin-dir /usr/local/bin && composer global require laravel/installer && laravel new $appName $extraFlags && chown -R $uid:$gid $appName'";
 
         passthru($cmd);
     }
