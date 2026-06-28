@@ -179,7 +179,7 @@ class ClusterSetupCommand extends Command
         // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
         // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
         // below work without sudo.
-        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik'], ['K3S_KUBECONFIG_MODE' => '644']), $installCode);
+        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik'], ['K3S_KUBECONFIG_MODE' => '644'], sudo: true), $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');
