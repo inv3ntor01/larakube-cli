@@ -5,6 +5,7 @@ namespace App\Commands;
 use App\Contracts\HasReloadCommand;
 use App\Data\ConfigData;
 use App\Traits\DeploysMonitoringExporters;
+use App\Traits\DetectsWsl;
 use App\Traits\EnsuresHostDependencies;
 use App\Traits\GeneratesProjectInfrastructure;
 use App\Traits\HasConsoleInteraction;
@@ -23,12 +24,13 @@ use App\Traits\ManagesLocalCa;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
+use function Laravel\Prompts\select;
 
 use LaravelZero\Framework\Commands\Command;
 
 class UpCommand extends Command
 {
-    use DeploysMonitoringExporters, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithKustomize, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
+    use DeploysMonitoringExporters, DetectsWsl, EnsuresHostDependencies, GeneratesProjectInfrastructure, HasConsoleInteraction, InteractsWithArchitecturalEngine, InteractsWithClusterContext, InteractsWithDocker, InteractsWithEnvironments, InteractsWithHosts, InteractsWithKustomize, InteractsWithProjectConfig, InteractsWithSslTrust, InteractsWithTraefik, LaraKubeOutput, ManagesCompanions, ManagesLocalCa;
 
     /**
      * The name and signature of the console command.
@@ -121,6 +123,33 @@ class UpCommand extends Command
                     }
                 } else {
                     return 1;
+                }
+            } // Scenario C: WSL2 — Docker Desktop is available, pick a path forward
+            elseif ($this->isWsl()) {
+                $result = $this->handleWsl2ClusterSetup();
+                if ($result !== 0) {
+                    return $result;
+                }
+            } // Scenario D: Docker Desktop context active but unreachable (macOS/Linux)
+            elseif (trim($currentContext) === 'docker-desktop') {
+                $this->laraKubeWarn('Docker Desktop Kubernetes is active but unreachable!');
+                $this->line('  Docker Desktop may be stopped or Kubernetes is disabled.');
+                $this->newLine();
+                $this->line('  <fg=gray>Your options:</>');
+                $this->line('  1. Retry the cluster check — if you just enabled Kubernetes, wait ~60s first.');
+                $this->line('  2. Set up a native k3s cluster on a Linux/WSL2 target.');
+                $this->newLine();
+
+                if (confirm('Retry the Docker Desktop cluster check?', true)) {
+                    if ($this->hasActiveCluster()) {
+                        $this->laraKubeInfo('✅ Docker Desktop Kubernetes is reachable!');
+                    } else {
+                        $this->laraKubeError('Cluster is still unreachable. Enable Kubernetes in Docker Desktop.');
+
+                        return 1;
+                    }
+                } else {
+                    return $this->call('cluster:setup');
                 }
             } else {
                 $this->laraKubeWarn('No active Kubernetes cluster detected!');
@@ -501,5 +530,214 @@ class UpCommand extends Command
 
         $this->newLine();
         $this->line('  <fg=cyan>💡 Hot-reload tip:</> run <fg=yellow;options=bold>larakube watch</> in another terminal to auto-reload '.implode(' + ', $services).' on PHP code changes.');
+    }
+
+    /**
+     * WSL2-specific cluster recovery/setup flow. Docker Desktop on Windows may
+     * inject its Docker daemon and optionally Kubernetes into WSL2. When neither
+     * is usable, we offer the user a choice: install native k3s (self-contained,
+     * no Docker needed) or install the Docker CLI so they can fix/use Docker Desktop.
+     */
+    protected function handleWsl2ClusterSetup(): int
+    {
+        $this->laraKubeWarn('No active Kubernetes cluster detected on WSL2!');
+        $this->newLine();
+
+        // Sub-scenario: Docker Desktop daemon is reachable but K8s isn't active.
+        if ($this->hasDockerDesktopOnWsl()) {
+            $this->line('  Docker Desktop daemon is <fg=green>available</>, but Kubernetes appears to be');
+            $this->line('  disabled or unreachable.');
+            $this->newLine();
+            $this->line('  <fg=gray>Your options:</>');
+            $this->line('  1. <fg=yellow>Install k3s</> — a standalone Kubernetes cluster (no Docker Desktop K8s needed).');
+            $this->line('  2. Fix Docker Desktop — enable Kubernetes in Docker Desktop Settings → Kubernetes.');
+            $this->newLine();
+
+            if (confirm('Would you like LaraKube to install native k3s on WSL2 now?', true)) {
+                return $this->call('cluster:setup');
+            }
+
+            $this->info('  👉 Enable Kubernetes in Docker Desktop, then wait ~60s and re-run `larakube up`.');
+
+            return 1;
+        }
+
+        // Docker Desktop K8s was the active context but is now unreachable
+        // (context exists, daemon may have gone away).
+        if ($this->isDockerDesktopKubernetesOnWsl()) {
+            $this->line('  Docker Desktop Kubernetes context is active but unreachable.');
+            $this->line('  Docker Desktop may have been stopped or Kubernetes was disabled.');
+            $this->newLine();
+            $this->line('  <fg=gray>Your options:</>');
+            $this->line('  1. <fg=yellow>Install k3s</> — a standalone Kubernetes cluster (works independently of Docker Desktop).');
+            $this->line('  2. Fix Docker Desktop — ensure it\'s running and Kubernetes is enabled.');
+            $this->newLine();
+
+            if (confirm('Would you like LaraKube to install native k3s on WSL2 now?', true)) {
+                return $this->call('cluster:setup');
+            }
+
+            $this->info('  👉 Ensure Docker Desktop is running with Kubernetes enabled, then re-run `larakube up`.');
+
+            return 1;
+        }
+
+        // No Docker Desktop at all — check if any Docker CLI exists.
+        if ($this->hasDockerCli()) {
+            // Docker exists but isn't Docker Desktop — might be native Docker Engine.
+            $this->line('  A Docker daemon is available but no Kubernetes cluster is configured.');
+            $this->newLine();
+
+            if (confirm('Would you like LaraKube to install native k3s on WSL2 now?', true)) {
+                return $this->call('cluster:setup');
+            }
+
+            return 1;
+        }
+
+        // No Docker at all — offer Docker CLI install or k3s.
+        $this->line('  Neither Docker nor a Kubernetes cluster was found on this WSL2 distro.');
+        $this->newLine();
+        $this->line('  <fg=gray>Your options:</>');
+        $this->line('  1. <fg=yellow>Install k3s</> — a standalone Kubernetes cluster (recommended, includes its own container runtime).');
+        $this->line('  2. Install Docker Engine — gives you `docker` on WSL2, then use k3s or Docker Desktop.');
+        $this->newLine();
+
+        $choice = select(
+            label: 'What would you like to do?',
+            options: [
+                'k3s' => 'Install k3s (recommended)',
+                'docker' => 'Install Docker CLI',
+                'skip' => 'Skip for now',
+            ],
+            default: 'k3s',
+        );
+
+        if ($choice === 'k3s') {
+            return $this->call('cluster:setup');
+        }
+
+        if ($choice === 'docker') {
+            return $this->setupDockerCli();
+        }
+
+        $this->info('  👉 You can run "larakube cluster:setup" later when you are ready.');
+
+        return 1;
+    }
+
+    /**
+     * Install Docker Engine (CLI + daemon) on WSL2 via the official apt repository.
+     * Requires sudo for package installation and service management.
+     */
+    protected function setupDockerCli(): int
+    {
+        $this->newLine();
+        $this->laraKubeInfo('Installing Docker CLI on WSL2...');
+        $this->line('  <fg=gray>This requires sudo to set up the Docker apt repository and service.</>');
+        $this->newLine();
+
+        if (! confirm('Continue with Docker installation?', true)) {
+            $this->info('  👉 Install Docker manually: https://docs.docker.com/engine/install/ubuntu/');
+
+            return 1;
+        }
+
+        // Detect the distro — we support Debian/Ubuntu (the vast majority of WSL2 distros).
+        $osRelease = @file_get_contents('/etc/os-release');
+        if ($osRelease === false || ! preg_match('/^ID="?([\w.]+)"?/m', $osRelease, $idMatch)) {
+            $this->laraKubeError('Could not detect your Linux distribution.');
+            $this->laraKubeLine('  👉 Install Docker manually: https://docs.docker.com/engine/install/');
+
+            return 1;
+        }
+
+        $distroId = strtolower($idMatch[1]);
+
+        if (! in_array($distroId, ['ubuntu', 'debian'], true)) {
+            $this->laraKubeError("Docker auto-install is only supported on Ubuntu/Debian (detected: {$distroId}).");
+            $this->laraKubeLine('  👉 Install Docker manually: https://docs.docker.com/engine/install/');
+
+            return 1;
+        }
+
+        // Pre-warm sudo so the credential prompt is interactive.
+        passthru('sudo -v');
+        if ((int) shell_exec('sudo -n true 2>/dev/null; echo $?') !== 0) {
+            $this->laraKubeError('sudo authentication failed. Docker installation requires elevated privileges.');
+
+            return 1;
+        }
+
+        $this->laraKubeInfo("Setting up Docker repository for {$distroId}...");
+
+        // Docker's official repo uses distro-specific URLs — Ubuntu and Debian
+        // have separate GPG keys and apt sources.
+        $dockerDistro = $distroId === 'debian' ? 'debian' : 'ubuntu';
+        $codename = trim((string) shell_exec('. /etc/os-release && echo "$VERSION_CODENAME" 2>/dev/null'));
+
+        $installScript = <<<BASH
+set -e
+
+# Remove conflicting packages
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+    apt-get remove -y "\$pkg" 2>/dev/null || true
+done
+
+# Install prerequisites
+apt-get update
+apt-get install -y ca-certificates curl
+
+# Add Docker's official GPG key
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/{$dockerDistro}/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add the repository
+echo \\
+  "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/{$dockerDistro} \\
+  {$codename} stable" | \\
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Enable and start the Docker service
+systemctl enable docker 2>/dev/null || true
+systemctl start docker 2>/dev/null || true
+BASH;
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'larakube_docker_install');
+        file_put_contents($tmpFile, $installScript);
+
+        $code = 0;
+        passthru('sudo bash '.escapeshellarg($tmpFile), $code);
+        @unlink($tmpFile);
+
+        if ($code !== 0) {
+            $this->laraKubeError('Docker installation failed. Please review the output above.');
+            $this->laraKubeLine('  👉 Install Docker manually: https://docs.docker.com/engine/install/');
+
+            return 1;
+        }
+
+        // Verify the installation.
+        $dockerVersion = trim((string) shell_exec('docker --version 2>/dev/null'));
+        if ($dockerVersion === '') {
+            $this->laraKubeWarn('Docker installed but is not on your PATH.');
+            $this->laraKubeLine('  👉 Open a new terminal and run `docker --version` to verify.');
+
+            return 1;
+        }
+
+        $this->laraKubeInfo("✅ {$dockerVersion} installed successfully.");
+        $this->newLine();
+        $this->line('  <fg=gray>Next steps:</>');
+        $this->line('  - Run `sudo usermod -aG docker $USER` to use Docker without sudo.');
+        $this->line('  - Then run `larakube cluster:setup` to install k3s.');
+        $this->line('  - Or, start Docker Desktop on Windows and enable Kubernetes.');
+
+        return 0;
     }
 }
