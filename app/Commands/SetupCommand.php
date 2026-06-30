@@ -76,7 +76,29 @@ class SetupCommand extends Command
                 return true;
             }
 
-            $this->laraKubeInfo('Docker found — starting the engine...');
+            // No docker.service unit means the docker CLI comes from Docker Desktop's
+            // WSL integration — there is no local daemon to start via systemctl.
+            $hasDockerService = trim((string) shell_exec('systemctl cat docker 2>/dev/null')) !== '';
+
+            if (! $hasDockerService) {
+                $this->laraKubeWarn('Docker Desktop is installed but not running.');
+                $this->line('  Docker Desktop\'s daemon cannot be started from WSL2.');
+                $this->newLine();
+                $this->line('  You have two options:');
+                $this->line('  <fg=yellow>A)</> Start Docker Desktop from Windows and re-run <fg=cyan>larakube setup</>.');
+                $this->line('  <fg=yellow>B)</> Install Docker Engine natively in WSL2 (works even when Docker Desktop is off).');
+                $this->newLine();
+
+                if (! confirm('Install Docker Engine natively now?', default: true)) {
+                    $this->line('  <fg=gray>Start Docker Desktop from Windows, then re-run larakube setup.</>');
+
+                    return false;
+                }
+
+                return $this->installDockerEngine();
+            }
+
+            $this->laraKubeInfo('Docker Engine found — starting the service...');
             passthru('sudo systemctl start docker 2>/dev/null', $startCode);
 
             if ($startCode !== 0) {
@@ -90,7 +112,29 @@ class SetupCommand extends Command
             return true;
         }
 
+        return $this->installDockerEngine();
+    }
+
+    protected function installDockerEngine(): bool
+    {
+        // If the docker-ce package is already installed (e.g. a prior run that left
+        // the service stopped), skip the installer and just enable the service.
+        $alreadyInstalled = trim((string) shell_exec('dpkg -l docker-ce 2>/dev/null | grep -c "^ii"')) === '1';
+
+        if ($alreadyInstalled) {
+            $this->laraKubeInfo('Docker Engine package found — enabling service...');
+            shell_exec('sudo systemctl enable --now docker 2>/dev/null');
+            $this->laraKubeInfo('✅ Docker Engine running.');
+
+            return true;
+        }
+
         $this->laraKubeInfo('Installing Docker Engine...');
+        // The get.docker.com script warns about an existing docker CLI (Docker Desktop)
+        // and about running inside WSL — both warnings are expected here and safe to
+        // ignore. Each warning pauses for 20s before continuing automatically.
+        $this->line('  <fg=gray>The installer may warn about Docker Desktop or WSL — this is expected. It will continue automatically.</>');
+        $this->newLine();
         passthru('curl -fsSL https://get.docker.com | sh', $installCode);
 
         if ($installCode !== 0) {
@@ -99,7 +143,6 @@ class SetupCommand extends Command
             return false;
         }
 
-        // Add the current user to the docker group so docker works without sudo.
         $user = getenv('USER') ?: get_current_user();
         if ($user) {
             shell_exec('sudo usermod -aG docker '.escapeshellarg((string) $user).' 2>/dev/null');
@@ -108,8 +151,8 @@ class SetupCommand extends Command
         shell_exec('sudo systemctl enable --now docker 2>/dev/null');
 
         $this->laraKubeInfo('✅ Docker Engine installed.');
-        $this->laraKubeWarn("You've been added to the <fg=cyan>docker</> group.");
-        $this->line('  Run <fg=cyan>newgrp docker</> or open a new terminal before using docker commands.');
+        $this->line('  You\'ve been added to the <fg=cyan>docker</> group, but your current shell session');
+        $this->line('  won\'t pick it up until you run: <fg=cyan>newgrp docker</> (or open a new terminal).');
 
         return true;
     }
