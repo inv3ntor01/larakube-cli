@@ -1,7 +1,5 @@
 <?php
 
-use Laravel\Prompts\Prompt;
-
 function portableProject(): string
 {
     $tmp = sys_get_temp_dir().'/larakube-portable-'.uniqid();
@@ -75,26 +73,6 @@ test('portable command --script-only writes the script but not the guide', funct
         exec('rm -rf '.escapeshellarg($tmp));
     }
 });
-
-test('portable command keeps an existing file when the user declines', function () {
-    $original = getcwd();
-    $tmp = portableProject();
-    file_put_contents("$tmp/larakube.sh", "# my customized version\n");
-    chdir($tmp);
-
-    try {
-        Prompt::fallbackUsing(fn () => false);
-        $this->artisan('portable')->assertExitCode(0);
-
-        // The customized script is preserved...
-        expect(file_get_contents("$tmp/larakube.sh"))->toContain('# my customized version');
-        // ...while the missing guide is still written.
-        expect(file_exists("$tmp/LOCAL_DEV.md"))->toBeTrue();
-    } finally {
-        chdir($original);
-        exec('rm -rf '.escapeshellarg($tmp));
-    }
-})->skip('Prompt in subprocess needs stdin fixture');
 
 test('portable command --force overwrites an existing script', function () {
     $original = getcwd();

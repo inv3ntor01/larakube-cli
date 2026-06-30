@@ -77,7 +77,7 @@ class NewCommand extends Command
             $this->logActivity('Project nesting warning ignored', ['action' => 'new'], $projectPath);
         }
 
-        if (! $this->checkPrerequisites(true)) {
+        if (! $this->checkPrerequisites(false)) {
             return 1;
         }
 

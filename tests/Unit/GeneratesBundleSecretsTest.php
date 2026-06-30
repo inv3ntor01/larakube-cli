@@ -1,5 +1,7 @@
 <?php
 
+namespace Tests\Unit;
+
 use App\Data\ConfigData;
 use App\Enums\DatabaseDriver;
 use App\Enums\LaravelFeature;

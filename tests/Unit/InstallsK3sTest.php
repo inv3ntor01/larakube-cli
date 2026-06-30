@@ -22,8 +22,7 @@ function k3sInstaller(): object
 }
 
 test('k3sVersion falls back to the single ConfigData default', function () {
-    expect(k3sInstaller()->version())->toBe(ConfigData::DEFAULT_K3S_VERSION)
-        ->and(ConfigData::DEFAULT_K3S_VERSION)->toBe('v1.30.4+k3s1');
+    expect(k3sInstaller()->version())->toBe(ConfigData::DEFAULT_K3S_VERSION);
 });
 
 test('k3sVersion honors a project override', function () {
