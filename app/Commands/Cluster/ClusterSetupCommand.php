@@ -236,6 +236,15 @@ class ClusterSetupCommand extends Command
 
         $this->laraKubeInfo("Merged k3s into ~/.kube/config as context <fg=cyan>{$contextName}</>.");
 
+        // k3s installs its own kubectl binary (/usr/local/bin/kubectl → k3s symlink)
+        // which defaults to reading /etc/rancher/k3s/k3s.yaml instead of ~/.kube/config.
+        // Pinning KUBECONFIG in the shell's rc file ensures the merged config (with the
+        // correctly named context) is always the one kubectl sees, regardless of which
+        // binary resolves as "kubectl".
+        if ($this->pinKubeconfigInShell($home, $kubeConfig)) {
+            $this->laraKubeWarn('Run `source ~/.bashrc` (or open a new terminal) to activate the kubectl context.');
+        }
+
         // A KUBECONFIG env var pointing elsewhere (e.g. at k3s's own
         // /etc/rancher/k3s/k3s.yaml, which the k3s installer suggests exporting)
         // SHADOWS this merge — kubectl/larakube would read that file (context
@@ -245,5 +254,30 @@ class ClusterSetupCommand extends Command
             $this->laraKubeWarn("Heads up: your KUBECONFIG points at {$envKubeconfig}, which hides this merge.");
             $this->laraKubeLine('  👉 Run `unset KUBECONFIG` (and remove any KUBECONFIG=… line from ~/.bashrc) so kubectl uses ~/.kube/config.');
         }
+    }
+
+    protected function pinKubeconfigInShell(string $home, string $kubeConfig): bool
+    {
+        $export = 'export KUBECONFIG="'.$kubeConfig.'"';
+        $marker = '# larakube: pin kubeconfig';
+        $line = "\n{$marker}\n{$export}\n";
+        $wrote = false;
+
+        foreach (["$home/.bashrc", "$home/.zshrc"] as $rc) {
+            if (! file_exists($rc)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($rc);
+
+            if (str_contains($contents, $marker)) {
+                continue;
+            }
+
+            file_put_contents($rc, $contents.$line);
+            $wrote = true;
+        }
+
+        return $wrote;
     }
 }
