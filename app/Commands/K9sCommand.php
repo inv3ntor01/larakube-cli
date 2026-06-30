@@ -4,6 +4,7 @@ namespace App\Commands;
 
 use App\Traits\DetectsWsl;
 use App\Traits\InstallsK9s;
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithOs;
 use App\Traits\InteractsWithProjectConfig;
@@ -16,7 +17,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class K9sCommand extends Command
 {
-    use DetectsWsl, InstallsK9s, InteractsWithEnvironments, InteractsWithOs, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
+    use DetectsWsl, InstallsK9s, InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithOs, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -39,12 +40,22 @@ class K9sCommand extends Command
     {
         $this->renderHeader();
 
-        if (! $this->isLaraKubeProject()) {
+        if (shell_exec('which k9s') === null && ! is_file(home_path('.larakube/bin/k9s')) && ! $this->setupK9s()) {
             return 1;
         }
 
-        if (shell_exec('which k9s') === null && ! is_file(home_path('.larakube/bin/k9s')) && ! $this->setupK9s()) {
-            return 1;
+        if (! $this->isLaraKubeProject(showError: false)) {
+            $context = $this->askForClusterContext();
+            if (! $context) {
+                $this->laraKubeError('No Kubernetes contexts found.');
+
+                return 1;
+            }
+
+            $this->laraKubeInfo("Launching k9s on context: {$context}...");
+            $this->executeK9s('', ' --context '.escapeshellarg($context));
+
+            return 0;
         }
 
         // Defensive: signature default is 'local', but internal $this->call()
@@ -80,7 +91,8 @@ class K9sCommand extends Command
     protected function executeK9s(string $namespace, string $contextFlag): void
     {
         $k9s = $this->resolveK9sBin() ?: 'k9s';
-        passthru(escapeshellarg($k9s).$contextFlag.' -n '.escapeshellarg($namespace));
+        $namespaceFlag = $namespace !== '' ? ' -n '.escapeshellarg($namespace) : '';
+        passthru(escapeshellarg($k9s).$contextFlag.$namespaceFlag);
     }
 
     /**
