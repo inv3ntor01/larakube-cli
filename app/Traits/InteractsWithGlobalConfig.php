@@ -84,6 +84,30 @@ trait InteractsWithGlobalConfig
         $config->save();
     }
 
+    protected function getDefaultCloudProvider(): string
+    {
+        return $this->getGlobalConfig()->getDefaultCloudProvider() ?: 'do';
+    }
+
+    protected function setDefaultCloudProvider(string $provider): void
+    {
+        $config = $this->getGlobalConfig();
+        $config->setDefaultCloudProvider($provider);
+        $config->save();
+    }
+
+    protected function getDoToken(): ?string
+    {
+        return $this->getGlobalConfig()->getDoToken();
+    }
+
+    protected function setDoToken(?string $token): void
+    {
+        $config = $this->getGlobalConfig();
+        $config->setDoToken($token);
+        $config->save();
+    }
+
     protected function getLocalTld(): string
     {
         return $this->getGlobalConfig()->getLocalTld();

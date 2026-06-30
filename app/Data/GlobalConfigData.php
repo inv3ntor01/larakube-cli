@@ -34,6 +34,28 @@ class GlobalConfigData extends Data
          * @var array<string, array<string, string>>
          */
         public array $shareUrls = [],
+        /** DigitalOcean API token, passed to OpenTofu as TF_VAR_do_token (never written into HCL). */
+        public ?string $doToken = null,
+        /**
+         * OpenTofu stack registry, keyed by stack name. Each value is a StackData
+         * array. Global (not per-repo) so multiple projects can share one VPS/cluster.
+         *
+         * @var array<string, array<string, mixed>>
+         */
+        public array $stacks = [],
+        /**
+         * Per-stack OpenTofu state-encryption passphrases (PBKDF2), keyed by stack
+         * name. Machine-local; supplied to Tofu via TF_ENCRYPTION at runtime so it
+         * never enters committed HCL.
+         *
+         * @var array<string, string>
+         */
+        public array $tofuPassphrases = [],
+        /**
+         * Default cloud provider slug for cloud:create (e.g. 'do', 'aws').
+         * Drives which Tofu templates get rendered.
+         */
+        public ?string $defaultCloudProvider = 'do',
     ) {}
 
     public function getEmail(): ?string
@@ -119,6 +141,70 @@ class GlobalConfigData extends Data
         ));
     }
 
+    public function getDefaultCloudProvider(): ?string
+    {
+        return $this->defaultCloudProvider;
+    }
+
+    public function setDefaultCloudProvider(?string $provider): void
+    {
+        $this->defaultCloudProvider = $provider;
+    }
+
+    public function getDoToken(): ?string
+    {
+        return $this->doToken;
+    }
+
+    public function setDoToken(?string $token): void
+    {
+        $this->doToken = $token ? trim($token) : null;
+    }
+
+    /**
+     * All registered Tofu stacks, hydrated as StackData.
+     *
+     * @return array<string, StackData>
+     */
+    public function getStacks(): array
+    {
+        return array_map(fn (array $s) => StackData::from($s), $this->stacks);
+    }
+
+    public function findStack(string $name): ?StackData
+    {
+        return isset($this->stacks[$name]) ? StackData::from($this->stacks[$name]) : null;
+    }
+
+    public function putStack(StackData $stack): void
+    {
+        $this->stacks[$stack->name] = $stack->toArray();
+    }
+
+    public function removeStack(string $name): void
+    {
+        unset($this->stacks[$name], $this->tofuPassphrases[$name]);
+    }
+
+    /** Existing per-stack encryption passphrase, or null when none has been minted. */
+    public function getTofuPassphrase(string $stack): ?string
+    {
+        return $this->tofuPassphrases[$stack] ?? null;
+    }
+
+    /**
+     * The stack's encryption passphrase, minting a strong random one on first use.
+     * PBKDF2 wants >=16 chars; we store hex so it's copy-safe. Caller must save().
+     */
+    public function ensureTofuPassphrase(string $stack): string
+    {
+        if (empty($this->tofuPassphrases[$stack])) {
+            $this->tofuPassphrases[$stack] = bin2hex(random_bytes(24));
+        }
+
+        return $this->tofuPassphrases[$stack];
+    }
+
     public static function load(): self
     {
         $path = home_path('.larakube/'.self::CONFIG_FILE);
@@ -138,8 +224,11 @@ class GlobalConfigData extends Data
         }
 
         $data = $this->toArray();
-        if (empty($data['shareUrls'])) {
-            $data['shareUrls'] = new stdClass; // {} not [] in JSON
+        // Empty associative maps must serialize as {} not [] in JSON.
+        foreach (['shareUrls', 'stacks', 'tofuPassphrases'] as $mapKey) {
+            if (empty($data[$mapKey])) {
+                $data[$mapKey] = new stdClass;
+            }
         }
 
         self::atomicWriteJson($path, $data, 0600);
