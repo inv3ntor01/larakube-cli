@@ -101,7 +101,7 @@ trait LaraKubeOutput
             return;
         }
 
-        $message = $this->maskSecrets($message);
+        $message = $this->stripConsoleTags($this->maskSecrets($message));
         render(<<<HTML
             <div class="flex mx-2 mt-1">
                 <span class="px-1 bg-blue-500 text-white font-bold uppercase">LaraKube</span>
@@ -152,7 +152,16 @@ trait LaraKubeOutput
      */
     protected function laraKubeLine(string $message): void
     {
-        echo '  '.$this->maskSecrets($message)."\n";
+        echo '  '.$this->stripConsoleTags($this->maskSecrets($message))."\n";
+    }
+
+    /**
+     * Strip Symfony Console inline style tags (<fg=cyan>, </>, <options=bold>, etc.)
+     * so messages passed to Termwind's render() don't leak raw tag syntax.
+     */
+    protected function stripConsoleTags(string $message): string
+    {
+        return preg_replace('/<[^>]+>/', '', $message) ?? $message;
     }
 
     /**
@@ -160,7 +169,7 @@ trait LaraKubeOutput
      */
     protected function laraKubeWarn(string $message): void
     {
-        render("<div class='mx-2 mt-1 text-yellow-500'>".$this->maskSecrets($message).'</div>');
+        render("<div class='mx-2 mt-1 text-yellow-500'>".$this->stripConsoleTags($this->maskSecrets($message)).'</div>');
     }
 
     /**
