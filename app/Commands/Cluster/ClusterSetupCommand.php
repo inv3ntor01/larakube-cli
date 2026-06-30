@@ -49,6 +49,10 @@ class ClusterSetupCommand extends Command
         $where = $this->isWsl() ? 'WSL2' : 'Linux';
         $this->laraKubeInfo("Installing native k3s on {$where}...");
 
+        if ($this->isWsl()) {
+            $this->unmountDockerDesktopHost();
+        }
+
         $result = $this->installK3s();
 
         // 3. Make sure a kustomize that can build our multi-doc patches is available:
@@ -58,6 +62,7 @@ class ClusterSetupCommand extends Command
         //    exists" path too.
         if ($result === 0) {
             $this->ensureKustomizeReady();
+            $this->warnIfNewerK3sAvailable();
         }
 
         return $result;
@@ -66,10 +71,12 @@ class ClusterSetupCommand extends Command
     protected function installK3s(): int
     {
         $this->laraKubeInfo('Installing native k3s...');
-        // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
-        // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
-        // below work without sudo.
-        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik'], ['K3S_KUBECONFIG_MODE' => '644'], sudo: true), $installCode);
+        // --write-kubeconfig-mode=644 is a k3s server flag that makes k3s always write
+        // /etc/rancher/k3s/k3s.yaml with 644 permissions — survives service restarts.
+        // K3S_KUBECONFIG_MODE=644 is the installer env equivalent, applied when the
+        // service is (re)started; both are set so re-runs without "No change detected"
+        // also get the right mode.
+        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik', '--write-kubeconfig-mode=644'], ['K3S_KUBECONFIG_MODE' => '644'], sudo: true), $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');
@@ -81,10 +88,13 @@ class ClusterSetupCommand extends Command
         // `kubectl wait` before the Node object exists fails immediately with
         // "no matching resources found", so poll until it appears, then wait for
         // it to become Ready.
+        // WSL2 first boot is slower (kernel modules, containerd init) and routinely
+        // needs 90–120s; native Linux is usually done in 20–30s.
         $this->laraKubeInfo('Waiting for node to be ready...');
 
+        $maxAttempts = $this->isWsl() ? 90 : 40; // 180s on WSL2, 80s on Linux
         $nodeAppeared = false;
-        for ($i = 0; $i < 30; $i++) {
+        for ($i = 0; $i < $maxAttempts; $i++) {
             if (trim((string) shell_exec('sudo k3s kubectl get nodes --no-headers 2>/dev/null')) !== '') {
                 $nodeAppeared = true;
                 break;
@@ -92,16 +102,23 @@ class ClusterSetupCommand extends Command
             sleep(2);
         }
 
-        if ($nodeAppeared) {
-            passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=120s');
-        } else {
-            $this->laraKubeWarn('Timed out waiting for the k3s node to register. It may still come up shortly.');
+        if (! $nodeAppeared) {
+            $this->laraKubeWarn('Timed out waiting for the k3s node to register.');
+            $this->line('  k3s is still initializing — this is normal on first boot in WSL2.');
+            $this->line('  Wait a moment, then re-run <fg=cyan>larakube cluster:setup</> to complete setup.');
+            $this->line('  You can check live progress with: <fg=cyan>sudo journalctl -u k3s -f</>');
+            // Still chmod in case the file exists — it won't be overwritten once k3s
+            // fully starts (--write-kubeconfig-mode=644 handles future restarts).
+            passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
+
+            return 1;
         }
 
-        // On an ALREADY-installed k3s the installer prints "No change detected so
-        // skipping service start" — so K3S_KUBECONFIG_MODE is never applied (the
-        // mode is only written when k3s (re)starts). Force the kubeconfig readable
-        // so a re-run actually heals the 0600 permission instead of looping.
+        passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=120s');
+
+        // Belt-and-suspenders: --write-kubeconfig-mode=644 is set as a server flag so
+        // k3s writes it 644 on every restart, but chmod here heals re-runs where the
+        // installer skips restarting the service ("No change detected").
         passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
 
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
@@ -115,6 +132,31 @@ class ClusterSetupCommand extends Command
         $this->info('You can now use larakube up to deploy your projects.');
 
         return 0;
+    }
+
+    /**
+     * Docker Desktop's WSL integration mounts C:\Program Files\Docker\Docker\resources
+     * at /Docker/host using 9p. The Windows path contains a space that Docker Desktop
+     * does NOT escape inside the mount options, so /proc/mounts ends up with a 7-token
+     * line where k3s's ContainerManager parser expects 6 — crashing on startup.
+     * Unmounting before the installer runs (or before k3s restarts) sidesteps the issue.
+     * Docker Desktop automatically remounts /Docker/host once it detects it gone, so
+     * image builds are unaffected after k3s is up.
+     */
+    protected function unmountDockerDesktopHost(): void
+    {
+        if (! file_exists('/Docker/host')) {
+            return;
+        }
+
+        $mounted = str_contains((string) shell_exec('grep -q " /Docker/host " /proc/mounts && echo yes 2>/dev/null'), 'yes');
+
+        if (! $mounted) {
+            return;
+        }
+
+        $this->laraKubeInfo('Unmounting /Docker/host (Docker Desktop WSL mount) before k3s starts...');
+        shell_exec('sudo umount /Docker/host 2>/dev/null');
     }
 
     /**

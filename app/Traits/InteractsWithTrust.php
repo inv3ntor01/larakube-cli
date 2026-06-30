@@ -23,15 +23,37 @@ trait InteractsWithTrust
             file_put_contents($caFile, file_get_contents($caPath));
             @unlink($tmpCa);
 
-            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
-            passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $code);
+            // certutil.exe cannot read \\wsl.localhost\ UNC paths, so stage the cert
+            // in the Windows %TEMP% directory which is always reachable by Windows processes.
+            $winTempDir = trim((string) shell_exec('cmd.exe /c "echo %TEMP%" 2>/dev/null'));
+            $wslTempDir = $winTempDir !== ''
+                ? trim((string) shell_exec('wslpath '.escapeshellarg($winTempDir).' 2>/dev/null'))
+                : '';
+
+            // Permanent Windows-visible path (used in fallback instructions if certutil fails).
+            $permanentWinPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
+
+            if ($wslTempDir !== '' && is_dir($wslTempDir)) {
+                $stagePath = $wslTempDir.'/larakube-local-ca.crt';
+                copy($caFile, $stagePath);
+                $certutilPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($stagePath).' 2>/dev/null'));
+            } else {
+                $stagePath = null;
+                $certutilPath = $permanentWinPath;
+            }
+
+            passthru('certutil.exe -user -addstore -f "Root" '.escapeshellarg($certutilPath), $code);
+
+            if ($stagePath !== null) {
+                @unlink($stagePath);
+            }
 
             $this->line('');
             if ($code !== 0) {
                 $this->laraKubeWarn('Could not add the CA to the Windows user store automatically.');
                 $this->line('  👉 Re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> (right-click → Run as administrator),');
                 $this->line('     or in that elevated Windows terminal run:');
-                $this->line("       certutil -addstore -f Root \"{$winPath}\"");
+                $this->line("       certutil -addstore -f Root \"{$permanentWinPath}\"");
                 $this->line('     …or double-click that .crt → Install Certificate → Local Machine → Trusted Root Certification Authorities.');
 
                 return 1;
@@ -119,6 +141,12 @@ trait InteractsWithTrust
 
     protected function setupDnsmasq(): void
     {
+        // dnsmasq runs inside the WSL2 VM — Windows browsers never see it.
+        // Hosts are managed via the Windows hosts file instead.
+        if ($this->isWsl()) {
+            return;
+        }
+
         if (! $this->isDnsmasqInstalled()) {
             $this->newLine();
             $this->line('  <fg=yellow>💡 Optional:</> Install <fg=cyan>dnsmasq</> for automatic wildcard DNS resolution.');

@@ -72,17 +72,18 @@ trait InteractsWithHosts
         // If dnsmasq is already wildcarding this project's TLD (its own pinned
         // override, or the developer's global default), individual /etc/hosts
         // entries are redundant — skip the prompt entirely.
+        // On WSL2 dnsmasq runs inside the VM and is invisible to Windows browsers,
+        // so we always fall through to the Windows hosts file sync instead.
         $tld = $config?->getLocalTld() ?? GlobalConfigData::load()->getLocalTld();
 
-        if ($this->dnsmasqCoversKube($tld)) {
+        if (! $this->isWsl() && $this->dnsmasqCoversKube($tld)) {
             return;
         }
 
-        // dnsmasq is set up but doesn't know about this TLD yet (e.g. this project
-        // pinned a different TLD than the global default) — offer to extend it
-        // instead of falling straight to /etc/hosts. Additive only: the TLDs it
-        // already covers stay covered.
-        if ($this->isDnsmasqInstalled()
+        // dnsmasq is set up but doesn't know about this TLD yet — offer to extend it.
+        // Skip on WSL2: dnsmasq inside the VM doesn't help Windows browsers.
+        if (! $this->isWsl()
+            && $this->isDnsmasqInstalled()
             && confirm("dnsmasq is set up but doesn't cover .{$tld} yet — extend it to cover this project too? (requires sudo)")
         ) {
             $this->configureDnsmasq($tld);
