@@ -2,20 +2,17 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\DetectsWsl;
 use App\Traits\InstallsK3s;
 use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 use App\Traits\PrunesKubeContext;
-
-use function Laravel\Prompts\confirm;
-use function Laravel\Prompts\select;
-
 use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use InstallsK3s, InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
+    use DetectsWsl, InstallsK3s, InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
 
     /**
      * The name and signature of the console command.
@@ -25,7 +22,7 @@ class ClusterSetupCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Install and configure a local Kubernetes cluster (native k3s on Linux, k3d on macOS/Windows)';
+    protected $description = 'Install and configure a local Kubernetes cluster (native k3s on Linux/WSL2)';
 
     /**
      * Execute the console command.
@@ -35,41 +32,24 @@ class ClusterSetupCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Local Cluster Installer');
 
-        // 1. Select engine. Native k3s is the lightest option and the default on
-        //    Linux; k3d (k3s-in-Docker) pays a container/VM tax on top of k3s and
-        //    is the only choice on macOS/Windows (no native Linux kernel there).
-        if ($this->isLinux()) {
-            $engine = select(
-                label: 'Which Kubernetes engine would you like to use?',
-                options: [
-                    'k3s' => 'k3s (native Linux service — lightest, recommended)',
-                    'k3d' => 'k3d (k3s in Docker — heavier; for throwaway clusters)',
-                ],
-                default: 'k3s',
-            );
-        } else {
-            $this->laraKubeLine('  <fg=gray>Native k3s needs a Linux kernel — using k3d (k3s in Docker).</>');
-            $this->laraKubeLine('  <fg=gray>Tip: OrbStack\'s built-in Kubernetes is k3s-based and lighter than k3d;</>');
-            $this->laraKubeLine('  <fg=gray>if you run it, `larakube context` can target it instead of creating a k3d cluster.</>');
-            $engine = 'k3d';
+        // 1. k3s needs a Linux kernel — WSL2 qualifies. macOS/Windows users should
+        //    use Docker Desktop's built-in Kubernetes, OrbStack, or a cloud target.
+        if (! $this->isLinux()) {
+            $this->laraKubeError('Native k3s needs a Linux kernel.');
+            $this->newLine();
+            $this->line('  <fg=gray>Your options:</>');
+            $this->line('  1. Use Docker Desktop\'s built-in Kubernetes (Settings → Kubernetes → Enable).');
+            $this->line('  2. Use OrbStack on macOS — it has built-in k3s-based Kubernetes.');
+            $this->line('  3. Deploy to a cloud target via `larakube cloud:init`.');
+
+            return 1;
         }
 
-        // 2. k3d needs Docker running + the ingress ports free; native k3s needs neither.
-        if ($engine === 'k3d') {
-            if (shell_exec('docker ps 2>&1') === null) {
-                $this->laraKubeError('Docker is not running. Please start Docker/OrbStack and try again.');
+        // 2. WSL2 is Linux under the hood — k3s works natively there too.
+        $where = $this->isWsl() ? 'WSL2' : 'Linux';
+        $this->laraKubeInfo("Installing native k3s on {$where}...");
 
-                return 1;
-            }
-
-            if (! $this->checkPortsAvailable([80, 443])) {
-                return 1;
-            }
-
-            $result = $this->installK3d();
-        } else {
-            $result = $this->installK3s();
-        }
+        $result = $this->installK3s();
 
         // 3. Make sure a kustomize that can build our multi-doc patches is available:
         //    probes the machine's own kustomize and installs a pinned standalone only when
@@ -83,98 +63,8 @@ class ClusterSetupCommand extends Command
         return $result;
     }
 
-    /**
-     * Check if the required local ports are free.
-     */
-    protected function checkPortsAvailable(array $ports): bool
-    {
-        $occupied = [];
-        foreach ($ports as $port) {
-            $connection = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
-            if (is_resource($connection)) {
-                $occupied[] = $port;
-                fclose($connection);
-            }
-        }
-
-        if (! empty($occupied)) {
-            $this->laraKubeError('Port Conflict Detected!');
-            $this->line('  The following ports are already in use: '.implode(', ', $occupied));
-            $this->line('');
-            $this->warn('  💡 This is likely caused by OrbStack\'s built-in Kubernetes or another local server.');
-            $this->info('  👉 Solution: Disable Kubernetes in your OrbStack/Docker settings and try again.');
-            $this->line('');
-
-            return false;
-        }
-
-        return true;
-    }
-
-    protected function installK3d(): int
-    {
-        // Check if k3d is installed
-        if (shell_exec('which k3d') === null) {
-            $this->laraKubeInfo('k3d not found. Installing via official script...');
-            passthru('curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash');
-        }
-
-        $clusterName = 'larakube';
-
-        // Check if cluster already exists
-        $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
-        if (str_contains($clusters ?? '', $clusterName)) {
-            $this->laraKubeInfo("Cluster '{$clusterName}' already exists.");
-            if (confirm('Would you like to recreate it?', false)) {
-                $this->withSpin('Deleting existing cluster...', fn () => exec("k3d cluster delete {$clusterName}"));
-            } else {
-                return 0;
-            }
-        }
-
-        // --- 🛡️ UNIVERSAL WORKSPACE BRIDGE ---
-        // Instead of asking for a specific folder, we mount the entire user root
-        // so that projects can be located anywhere (Desktop, Codes, etc.)
-        $userRoot = $this->isDarwin() ? '/Users' : '/home';
-
-        // Clear any stale k3d-larakube kubeconfig entry from a prior cluster (e.g.
-        // destroyed by an older CLI without this cleanup) so the fresh create + merge
-        // yields a clean, connectable context. Safe here — we're committed to creating
-        // a new cluster, so no live context is being removed.
-        $this->pruneKubeContext(['k3d-larakube']);
-
-        $this->laraKubeInfo('Creating LaraKube local cluster...');
-        $this->info("  🛡 Universal workspace bridge: {$userRoot}");
-
-        $k3dImage = 'rancher/k3s:'.str_replace('+', '-', $this->k3sVersion());
-
-        // Create k3d cluster with standard ports exposed
-        // And mount the user root so hostPath mounts work correctly
-        $command = "k3d cluster create {$clusterName} ".
-                   '-p "80:80@loadbalancer" '.
-                   '-p "443:443@loadbalancer" '.
-                   "-v \"{$userRoot}:{$userRoot}@all\" ".
-                   "--image {$k3dImage} ".
-                   '--agents 1 '.
-                   '--k3s-arg "--disable=traefik@server:*" '.
-                   '--wait';
-
-        passthru($command);
-
-        $this->laraKubeInfo('✅ Local cluster is ready!');
-        $this->info('You can now use larakube up to deploy your projects.');
-
-        return 0;
-    }
-
     protected function installK3s(): int
     {
-        if (! $this->isLinux()) {
-            $this->laraKubeError('Native k3s installation is only supported on Linux. Please use k3d instead.');
-
-            return 1;
-        }
-
         $this->laraKubeInfo('Installing native k3s...');
         // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
         // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge

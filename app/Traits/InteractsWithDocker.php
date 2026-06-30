@@ -29,6 +29,11 @@ trait InteractsWithDocker
             return ['engine' => 'k3s'];
         }
 
+        // Docker Desktop shares the host Docker daemon — images are already visible.
+        if (trim($context) === 'docker-desktop') {
+            return null;
+        }
+
         return null;
     }
 
@@ -166,7 +171,8 @@ trait InteractsWithDocker
      * Returns true/false when determinable, or null when it can't be checked
      * without side effects (native k3s needs sudo and it isn't cached) — callers
      * should treat null as "can't tell, don't force a re-import". Remote/registry
-     * clusters (and OrbStack, which reads host Docker images) return true: there
+     * clusters (and clusters sharing the host Docker daemon — OrbStack, Docker
+     * Desktop) return true: there
      * is no separate cluster store to seed.
      */
     protected function imageInActiveCluster(string $imageTag): ?bool
