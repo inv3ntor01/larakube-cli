@@ -68,6 +68,21 @@ class UpCommand extends Command
             return 1;
         }
 
+        // --- 🐳 STALE DOCKER GROUP CHECK ---
+        // Catches the exact trap SetupCommand's "run newgrp docker" reminder is
+        // for: usermod added the user to the docker group, but this terminal
+        // session never picked it up. Left undetected, `docker build`/`docker
+        // pull` later in this run fail with a permission-denied error on the
+        // socket that reads like Docker is broken — very confusing when Docker
+        // is actually fine. Warn, don't block: this run might not touch docker
+        // at all (image already built, --no-build, etc.).
+        if ($this->isLinux() && $this->dockerGroupNeedsRefresh()) {
+            $this->laraKubeWarn('Your shell hasn\'t picked up docker group membership yet.');
+            $this->line('  You were added to the <fg=cyan>docker</> group, but this terminal session predates that.');
+            $this->line('  If anything below fails with a Docker permission error, run <fg=cyan>newgrp docker</> (or open a new terminal) and retry.');
+            $this->newLine();
+        }
+
         // --- 🛡️ ZERO-CLUSTER GUARD ---
         if (! $this->hasActiveCluster()) {
             $laraKubeContext = $this->getLaraKubeContext();
@@ -498,6 +513,8 @@ class UpCommand extends Command
         $this->showServiceLinks($config, $environment);
 
         $this->showCompanionAccess($config, $appName, $environment);
+
+        $this->showArchitecturalInstructions($config);
 
         $this->renderStarPrompt();
 

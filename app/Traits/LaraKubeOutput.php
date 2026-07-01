@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use App\Contracts\HasLifecycleHooks;
 use App\Data\ConfigData;
 use App\State;
 use Illuminate\Support\Carbon;
@@ -135,6 +136,33 @@ trait LaraKubeOutput
         table(['Service', 'URL'], $rows);
 
         return true;
+    }
+
+    /**
+     * Render each installed component's one-time post-install steps (e.g. MinIO's
+     * bucket-creation walkthrough) — the same instructions `new`/`init`/`add` print
+     * once and then can easily get lost (scrolled past, or the user comes back to
+     * the project days later). Surfacing them again here — at the end of `up` and
+     * in `about` — means they're always one command away instead of a one-time-only
+     * printout. Silent no-op when nothing in the project has instructions.
+     */
+    protected function showArchitecturalInstructions(ConfigData $config): void
+    {
+        $instructions = [];
+        foreach ($config->getComponents() as $component) {
+            if ($component instanceof HasLifecycleHooks) {
+                $instructions = array_merge($instructions, $component->getPostInstallInstructions($config));
+            }
+        }
+
+        if ($instructions === []) {
+            return;
+        }
+
+        $this->laraKubeInfo('One-time architectural steps');
+        foreach ($instructions as $line) {
+            $this->line("  $line");
+        }
     }
 
     /**

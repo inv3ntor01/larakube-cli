@@ -301,11 +301,17 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
                 '1. Visit the Console: https://'.$config->getServiceHost('s3-console'),
                 '2. Login with: larakube / larakubesecretpassword',
                 '3. Create a bucket named "laravel"',
+                '4. To make it (or just a folder in it) public, run:',
+                '   larakube exec --service=minio "mc anonymous set download local/laravel"',
+                '   (append a path for just a folder, e.g. local/laravel/public; use "public" instead of "download" to also allow public uploads)',
             ],
             self::SEAWEEDFS => [
                 'SeaweedFS requires a one-time bucket creation after "larakube up":',
                 '1. Create Bucket: larakube exec --service=seaweedfs "echo s3.bucket.create -name laravel | /usr/bin/weed shell"',
                 'You can monitor your storage at: https://'.$config->getServiceHost('s3-admin'),
+                'To make it public, SeaweedFS has no single-command bucket ACL like MinIO — check the exact',
+                'subcommand for your version with: larakube exec --service=seaweedfs "echo help | /usr/bin/weed shell"',
+                '(look for an s3.bucket.policy / s3.configure entry), or configure anonymous access via the Filer UI above.',
             ],
             self::GARAGE => [
                 'Garage requires a one-time manual initialization after "larakube up":',
@@ -317,6 +323,9 @@ enum StorageDriver: string implements AsDependency, HasCommandOptions, HasCompos
                 '6. Link Key/Bucket: larakube exec --service=garage "/garage bucket allow --read --write laravel --key larakube"',
                 '7. Update your .env: Copy the machine-generated "Key ID" to AWS_ACCESS_KEY_ID and the "Secret key" to AWS_SECRET_ACCESS_KEY.',
                 '8. Sync to cluster: larakube up',
+                '9. Garage has no bucket ACL — publish it as a static website instead to make it public:',
+                '   larakube exec --service=garage "/garage bucket website --allow laravel"',
+                '   Files are then served, unauthenticated, from: https://'.$config->getServiceHost('s3-web'),
             ],
         };
     }

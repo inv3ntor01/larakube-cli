@@ -19,6 +19,17 @@ class SetupCommand extends Command
 
     protected $description = 'First-time setup: install Docker Engine, k3s cluster, and optional tools';
 
+    /**
+     * Critical one-time follow-up actions (e.g. "run newgrp docker") collected as
+     * setup runs. Printed inline where they happen AND again as a final summary —
+     * cluster:setup and k9s installation can both print a lot of scrolling output
+     * afterward, so a note shown only once near the top of a long run is easy to
+     * miss and easy to forget by the time setup finishes.
+     *
+     * @var string[]
+     */
+    protected array $reminders = [];
+
     public function handle(): int
     {
         $this->renderHeader();
@@ -52,7 +63,28 @@ class SetupCommand extends Command
         // Step 3 — k9s (optional terminal UI for browsing the cluster)
         $this->offerK9s();
 
+        $this->renderReminders();
+
         return 0;
+    }
+
+    /**
+     * Re-print every reminder collected during this run as the very last thing on
+     * screen, so a critical one-time step (like refreshing the docker group)
+     * doesn't get lost above cluster:setup's or k9s's own output. No-op when
+     * nothing was collected (e.g. Docker was already installed and running).
+     */
+    protected function renderReminders(): void
+    {
+        if ($this->reminders === []) {
+            return;
+        }
+
+        $this->newLine();
+        $this->laraKubeWarn('Before you continue — one-time action(s) needed:');
+        foreach ($this->reminders as $reminder) {
+            $this->line("  {$reminder}");
+        }
     }
 
     protected function ensureDockerInstalled(): bool
@@ -153,6 +185,8 @@ class SetupCommand extends Command
         $this->laraKubeInfo('✅ Docker Engine installed.');
         $this->line('  You\'ve been added to the <fg=cyan>docker</> group, but your current shell session');
         $this->line('  won\'t pick it up until you run: <fg=cyan>newgrp docker</> (or open a new terminal).');
+
+        $this->reminders[] = 'Run <fg=cyan>newgrp docker</> (or open a new terminal) — your shell hasn\'t picked up the docker group yet. Skipping this will make `docker`/`larakube up --build` fail with a permission error.';
 
         return true;
     }

@@ -334,6 +334,48 @@ trait InteractsWithDocker
     }
 
     /**
+     * True when this process's active group list doesn't include `docker`, even
+     * though the system group database says the user IS a member — the classic
+     * "usermod -aG docker ran (setup / installDockerEngine), but this shell
+     * never picked it up" trap. `docker` commands then fail with a permission-
+     * denied error on the socket that reads like Docker itself is broken, when
+     * the fix is just `newgrp docker` or a new terminal. Shells out to
+     * `id`/`getent` rather than the posix extension — it isn't compiled into
+     * the standalone binary (see hostUid() above). Never blocks: returns false
+     * when docker/getent aren't available, no `docker` group exists on this
+     * system, or the user isn't a member at all (a different problem entirely).
+     */
+    protected function dockerGroupNeedsRefresh(): bool
+    {
+        $groupEntry = trim((string) shell_exec('getent group docker 2>/dev/null'));
+
+        if ($groupEntry === '') {
+            return false;
+        }
+
+        $user = trim((string) shell_exec('id -un 2>/dev/null'));
+
+        if ($user === '') {
+            return false;
+        }
+
+        // getent group docker → "docker:x:999:alice,bob" — 4th field is the member list.
+        $fields = explode(':', $groupEntry);
+        $members = isset($fields[3]) && $fields[3] !== '' ? explode(',', $fields[3]) : [];
+        $primaryGroup = trim((string) shell_exec('id -gn 2>/dev/null'));
+
+        $isMember = in_array($user, $members, true) || $primaryGroup === 'docker';
+
+        if (! $isMember) {
+            return false;
+        }
+
+        $activeGroups = explode(' ', trim((string) shell_exec('id -Gn 2>/dev/null')));
+
+        return ! in_array('docker', $activeGroups, true);
+    }
+
+    /**
      * Fix file ownership in the project directory back to the host user.
      */
     protected function chownToHostUser(string $path): void

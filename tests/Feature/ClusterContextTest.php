@@ -5,6 +5,13 @@
 namespace App\Traits {
     function shell_exec($command)
     {
+        // Per-command mock (command string -> output), for tests that need
+        // different canned responses for different commands in one test —
+        // checked before the single-output mock below.
+        if (isset($GLOBALS['mock_shell_exec_callback']) && is_callable($GLOBALS['mock_shell_exec_callback'])) {
+            return ($GLOBALS['mock_shell_exec_callback'])($command);
+        }
+
         if (array_key_exists('mock_shell_exec_output', $GLOBALS)) {
             return $GLOBALS['mock_shell_exec_output'];
         }
