@@ -121,6 +121,11 @@ class ClusterSetupCommand extends Command
         // installer skips restarting the service ("No change detected").
         passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
 
+        // Rename k3s's hardcoded "default" context/cluster/user to "k3s-larakube"
+        // directly in /etc/rancher/k3s/k3s.yaml, and keep a hook installed so it
+        // re-applies on every future k3s start too — see method doc for why.
+        $this->installContextRenameHook();
+
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
         // never touches ~/.kube/config — so kubectl and `larakube context` can't
         // see it until we merge it in. Prune any stale k3s-larakube entry first so
@@ -160,10 +165,72 @@ class ClusterSetupCommand extends Command
     }
 
     /**
+     * Rename k3s's hardcoded "default" context/cluster/user to "k3s-larakube"
+     * directly inside /etc/rancher/k3s/k3s.yaml, and install a systemd
+     * ExecStartPost hook on k3s.service that re-applies the same rename on
+     * every future k3s start.
+     *
+     * k3s rewrites /etc/rancher/k3s/k3s.yaml from scratch on every service
+     * start — its mtime lands within the same second as k3s.service's
+     * ActiveEnterTimestamp — so a one-time rename would silently revert on the
+     * next `wsl --shutdown`, reboot, or `systemctl restart k3s`. Fixing the
+     * file at its source (rather than only the copy merged into
+     * ~/.kube/config) means k3s's own bundled `kubectl` binary
+     * (/usr/local/bin/kubectl → k3s symlink, which defaults to reading this
+     * file when KUBECONFIG isn't set) also sees the right context name with
+     * no KUBECONFIG pin or shell rc changes required.
+     */
+    protected function installContextRenameHook(): void
+    {
+        $script = <<<'SH'
+        #!/bin/sh
+        # Installed by `larakube cluster:setup`. k3s rewrites
+        # /etc/rancher/k3s/k3s.yaml from scratch on every start, so this
+        # re-applies the "default" -> "k3s-larakube" rename each time.
+        set -e
+        FILE=/etc/rancher/k3s/k3s.yaml
+        for i in $(seq 1 30); do
+            [ -s "$FILE" ] && break
+            sleep 1
+        done
+        [ -s "$FILE" ] || exit 0
+        sed -i -E \
+            -e 's/^(\s*(- )?name: )default$/\1k3s-larakube/' \
+            -e 's/^(\s*cluster: )default$/\1k3s-larakube/' \
+            -e 's/^(\s*user: )default$/\1k3s-larakube/' \
+            -e 's/^(current-context: )default$/\1k3s-larakube/' \
+            "$FILE"
+        chmod 644 "$FILE"
+        SH;
+
+        $scriptPath = '/usr/local/bin/larakube-rename-k3s-context.sh';
+        $tmpScript = tempnam(sys_get_temp_dir(), 'larakube_hook');
+        file_put_contents($tmpScript, $script);
+        passthru('sudo cp '.escapeshellarg($tmpScript).' '.escapeshellarg($scriptPath));
+        passthru('sudo chmod 755 '.escapeshellarg($scriptPath));
+        @unlink($tmpScript);
+
+        $unit = "[Service]\nExecStartPost={$scriptPath}\n";
+        $dropInDir = '/etc/systemd/system/k3s.service.d';
+        $dropInFile = $dropInDir.'/larakube-rename-context.conf';
+        $tmpUnit = tempnam(sys_get_temp_dir(), 'larakube_unit');
+        file_put_contents($tmpUnit, $unit);
+        passthru('sudo mkdir -p '.escapeshellarg($dropInDir));
+        passthru('sudo cp '.escapeshellarg($tmpUnit).' '.escapeshellarg($dropInFile));
+        @unlink($tmpUnit);
+
+        passthru('sudo systemctl daemon-reload');
+
+        // Fix the file immediately too — don't make the user wait for the next restart.
+        passthru('sudo '.escapeshellarg($scriptPath));
+    }
+
+    /**
      * Merge the k3s kubeconfig into the user's ~/.kube/config so kubectl and
-     * `larakube context` can see and select it. k3s names every entry "default";
-     * we rename the context/cluster/user to "k3s-larakube" so it won't collide
-     * with other configs and is easy to recognize.
+     * `larakube context` can see and select it. installContextRenameHook()
+     * already renames the source file's "default" entries to "k3s-larakube",
+     * but the rename here stays as a harmless no-op fallback (e.g. if the
+     * systemd hook couldn't be installed) — it only ever matches "default".
      */
     protected function mergeK3sKubeconfig(): void
     {
@@ -236,32 +303,17 @@ class ClusterSetupCommand extends Command
 
         $this->laraKubeInfo("Merged k3s into ~/.kube/config as context <fg=cyan>{$contextName}</>.");
 
-        // k3s installs its own kubectl binary (/usr/local/bin/kubectl → k3s symlink)
-        // which defaults to reading /etc/rancher/k3s/k3s.yaml instead of ~/.kube/config.
-        // Pinning KUBECONFIG in the shell's rc file ensures the merged config (with the
-        // correctly named context) is always the one kubectl sees, regardless of which
-        // binary resolves as "kubectl".
-        if ($this->pinKubeconfigInShell($home, $kubeConfig)) {
-            $this->laraKubeWarn('Run `source ~/.bashrc` (or open a new terminal) to activate the kubectl context.');
-        }
-
-        // A KUBECONFIG env var pointing elsewhere (e.g. at k3s's own
-        // /etc/rancher/k3s/k3s.yaml, which the k3s installer suggests exporting)
-        // SHADOWS this merge — kubectl/larakube would read that file (context
-        // "default") and never see "k3s-larakube".
-        $envKubeconfig = (string) getenv('KUBECONFIG');
-        if ($envKubeconfig !== '' && realpath($envKubeconfig) !== realpath($kubeConfig)) {
-            $this->laraKubeWarn("Heads up: your KUBECONFIG points at {$envKubeconfig}, which hides this merge.");
-            $this->laraKubeLine('  👉 Run `unset KUBECONFIG` (and remove any KUBECONFIG=… line from ~/.bashrc) so kubectl uses ~/.kube/config.');
-        }
+        // Older larakube versions pinned KUBECONFIG in the shell rc to work around
+        // k3s's bundled kubectl reading /etc/rancher/k3s/k3s.yaml (context "default")
+        // instead of ~/.kube/config. installContextRenameHook() now keeps that source
+        // file itself named "k3s-larakube", so the pin is unnecessary — remove it if
+        // a prior run left it behind.
+        $this->unpinKubeconfigFromShell($home);
     }
 
-    protected function pinKubeconfigInShell(string $home, string $kubeConfig): bool
+    protected function unpinKubeconfigFromShell(string $home): void
     {
-        $export = 'export KUBECONFIG="'.$kubeConfig.'"';
         $marker = '# larakube: pin kubeconfig';
-        $line = "\n{$marker}\n{$export}\n";
-        $wrote = false;
 
         foreach (["$home/.bashrc", "$home/.zshrc"] as $rc) {
             if (! file_exists($rc)) {
@@ -270,14 +322,12 @@ class ClusterSetupCommand extends Command
 
             $contents = (string) file_get_contents($rc);
 
-            if (str_contains($contents, $marker)) {
+            if (! str_contains($contents, $marker)) {
                 continue;
             }
 
-            file_put_contents($rc, $contents.$line);
-            $wrote = true;
+            $cleaned = preg_replace('/\n'.preg_quote($marker, '/').'\nexport KUBECONFIG="[^"]*"\n/', '', $contents);
+            file_put_contents($rc, $cleaned);
         }
-
-        return $wrote;
     }
 }
