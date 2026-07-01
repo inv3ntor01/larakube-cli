@@ -44,6 +44,23 @@ trait DetectsWsl
     }
 
     /**
+     * Whether WSL can currently hand off `.exe` files to Windows (interop).
+     *
+     * WSL registers a `WSLInterop` binfmt_misc handler at VM boot so Linux can
+     * exec Windows binaries like certutil.exe/powershell.exe. That registration
+     * can go missing without the VM itself dying — e.g. after switching the
+     * default distro (`wsl --set-default`) or a Windows sleep/hibernate — in
+     * which case any `.exe` on PATH still resolves but fails with a bare
+     * "Exec format error" when exec'd. A full `wsl --shutdown` + reopen
+     * re-registers it. Only meaningful when isWsl() is true.
+     */
+    protected function hasWslInterop(): bool
+    {
+        return is_file('/proc/sys/fs/binfmt_misc/WSLInterop')
+            || is_file('/proc/sys/fs/binfmt_misc/WSLInterop-late');
+    }
+
+    /**
      * Whether the Docker CLI is available on this machine.
      */
     protected function hasDockerCli(): bool

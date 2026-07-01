@@ -196,6 +196,13 @@ trait InteractsWithHosts
             return;
         }
 
+        if (! $this->hasWslInterop()) {
+            $this->warnWslInteropDown();
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
         // Write the full new content to a temp file, then copy it into place via
         // an elevated PowerShell running a generated .ps1 (literal paths only —
         // no fragile inline quoting).

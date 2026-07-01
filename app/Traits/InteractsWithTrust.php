@@ -23,6 +23,12 @@ trait InteractsWithTrust
             file_put_contents($caFile, file_get_contents($caPath));
             @unlink($tmpCa);
 
+            if (! $this->hasWslInterop()) {
+                $this->warnWslInteropDown();
+
+                return 1;
+            }
+
             // certutil.exe cannot read \\wsl.localhost\ UNC paths, so stage the cert
             // in the Windows %TEMP% directory which is always reachable by Windows processes.
             $winTempDir = trim((string) shell_exec('cmd.exe /c "echo %TEMP%" 2>/dev/null'));
@@ -95,6 +101,12 @@ trait InteractsWithTrust
         $os = PHP_OS_FAMILY;
 
         if ($this->isWsl()) {
+            if (! $this->hasWslInterop()) {
+                $this->warnWslInteropDown();
+
+                return;
+            }
+
             $this->info('  🪟 WSL2 detected. Removing from Windows Root Store...');
             passthru('certutil.exe -delstore "Root" "LaraKube Local CA"');
 
@@ -296,6 +308,21 @@ trait InteractsWithTrust
 
         $covered = implode(', ', array_map(fn (string $t) => "*.{$t}", $tlds));
         $this->laraKubeInfo("dnsmasq configured: {$covered} → 127.0.0.1");
+    }
+
+    /**
+     * Explain that WSL can't currently exec Windows binaries (certutil.exe,
+     * powershell.exe, ...) and how to fix it, instead of letting a bare
+     * "Exec format error" from the shell reach the user.
+     */
+    protected function warnWslInteropDown(): void
+    {
+        $this->line('');
+        $this->laraKubeWarn('WSL cannot currently launch Windows executables (interop is down).');
+        $this->line('  👉 From <fg=cyan;options=bold>PowerShell</> (not WSL), close all WSL terminals and run:');
+        $this->line('       wsl --shutdown');
+        $this->line('     then reopen your WSL terminal and re-run this command.');
+        $this->line('  <fg=gray>This can happen after switching the WSL default distro or a Windows sleep/hibernate — a full VM restart re-registers interop.</>');
     }
 
     protected function isCaTrusted(): bool
