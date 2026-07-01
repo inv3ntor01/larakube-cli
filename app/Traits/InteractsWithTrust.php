@@ -23,15 +23,43 @@ trait InteractsWithTrust
             file_put_contents($caFile, file_get_contents($caPath));
             @unlink($tmpCa);
 
-            $winPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
-            passthru('certutil.exe -user -addstore -f "Root" "'.$winPath.'" 2>/dev/null', $code);
+            if (! $this->hasWslInterop()) {
+                $this->warnWslInteropDown();
+
+                return 1;
+            }
+
+            // certutil.exe cannot read \\wsl.localhost\ UNC paths, so stage the cert
+            // in the Windows %TEMP% directory which is always reachable by Windows processes.
+            $winTempDir = trim((string) shell_exec('cmd.exe /c "echo %TEMP%" 2>/dev/null'));
+            $wslTempDir = $winTempDir !== ''
+                ? trim((string) shell_exec('wslpath '.escapeshellarg($winTempDir).' 2>/dev/null'))
+                : '';
+
+            // Permanent Windows-visible path (used in fallback instructions if certutil fails).
+            $permanentWinPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($caFile).' 2>/dev/null'));
+
+            if ($wslTempDir !== '' && is_dir($wslTempDir)) {
+                $stagePath = $wslTempDir.'/larakube-local-ca.crt';
+                copy($caFile, $stagePath);
+                $certutilPath = trim((string) shell_exec('wslpath -w '.escapeshellarg($stagePath).' 2>/dev/null'));
+            } else {
+                $stagePath = null;
+                $certutilPath = $permanentWinPath;
+            }
+
+            passthru('certutil.exe -user -addstore -f "Root" '.escapeshellarg($certutilPath), $code);
+
+            if ($stagePath !== null) {
+                @unlink($stagePath);
+            }
 
             $this->line('');
             if ($code !== 0) {
                 $this->laraKubeWarn('Could not add the CA to the Windows user store automatically.');
                 $this->line('  👉 Re-run <fg=cyan>larakube trust</> from a <fg=cyan;options=bold>PowerShell / Windows Terminal opened as Administrator</> (right-click → Run as administrator),');
                 $this->line('     or in that elevated Windows terminal run:');
-                $this->line("       certutil -addstore -f Root \"{$winPath}\"");
+                $this->line("       certutil -addstore -f Root \"{$permanentWinPath}\"");
                 $this->line('     …or double-click that .crt → Install Certificate → Local Machine → Trusted Root Certification Authorities.');
 
                 return 1;
@@ -73,6 +101,12 @@ trait InteractsWithTrust
         $os = PHP_OS_FAMILY;
 
         if ($this->isWsl()) {
+            if (! $this->hasWslInterop()) {
+                $this->warnWslInteropDown();
+
+                return;
+            }
+
             $this->info('  🪟 WSL2 detected. Removing from Windows Root Store...');
             passthru('certutil.exe -delstore "Root" "LaraKube Local CA"');
 
@@ -119,6 +153,12 @@ trait InteractsWithTrust
 
     protected function setupDnsmasq(): void
     {
+        // dnsmasq runs inside the WSL2 VM — Windows browsers never see it.
+        // Hosts are managed via the Windows hosts file instead.
+        if ($this->isWsl()) {
+            return;
+        }
+
         if (! $this->isDnsmasqInstalled()) {
             $this->newLine();
             $this->line('  <fg=yellow>💡 Optional:</> Install <fg=cyan>dnsmasq</> for automatic wildcard DNS resolution.');
@@ -268,6 +308,21 @@ trait InteractsWithTrust
 
         $covered = implode(', ', array_map(fn (string $t) => "*.{$t}", $tlds));
         $this->laraKubeInfo("dnsmasq configured: {$covered} → 127.0.0.1");
+    }
+
+    /**
+     * Explain that WSL can't currently exec Windows binaries (certutil.exe,
+     * powershell.exe, ...) and how to fix it, instead of letting a bare
+     * "Exec format error" from the shell reach the user.
+     */
+    protected function warnWslInteropDown(): void
+    {
+        $this->line('');
+        $this->laraKubeWarn('WSL cannot currently launch Windows executables (interop is down).');
+        $this->line('  👉 From <fg=cyan;options=bold>PowerShell</> (not WSL), close all WSL terminals and run:');
+        $this->line('       wsl --shutdown');
+        $this->line('     then reopen your WSL terminal and re-run this command.');
+        $this->line('  <fg=gray>This can happen after switching the WSL default distro or a Windows sleep/hibernate — a full VM restart re-registers interop.</>');
     }
 
     protected function isCaTrusted(): bool

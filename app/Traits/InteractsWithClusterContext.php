@@ -113,7 +113,11 @@ trait InteractsWithClusterContext
             }
         }
 
-        return false;
+        // Fallback: if the API server is on localhost or 127.0.0.1 it's local
+        // regardless of what the context is named (e.g. raw k3s "default").
+        $server = trim((string) shell_exec('kubectl config view --minify -o jsonpath=\'{.clusters[0].cluster.server}\' 2>/dev/null'));
+
+        return str_contains($server, '127.0.0.1') || str_contains($server, 'localhost');
     }
 
     /**

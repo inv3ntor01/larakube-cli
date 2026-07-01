@@ -29,6 +29,11 @@ trait InteractsWithDocker
             return ['engine' => 'k3s'];
         }
 
+        // Docker Desktop shares the host Docker daemon — images are already visible.
+        if (trim($context) === 'docker-desktop') {
+            return null;
+        }
+
         return null;
     }
 
@@ -166,7 +171,8 @@ trait InteractsWithDocker
      * Returns true/false when determinable, or null when it can't be checked
      * without side effects (native k3s needs sudo and it isn't cached) — callers
      * should treat null as "can't tell, don't force a re-import". Remote/registry
-     * clusters (and OrbStack, which reads host Docker images) return true: there
+     * clusters (and clusters sharing the host Docker daemon — OrbStack, Docker
+     * Desktop) return true: there
      * is no separate cluster store to seed.
      */
     protected function imageInActiveCluster(string $imageTag): ?bool
@@ -299,12 +305,41 @@ trait InteractsWithDocker
     }
 
     /**
+     * The host user's uid/gid, resolved reliably even when the posix extension isn't
+     * compiled into the larakube binary. The old `posix_getuid() ?: 1000` fallback chowned
+     * scaffolded files to uid 1000 when posix was absent (or the user wasn't 1000), leaving
+     * a root/foreign-owned project you'd need sudo to manage — the WSL `larakube new` bug.
+     * `id` is present on every Linux/macOS/WSL shell, so prefer it.
+     */
+    protected function hostUid(): int
+    {
+        $uid = trim((string) shell_exec('id -u 2>/dev/null'));
+
+        if ($uid !== '' && ctype_digit($uid)) {
+            return (int) $uid;
+        }
+
+        return function_exists('posix_getuid') ? posix_getuid() : 1000;
+    }
+
+    protected function hostGid(): int
+    {
+        $gid = trim((string) shell_exec('id -g 2>/dev/null'));
+
+        if ($gid !== '' && ctype_digit($gid)) {
+            return (int) $gid;
+        }
+
+        return function_exists('posix_getgid') ? posix_getgid() : 1000;
+    }
+
+    /**
      * Fix file ownership in the project directory back to the host user.
      */
     protected function chownToHostUser(string $path): void
     {
-        $uid = function_exists('posix_getuid') ? posix_getuid() : 1000;
-        $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
+        $uid = $this->hostUid();
+        $gid = $this->hostGid();
 
         $appName = basename($path);
         $image = "$appName:local";

@@ -24,4 +24,72 @@ trait DetectsWsl
         return is_file('/proc/version')
             && str_contains(strtolower((string) @file_get_contents('/proc/version')), 'microsoft');
     }
+
+    /**
+     * Whether Kubernetes is provided by Docker Desktop injected into WSL2.
+     *
+     * When Docker Desktop's "Enable Kubernetes" is on and its WSL2 integration
+     * is active, the kube context is set to `docker-desktop` and the Docker
+     * daemon is shared with the host — no separate cluster runtime is needed.
+     */
+    protected function isDockerDesktopKubernetesOnWsl(): bool
+    {
+        if (! $this->isWsl()) {
+            return false;
+        }
+
+        $context = trim(shell_exec('kubectl config current-context 2>/dev/null') ?? '');
+
+        return $context === 'docker-desktop';
+    }
+
+    /**
+     * Whether WSL can currently hand off `.exe` files to Windows (interop).
+     *
+     * WSL registers a `WSLInterop` binfmt_misc handler at VM boot so Linux can
+     * exec Windows binaries like certutil.exe/powershell.exe. That registration
+     * can go missing without the VM itself dying — e.g. after switching the
+     * default distro (`wsl --set-default`) or a Windows sleep/hibernate — in
+     * which case any `.exe` on PATH still resolves but fails with a bare
+     * "Exec format error" when exec'd. A full `wsl --shutdown` + reopen
+     * re-registers it. Only meaningful when isWsl() is true.
+     */
+    protected function hasWslInterop(): bool
+    {
+        return is_file('/proc/sys/fs/binfmt_misc/WSLInterop')
+            || is_file('/proc/sys/fs/binfmt_misc/WSLInterop-late');
+    }
+
+    /**
+     * Whether the Docker CLI is available on this machine.
+     */
+    protected function hasDockerCli(): bool
+    {
+        return trim((string) shell_exec('command -v docker 2>/dev/null')) !== '';
+    }
+
+    /**
+     * Whether the running Docker daemon is Docker Desktop (not Colima, OrbStack,
+     * native Docker Engine, etc.). Returns false if the daemon is unreachable.
+     */
+    protected function isDockerDesktop(): bool
+    {
+        $info = shell_exec('docker info --format "{{.OperatingSystem}}" 2>/dev/null');
+
+        return str_contains(strtolower($info ?? ''), 'docker desktop');
+    }
+
+    /**
+     * On WSL2, whether Docker Desktop's daemon is reachable from inside the
+     * distro (via WSL2 integration). This tells us the Docker engine is present
+     * even if Kubernetes isn't enabled in Docker Desktop.
+     */
+    protected function hasDockerDesktopOnWsl(): bool
+    {
+        if (! $this->isWsl()) {
+            return false;
+        }
+
+        return $this->hasDockerCli() && $this->isDockerDesktop();
+    }
 }

@@ -77,7 +77,7 @@ class NewCommand extends Command
             $this->logActivity('Project nesting warning ignored', ['action' => 'new'], $projectPath);
         }
 
-        if (! $this->checkPrerequisites(true)) {
+        if (! $this->checkPrerequisites(false)) {
             return 1;
         }
 
@@ -129,9 +129,10 @@ class NewCommand extends Command
             return 1;
         }
 
-        // Create .env.production
-        if (file_exists("$projectPath/.env")) {
-            copy("$projectPath/.env", "$projectPath/.env.production");
+        // Create .env.production (never fatal — ownership is fixed above, but a stray
+        // permission issue here must not abort an otherwise-complete scaffold).
+        if (file_exists("$projectPath/.env") && ! @copy("$projectPath/.env", "$projectPath/.env.production")) {
+            $this->laraKubeWarn('Could not write .env.production — copy .env to .env.production manually if you need it.');
         }
 
         $this->withSpin('Orchestrating infrastructure manifests...', function () use ($config) {
@@ -204,8 +205,8 @@ class NewCommand extends Command
         $appName = $config->getName();
         $projectPath = $config->getPath();
 
-        $uid = function_exists('posix_getuid') ? posix_getuid() : 1000;
-        $gid = function_exists('posix_getgid') ? posix_getgid() : 1000;
+        $uid = $this->hostUid();
+        $gid = $this->hostGid();
         $image = $config->getPhpImage(true);
 
         $this->laraKubeInfo("Pulling builder image: $image...");
@@ -263,9 +264,17 @@ class NewCommand extends Command
         $pkgCommand = $this->getNodeInstallationCommand($image);
         $baseDir = dirname($projectPath);
 
-        $cmd = 'docker run --rm -it -v '.$baseDir.":/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
-               "sh -c '$pkgCommand && composer global require laravel/installer && $(composer global config bin-dir --absolute)/laravel new $appName $extraFlags && chown -R $uid:$gid {$appName}'";
+        $cmd = "docker run --rm -it -v $baseDir:/var/www/html -e COMPOSER_CACHE_DIR=/dev/null -e COMPOSER_ALLOW_SUPERUSER=1 --user root $image ".
+               "sh -c '$pkgCommand && composer config -g bin-dir /usr/local/bin && composer global require laravel/installer && laravel new $appName $extraFlags'";
 
         passthru($cmd);
+
+        // Hand ownership of the scaffolded project back to the host user. Done in a SEPARATE,
+        // non-interactive container — not chained inside the -it run above, where the chown
+        // could silently no-op (notably on WSL) and leave a root-owned project you'd need
+        // sudo to manage. Uses the host user's real uid/gid (see InteractsWithDocker::hostUid).
+        if (is_dir($projectPath)) {
+            passthru("docker run --rm -v $baseDir:/var/www/html --user root $image chown -R $uid:$gid /var/www/html/$appName");
+        }
     }
 }

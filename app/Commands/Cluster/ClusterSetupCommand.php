@@ -2,20 +2,17 @@
 
 namespace App\Commands\Cluster;
 
+use App\Traits\DetectsWsl;
 use App\Traits\InstallsK3s;
 use App\Traits\InteractsWithKustomize;
 use App\Traits\InteractsWithOs;
 use App\Traits\LaraKubeOutput;
 use App\Traits\PrunesKubeContext;
-
-use function Laravel\Prompts\confirm;
-use function Laravel\Prompts\select;
-
 use LaravelZero\Framework\Commands\Command;
 
 class ClusterSetupCommand extends Command
 {
-    use InstallsK3s, InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
+    use DetectsWsl, InstallsK3s, InteractsWithKustomize, InteractsWithOs, LaraKubeOutput, PrunesKubeContext;
 
     /**
      * The name and signature of the console command.
@@ -25,7 +22,7 @@ class ClusterSetupCommand extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Install and configure a local Kubernetes cluster (native k3s on Linux, k3d on macOS/Windows)';
+    protected $description = 'Install and configure a local Kubernetes cluster (native k3s on Linux/WSL2)';
 
     /**
      * Execute the console command.
@@ -35,41 +32,28 @@ class ClusterSetupCommand extends Command
         $this->renderHeader();
         $this->laraKubeInfo('LaraKube Local Cluster Installer');
 
-        // 1. Select engine. Native k3s is the lightest option and the default on
-        //    Linux; k3d (k3s-in-Docker) pays a container/VM tax on top of k3s and
-        //    is the only choice on macOS/Windows (no native Linux kernel there).
-        if ($this->isLinux()) {
-            $engine = select(
-                label: 'Which Kubernetes engine would you like to use?',
-                options: [
-                    'k3s' => 'k3s (native Linux service — lightest, recommended)',
-                    'k3d' => 'k3d (k3s in Docker — heavier; for throwaway clusters)',
-                ],
-                default: 'k3s',
-            );
-        } else {
-            $this->laraKubeLine('  <fg=gray>Native k3s needs a Linux kernel — using k3d (k3s in Docker).</>');
-            $this->laraKubeLine('  <fg=gray>Tip: OrbStack\'s built-in Kubernetes is k3s-based and lighter than k3d;</>');
-            $this->laraKubeLine('  <fg=gray>if you run it, `larakube context` can target it instead of creating a k3d cluster.</>');
-            $engine = 'k3d';
+        // 1. k3s needs a Linux kernel — WSL2 qualifies. macOS/Windows users should
+        //    use Docker Desktop's built-in Kubernetes, OrbStack, or a cloud target.
+        if (! $this->isLinux()) {
+            $this->laraKubeError('Native k3s needs a Linux kernel.');
+            $this->newLine();
+            $this->line('  <fg=gray>Your options:</>');
+            $this->line('  1. Use Docker Desktop\'s built-in Kubernetes (Settings → Kubernetes → Enable).');
+            $this->line('  2. Use OrbStack on macOS — it has built-in k3s-based Kubernetes.');
+            $this->line('  3. Deploy to a cloud target via `larakube cloud:init`.');
+
+            return 1;
         }
 
-        // 2. k3d needs Docker running + the ingress ports free; native k3s needs neither.
-        if ($engine === 'k3d') {
-            if (shell_exec('docker ps 2>&1') === null) {
-                $this->laraKubeError('Docker is not running. Please start Docker/OrbStack and try again.');
+        // 2. WSL2 is Linux under the hood — k3s works natively there too.
+        $where = $this->isWsl() ? 'WSL2' : 'Linux';
+        $this->laraKubeInfo("Installing native k3s on {$where}...");
 
-                return 1;
-            }
-
-            if (! $this->checkPortsAvailable([80, 443])) {
-                return 1;
-            }
-
-            $result = $this->installK3d();
-        } else {
-            $result = $this->installK3s();
+        if ($this->isWsl()) {
+            $this->unmountDockerDesktopHost();
         }
+
+        $result = $this->installK3s();
 
         // 3. Make sure a kustomize that can build our multi-doc patches is available:
         //    probes the machine's own kustomize and installs a pinned standalone only when
@@ -78,108 +62,21 @@ class ClusterSetupCommand extends Command
         //    exists" path too.
         if ($result === 0) {
             $this->ensureKustomizeReady();
+            $this->warnIfNewerK3sAvailable();
         }
 
         return $result;
     }
 
-    /**
-     * Check if the required local ports are free.
-     */
-    protected function checkPortsAvailable(array $ports): bool
-    {
-        $occupied = [];
-        foreach ($ports as $port) {
-            $connection = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
-            if (is_resource($connection)) {
-                $occupied[] = $port;
-                fclose($connection);
-            }
-        }
-
-        if (! empty($occupied)) {
-            $this->laraKubeError('Port Conflict Detected!');
-            $this->line('  The following ports are already in use: '.implode(', ', $occupied));
-            $this->line('');
-            $this->warn('  💡 This is likely caused by OrbStack\'s built-in Kubernetes or another local server.');
-            $this->info('  👉 Solution: Disable Kubernetes in your OrbStack/Docker settings and try again.');
-            $this->line('');
-
-            return false;
-        }
-
-        return true;
-    }
-
-    protected function installK3d(): int
-    {
-        // Check if k3d is installed
-        if (shell_exec('which k3d') === null) {
-            $this->laraKubeInfo('k3d not found. Installing via official script...');
-            passthru('curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash');
-        }
-
-        $clusterName = 'larakube';
-
-        // Check if cluster already exists
-        $clusters = shell_exec('k3d cluster list --no-headers 2>/dev/null');
-        if (str_contains($clusters ?? '', $clusterName)) {
-            $this->laraKubeInfo("Cluster '{$clusterName}' already exists.");
-            if (confirm('Would you like to recreate it?', false)) {
-                $this->withSpin('Deleting existing cluster...', fn () => exec("k3d cluster delete {$clusterName}"));
-            } else {
-                return 0;
-            }
-        }
-
-        // --- 🛡️ UNIVERSAL WORKSPACE BRIDGE ---
-        // Instead of asking for a specific folder, we mount the entire user root
-        // so that projects can be located anywhere (Desktop, Codes, etc.)
-        $userRoot = $this->isDarwin() ? '/Users' : '/home';
-
-        // Clear any stale k3d-larakube kubeconfig entry from a prior cluster (e.g.
-        // destroyed by an older CLI without this cleanup) so the fresh create + merge
-        // yields a clean, connectable context. Safe here — we're committed to creating
-        // a new cluster, so no live context is being removed.
-        $this->pruneKubeContext(['k3d-larakube']);
-
-        $this->laraKubeInfo('Creating LaraKube local cluster...');
-        $this->info("  🛡 Universal workspace bridge: {$userRoot}");
-
-        $k3dImage = 'rancher/k3s:'.str_replace('+', '-', $this->k3sVersion());
-
-        // Create k3d cluster with standard ports exposed
-        // And mount the user root so hostPath mounts work correctly
-        $command = "k3d cluster create {$clusterName} ".
-                   '-p "80:80@loadbalancer" '.
-                   '-p "443:443@loadbalancer" '.
-                   "-v \"{$userRoot}:{$userRoot}@all\" ".
-                   "--image {$k3dImage} ".
-                   '--agents 1 '.
-                   '--k3s-arg "--disable=traefik@server:*" '.
-                   '--wait';
-
-        passthru($command);
-
-        $this->laraKubeInfo('✅ Local cluster is ready!');
-        $this->info('You can now use larakube up to deploy your projects.');
-
-        return 0;
-    }
-
     protected function installK3s(): int
     {
-        if (! $this->isLinux()) {
-            $this->laraKubeError('Native k3s installation is only supported on Linux. Please use k3d instead.');
-
-            return 1;
-        }
-
         $this->laraKubeInfo('Installing native k3s...');
-        // K3S_KUBECONFIG_MODE=644 makes /etc/rancher/k3s/k3s.yaml readable by your
-        // user (k3s defaults to 0600/root-only), so a plain `kubectl` and the merge
-        // below work without sudo.
-        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik'], ['K3S_KUBECONFIG_MODE' => '644']), $installCode);
+        // --write-kubeconfig-mode=644 is a k3s server flag that makes k3s always write
+        // /etc/rancher/k3s/k3s.yaml with 644 permissions — survives service restarts.
+        // K3S_KUBECONFIG_MODE=644 is the installer env equivalent, applied when the
+        // service is (re)started; both are set so re-runs without "No change detected"
+        // also get the right mode.
+        passthru($this->k3sInstallCommand($this->k3sVersion(), ['--disable=traefik', '--write-kubeconfig-mode=644'], ['K3S_KUBECONFIG_MODE' => '644'], sudo: true), $installCode);
 
         if ($installCode !== 0) {
             $this->laraKubeError('k3s installation failed. Please review the output above.');
@@ -191,10 +88,13 @@ class ClusterSetupCommand extends Command
         // `kubectl wait` before the Node object exists fails immediately with
         // "no matching resources found", so poll until it appears, then wait for
         // it to become Ready.
+        // WSL2 first boot is slower (kernel modules, containerd init) and routinely
+        // needs 90–120s; native Linux is usually done in 20–30s.
         $this->laraKubeInfo('Waiting for node to be ready...');
 
+        $maxAttempts = $this->isWsl() ? 90 : 40; // 180s on WSL2, 80s on Linux
         $nodeAppeared = false;
-        for ($i = 0; $i < 30; $i++) {
+        for ($i = 0; $i < $maxAttempts; $i++) {
             if (trim((string) shell_exec('sudo k3s kubectl get nodes --no-headers 2>/dev/null')) !== '') {
                 $nodeAppeared = true;
                 break;
@@ -202,17 +102,29 @@ class ClusterSetupCommand extends Command
             sleep(2);
         }
 
-        if ($nodeAppeared) {
-            passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=120s');
-        } else {
-            $this->laraKubeWarn('Timed out waiting for the k3s node to register. It may still come up shortly.');
+        if (! $nodeAppeared) {
+            $this->laraKubeWarn('Timed out waiting for the k3s node to register.');
+            $this->line('  k3s is still initializing — this is normal on first boot in WSL2.');
+            $this->line('  Wait a moment, then re-run <fg=cyan>larakube cluster:setup</> to complete setup.');
+            $this->line('  You can check live progress with: <fg=cyan>sudo journalctl -u k3s -f</>');
+            // Still chmod in case the file exists — it won't be overwritten once k3s
+            // fully starts (--write-kubeconfig-mode=644 handles future restarts).
+            passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
+
+            return 1;
         }
 
-        // On an ALREADY-installed k3s the installer prints "No change detected so
-        // skipping service start" — so K3S_KUBECONFIG_MODE is never applied (the
-        // mode is only written when k3s (re)starts). Force the kubeconfig readable
-        // so a re-run actually heals the 0600 permission instead of looping.
+        passthru('sudo k3s kubectl wait --for=condition=ready node --all --timeout=120s');
+
+        // Belt-and-suspenders: --write-kubeconfig-mode=644 is set as a server flag so
+        // k3s writes it 644 on every restart, but chmod here heals re-runs where the
+        // installer skips restarting the service ("No change detected").
         passthru('sudo chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null');
+
+        // Rename k3s's hardcoded "default" context/cluster/user to "k3s-larakube"
+        // directly in /etc/rancher/k3s/k3s.yaml, and keep a hook installed so it
+        // re-applies on every future k3s start too — see method doc for why.
+        $this->installContextRenameHook();
 
         // k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml (root-owned) and
         // never touches ~/.kube/config — so kubectl and `larakube context` can't
@@ -228,10 +140,97 @@ class ClusterSetupCommand extends Command
     }
 
     /**
+     * Docker Desktop's WSL integration mounts C:\Program Files\Docker\Docker\resources
+     * at /Docker/host using 9p. The Windows path contains a space that Docker Desktop
+     * does NOT escape inside the mount options, so /proc/mounts ends up with a 7-token
+     * line where k3s's ContainerManager parser expects 6 — crashing on startup.
+     * Unmounting before the installer runs (or before k3s restarts) sidesteps the issue.
+     * Docker Desktop automatically remounts /Docker/host once it detects it gone, so
+     * image builds are unaffected after k3s is up.
+     */
+    protected function unmountDockerDesktopHost(): void
+    {
+        if (! file_exists('/Docker/host')) {
+            return;
+        }
+
+        $mounted = str_contains((string) shell_exec('grep -q " /Docker/host " /proc/mounts && echo yes 2>/dev/null'), 'yes');
+
+        if (! $mounted) {
+            return;
+        }
+
+        $this->laraKubeInfo('Unmounting /Docker/host (Docker Desktop WSL mount) before k3s starts...');
+        shell_exec('sudo umount /Docker/host 2>/dev/null');
+    }
+
+    /**
+     * Rename k3s's hardcoded "default" context/cluster/user to "k3s-larakube"
+     * directly inside /etc/rancher/k3s/k3s.yaml, and install a systemd
+     * ExecStartPost hook on k3s.service that re-applies the same rename on
+     * every future k3s start.
+     *
+     * k3s rewrites /etc/rancher/k3s/k3s.yaml from scratch on every service
+     * start — its mtime lands within the same second as k3s.service's
+     * ActiveEnterTimestamp — so a one-time rename would silently revert on the
+     * next `wsl --shutdown`, reboot, or `systemctl restart k3s`. Fixing the
+     * file at its source (rather than only the copy merged into
+     * ~/.kube/config) means k3s's own bundled `kubectl` binary
+     * (/usr/local/bin/kubectl → k3s symlink, which defaults to reading this
+     * file when KUBECONFIG isn't set) also sees the right context name with
+     * no KUBECONFIG pin or shell rc changes required.
+     */
+    protected function installContextRenameHook(): void
+    {
+        $script = <<<'SH'
+        #!/bin/sh
+        # Installed by `larakube cluster:setup`. k3s rewrites
+        # /etc/rancher/k3s/k3s.yaml from scratch on every start, so this
+        # re-applies the "default" -> "k3s-larakube" rename each time.
+        set -e
+        FILE=/etc/rancher/k3s/k3s.yaml
+        for i in $(seq 1 30); do
+            [ -s "$FILE" ] && break
+            sleep 1
+        done
+        [ -s "$FILE" ] || exit 0
+        sed -i -E \
+            -e 's/^(\s*(- )?name: )default$/\1k3s-larakube/' \
+            -e 's/^(\s*cluster: )default$/\1k3s-larakube/' \
+            -e 's/^(\s*user: )default$/\1k3s-larakube/' \
+            -e 's/^(current-context: )default$/\1k3s-larakube/' \
+            "$FILE"
+        chmod 644 "$FILE"
+        SH;
+
+        $scriptPath = '/usr/local/bin/larakube-rename-k3s-context.sh';
+        $tmpScript = tempnam(sys_get_temp_dir(), 'larakube_hook');
+        file_put_contents($tmpScript, $script);
+        passthru('sudo cp '.escapeshellarg($tmpScript).' '.escapeshellarg($scriptPath));
+        passthru('sudo chmod 755 '.escapeshellarg($scriptPath));
+        @unlink($tmpScript);
+
+        $unit = "[Service]\nExecStartPost={$scriptPath}\n";
+        $dropInDir = '/etc/systemd/system/k3s.service.d';
+        $dropInFile = $dropInDir.'/larakube-rename-context.conf';
+        $tmpUnit = tempnam(sys_get_temp_dir(), 'larakube_unit');
+        file_put_contents($tmpUnit, $unit);
+        passthru('sudo mkdir -p '.escapeshellarg($dropInDir));
+        passthru('sudo cp '.escapeshellarg($tmpUnit).' '.escapeshellarg($dropInFile));
+        @unlink($tmpUnit);
+
+        passthru('sudo systemctl daemon-reload');
+
+        // Fix the file immediately too — don't make the user wait for the next restart.
+        passthru('sudo '.escapeshellarg($scriptPath));
+    }
+
+    /**
      * Merge the k3s kubeconfig into the user's ~/.kube/config so kubectl and
-     * `larakube context` can see and select it. k3s names every entry "default";
-     * we rename the context/cluster/user to "k3s-larakube" so it won't collide
-     * with other configs and is easy to recognize.
+     * `larakube context` can see and select it. installContextRenameHook()
+     * already renames the source file's "default" entries to "k3s-larakube",
+     * but the rename here stays as a harmless no-op fallback (e.g. if the
+     * systemd hook couldn't be installed) — it only ever matches "default".
      */
     protected function mergeK3sKubeconfig(): void
     {
@@ -304,14 +303,31 @@ class ClusterSetupCommand extends Command
 
         $this->laraKubeInfo("Merged k3s into ~/.kube/config as context <fg=cyan>{$contextName}</>.");
 
-        // A KUBECONFIG env var pointing elsewhere (e.g. at k3s's own
-        // /etc/rancher/k3s/k3s.yaml, which the k3s installer suggests exporting)
-        // SHADOWS this merge — kubectl/larakube would read that file (context
-        // "default") and never see "k3s-larakube".
-        $envKubeconfig = (string) getenv('KUBECONFIG');
-        if ($envKubeconfig !== '' && realpath($envKubeconfig) !== realpath($kubeConfig)) {
-            $this->laraKubeWarn("Heads up: your KUBECONFIG points at {$envKubeconfig}, which hides this merge.");
-            $this->laraKubeLine('  👉 Run `unset KUBECONFIG` (and remove any KUBECONFIG=… line from ~/.bashrc) so kubectl uses ~/.kube/config.');
+        // Older larakube versions pinned KUBECONFIG in the shell rc to work around
+        // k3s's bundled kubectl reading /etc/rancher/k3s/k3s.yaml (context "default")
+        // instead of ~/.kube/config. installContextRenameHook() now keeps that source
+        // file itself named "k3s-larakube", so the pin is unnecessary — remove it if
+        // a prior run left it behind.
+        $this->unpinKubeconfigFromShell($home);
+    }
+
+    protected function unpinKubeconfigFromShell(string $home): void
+    {
+        $marker = '# larakube: pin kubeconfig';
+
+        foreach (["$home/.bashrc", "$home/.zshrc"] as $rc) {
+            if (! file_exists($rc)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($rc);
+
+            if (! str_contains($contents, $marker)) {
+                continue;
+            }
+
+            $cleaned = preg_replace('/\n'.preg_quote($marker, '/').'\nexport KUBECONFIG="[^"]*"\n/', '', $contents);
+            file_put_contents($rc, $cleaned);
         }
     }
 }

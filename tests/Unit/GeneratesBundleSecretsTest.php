@@ -1,16 +1,12 @@
 <?php
 
+namespace Tests\Unit;
+
 use App\Data\ConfigData;
 use App\Enums\DatabaseDriver;
 use App\Enums\LaravelFeature;
 use App\Enums\ScoutDriver;
 use App\Enums\StorageDriver;
-use App\Traits\GeneratesBundleSecrets;
-
-class SecretsGenerator
-{
-    use GeneratesBundleSecrets;
-}
 
 test('it always generates an app key', function () {
     $generator = new SecretsGenerator;

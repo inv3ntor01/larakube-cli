@@ -2,6 +2,9 @@
 
 namespace App\Commands;
 
+use App\Traits\DetectsWsl;
+use App\Traits\InstallsK9s;
+use App\Traits\InteractsWithClusterContext;
 use App\Traits\InteractsWithEnvironments;
 use App\Traits\InteractsWithOs;
 use App\Traits\InteractsWithProjectConfig;
@@ -14,7 +17,7 @@ use LaravelZero\Framework\Commands\Command;
 
 class K9sCommand extends Command
 {
-    use InteractsWithEnvironments, InteractsWithOs, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
+    use DetectsWsl, InstallsK9s, InteractsWithClusterContext, InteractsWithEnvironments, InteractsWithOs, InteractsWithProjectConfig, LaraKubeOutput, ResolvesEnvironmentContext;
 
     /**
      * The name and signature of the console command.
@@ -37,12 +40,22 @@ class K9sCommand extends Command
     {
         $this->renderHeader();
 
-        if (! $this->isLaraKubeProject()) {
+        if (shell_exec('which k9s') === null && ! is_file(home_path('.larakube/bin/k9s')) && ! $this->setupK9s()) {
             return 1;
         }
 
-        if (shell_exec('which k9s') === null && ! $this->setupK9s()) {
-            return 1;
+        if (! $this->isLaraKubeProject(showError: false)) {
+            $context = $this->askForClusterContext();
+            if (! $context) {
+                $this->laraKubeError('No Kubernetes contexts found.');
+
+                return 1;
+            }
+
+            $this->laraKubeInfo("Launching k9s on context: {$context}...");
+            $this->executeK9s('', ' --context '.escapeshellarg($context));
+
+            return 0;
         }
 
         // Defensive: signature default is 'local', but internal $this->call()
@@ -67,14 +80,23 @@ class K9sCommand extends Command
 
         $this->laraKubeInfo("Launching K9s for project <fg=cyan;options=bold>{$config->getName()}</> in namespace: <fg=yellow;options=bold>{$namespace}</>...");
 
-        // Execute k9s
-        passthru("k9s{$contextFlag} -n {$namespace}");
+        $this->executeK9s($namespace, $contextFlag);
 
         return 0;
     }
 
     /**
-     * Offer to install k9s when it's missing, then confirm it's on PATH.
+     * Execute k9s
+     */
+    protected function executeK9s(string $namespace, string $contextFlag): void
+    {
+        $k9s = $this->resolveK9sBin() ?: 'k9s';
+        $namespaceFlag = $namespace !== '' ? ' -n '.escapeshellarg($namespace) : '';
+        passthru(escapeshellarg($k9s).$contextFlag.$namespaceFlag);
+    }
+
+    /**
+     * Offer to install k9s when it's missing, then confirm it's usable.
      * Mirrors InteractsWithTrust::setupDnsmasq(). Returns true once k9s is
      * usable; false if the user declined or the install needs a new shell.
      */
@@ -85,8 +107,8 @@ class K9sCommand extends Command
         $this->newLine();
 
         if (! confirm('Install k9s now?', true)) {
-            $manual = $this->isLinux() ? 'sudo snap install k9s' : 'brew install k9s';
-            $this->line("  <fg=gray>Skipped — install it later with: {$manual}</>");
+            $manual = 'https://k9scli.io/topics/install/';
+            $this->line("  <fg=gray>Skipped — install it later: {$manual}</>");
 
             return false;
         }
@@ -95,49 +117,15 @@ class K9sCommand extends Command
             return false;
         }
 
+        // Managed install goes to ~/.larakube/bin/k9s — no shell restart needed.
+        if ($this->resolveK9sBin() !== null) {
+            $this->laraKubeInfo('k9s installed successfully.');
+
+            return true;
+        }
+
         // brew/snap may not be on the current shell's PATH hash yet.
-        if (shell_exec('which k9s') === null) {
-            $this->laraKubeWarn('k9s installed — open a new terminal and re-run `larakube k9s`.');
-
-            return false;
-        }
-
-        $this->laraKubeInfo('k9s installed successfully.');
-
-        return true;
-    }
-
-    /**
-     * Install k9s via the platform package manager.
-     * Mirrors InteractsWithTrust::installDnsmasq().
-     */
-    protected function installK9s(): bool
-    {
-        if ($this->isDarwin()) {
-            if (trim((string) shell_exec('which brew 2>/dev/null')) === '') {
-                $this->warn('  Homebrew not found. Install it from https://brew.sh then run: brew install k9s');
-
-                return false;
-            }
-            passthru('brew install k9s', $code);
-
-            return $code === 0;
-        }
-
-        if ($this->isLinux()) {
-            // k9s isn't in the default apt/dnf repos; snap is the portable path
-            // and matches what we recommend elsewhere.
-            if (trim((string) shell_exec('which snap 2>/dev/null')) === '') {
-                $this->warn('  snap not found. Install k9s manually: https://k9scli.io/topics/install/');
-
-                return false;
-            }
-            passthru('sudo snap install k9s', $code);
-
-            return $code === 0;
-        }
-
-        $this->warn('  k9s install not supported on this platform. See https://k9scli.io/topics/install/');
+        $this->laraKubeWarn('k9s installed — open a new terminal and re-run `larakube k9s`.');
 
         return false;
     }
