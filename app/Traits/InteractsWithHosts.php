@@ -240,6 +240,18 @@ trait InteractsWithHosts
             return;
         }
 
+        // UAC auto-elevation across the WSL→Windows boundary is unreliable (it can
+        // just flash a window and fail) — mirrors ensureWindowsHostsAreSet(). This
+        // path stays automated (no confirm prompt, per the docblock above), but a
+        // failure must still be visible instead of leaving the entry silently
+        // missing from the Windows hosts file.
+        if (! $this->hasWslInterop()) {
+            $this->warnWslInteropDown();
+            $this->printWindowsHostsManualHelp($entry);
+
+            return;
+        }
+
         $contentTmp = sys_get_temp_dir().'/larakube_win_hosts';
         $scriptTmp = sys_get_temp_dir().'/larakube_win_hosts_sync.ps1';
         file_put_contents($contentTmp, $updated);
@@ -247,6 +259,7 @@ trait InteractsWithHosts
         $winContent = trim((string) shell_exec('wslpath -w '.escapeshellarg($contentTmp).' 2>/dev/null'));
         if ($winContent === '') {
             @unlink($contentTmp);
+            $this->printWindowsHostsManualHelp($entry);
 
             return;
         }
@@ -260,6 +273,7 @@ trait InteractsWithHosts
         if ($winScript === '') {
             @unlink($contentTmp);
             @unlink($scriptTmp);
+            $this->printWindowsHostsManualHelp($entry);
 
             return;
         }
@@ -267,10 +281,17 @@ trait InteractsWithHosts
         $startProcess = 'Start-Process -FilePath powershell -Verb RunAs -Wait '
             ."-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{$winScript}'";
 
-        exec('powershell.exe -NoProfile -Command '.escapeshellarg($startProcess).' 2>/dev/null');
+        $output = [];
+        $code = 0;
+        exec('powershell.exe -NoProfile -Command '.escapeshellarg($startProcess).' 2>/dev/null', $output, $code);
 
         @unlink($contentTmp);
         @unlink($scriptTmp);
+
+        if ($code !== 0) {
+            $this->laraKubeWarn("Could not sync the Windows hosts file automatically for {$appName}.");
+            $this->printWindowsHostsManualHelp($entry);
+        }
     }
 
     /**
