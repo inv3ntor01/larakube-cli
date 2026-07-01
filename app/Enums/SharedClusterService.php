@@ -155,6 +155,15 @@ enum SharedClusterService: string
             self::GRAFANA => 'Refreshing Grafana ingress...',
         };
     }
+
+    /**
+     * The full ingress hostname for this service on the given domain.
+     * Convenience wrapper around hostFor() for code that needs the resolved host.
+     */
+    public function host(string $domain): string
+    {
+        return $this->hostFor($domain);
+    }
     case MAILPIT = 'mailpit';
     case TRAEFIK_DASHBOARD = 'traefik-dashboard';
     case CONSOLE = 'console';
