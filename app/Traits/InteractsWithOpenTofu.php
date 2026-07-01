@@ -106,6 +106,9 @@ trait InteractsWithOpenTofu
             if (! confirm('Install OpenTofu now via the official install script (curl … | sudo bash)?', true)) {
                 return false;
             }
+            if (! $this->ensureUnzip()) {
+                return false;
+            }
             // Official standalone installer — picks deb/rpm/standalone automatically.
             $script = 'curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh '
                 .'&& chmod +x /tmp/install-opentofu.sh '
@@ -119,6 +122,34 @@ trait InteractsWithOpenTofu
         $this->laraKubeWarn('Automatic install is unavailable on this OS. See https://opentofu.org/docs/intro/install/');
 
         return false;
+    }
+
+    /**
+     * The OpenTofu install script's `--install-method standalone` path shells out
+     * to `unzip` to extract the release archive and dies with a bare "unzip is
+     * required" if it's missing. Fix that ourselves rather than let the
+     * third-party script fail with an unhelpful mid-stream error.
+     */
+    protected function ensureUnzip(): bool
+    {
+        if (trim((string) shell_exec('command -v unzip 2>/dev/null')) !== '') {
+            return true;
+        }
+
+        $this->laraKubeWarn('unzip is required by the OpenTofu installer but is not installed.');
+        if (file_exists('/usr/bin/apt-get')) {
+            passthru('sudo apt-get update -y && sudo apt-get install -y unzip', $code);
+        } elseif (file_exists('/usr/bin/dnf')) {
+            passthru('sudo dnf install -y unzip', $code);
+        } elseif (file_exists('/usr/bin/pacman')) {
+            passthru('sudo pacman -Sy --noconfirm unzip', $code);
+        } else {
+            $this->laraKubeError('Could not detect a package manager. Install unzip manually, then re-run.');
+
+            return false;
+        }
+
+        return $code === 0;
     }
 
     /** The global per-stack Tofu working dir, created (0700) on demand. */
