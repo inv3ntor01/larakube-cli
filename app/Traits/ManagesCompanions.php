@@ -293,12 +293,14 @@ trait ManagesCompanions
     }
 
     /**
-     * Ensure the cluster-wide companion(s) this project's database/cache need are
-     * running and routed on the current TLD — re-applied every `up` (idempotent),
-     * not just installed once, so an ingress doesn't get stranded on an old TLD
-     * after `config:tld`. Only when withCompanions is enabled — a project that
-     * opts out doesn't want LaraKube managing data tooling for it at all, so this
-     * (and any auto-registration) is fully skipped.
+     * Re-point (never auto-install) whichever of this project's database/cache
+     * companions is already running, so an already-installed companion's ingress
+     * doesn't get stranded on an old TLD after `config:tld`. Companions are
+     * shared, cluster-wide, opt-in tooling — they're only ever created via
+     * `larakube companion:add` (or `up --companions` on a project that already
+     * has one), never silently spun up just because a project's DB/cache happens
+     * to match. Only runs when withCompanions is enabled — a project that opts
+     * out doesn't want LaraKube touching its data tooling at all.
      *
      * Each driver maps to its single best-fit companion rather than spinning up
      * every tool that could theoretically work — running three different admin
@@ -307,10 +309,9 @@ trait ManagesCompanions
      *
      * Full persistent auto-registration (no manual server entry needed) is only
      * implemented for phpMyAdmin today — it's the only one of these tools verified
-     * to support a hot-reloadable multi-server list (PMA_HOSTS). pgAdmin, Mongo
-     * Express, and RedisInsight get auto-installed here but still rely on the
-     * pre-filled guide link in showCompanionAccess() until their own
-     * auto-registration mechanics are verified against a live cluster.
+     * to support a hot-reloadable multi-server list (PMA_HOSTS), via
+     * refreshPhpMyAdminServers() below (which has its own isCompanionInstalled
+     * guard, so it no-ops the same way when phpMyAdmin was never added).
      */
     protected function ensureProjectCompanions(ConfigData $config, string $appName): void
     {
@@ -333,12 +334,19 @@ trait ManagesCompanions
             $cache === CacheDriver::REDIS ? CompanionDriver::REDISINSIGHT : null,
         ]);
 
-        // Re-apply unconditionally (kubectl apply is idempotent) rather than only
-        // when missing — otherwise a companion installed under a previous TLD keeps
+        // Re-apply (kubectl apply is idempotent) ONLY companions that are already
+        // installed — otherwise a companion installed under a previous TLD keeps
         // its stale ingress host (e.g. phpmyadmin.kube) after `config:tld`, so its
         // advertised URL (phpmyadmin.localhost) 404s. Re-applying re-renders the
-        // ingress on the current TLD; an unchanged manifest is a no-op.
+        // ingress on the current TLD; an unchanged manifest is a no-op. Skipping
+        // companions that aren't installed is what keeps `up` from silently
+        // installing one a project never asked for (mirrors the presenceProbe
+        // gating SharedClusterService uses for Grafana et al.).
         foreach ($needed as $companion) {
+            if (! $this->isCompanionInstalled($companion)) {
+                continue;
+            }
+
             $this->ensureCompanionNamespace();
             $this->deployCompanion($companion);
         }

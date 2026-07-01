@@ -47,7 +47,7 @@ function companionsHarness(array $preInstalled = []): object
 
 test('ensureProjectCompanions does nothing when withCompanions is false', function () {
     $config = ConfigData::from(['name' => 'demo', 'database' => 'mariadb', 'withCompanions' => false]);
-    $harness = companionsHarness();
+    $harness = companionsHarness([CompanionDriver::PHPMYADMIN]);
 
     $harness->ensure($config, 'demo');
 
@@ -56,37 +56,18 @@ test('ensureProjectCompanions does nothing when withCompanions is false', functi
         ->and($harness->phpMyAdminRefreshed)->toBeFalse();
 });
 
-test('ensureProjectCompanions deploys phpMyAdmin for MariaDB and refreshes its server list', function () {
+test('ensureProjectCompanions never auto-installs phpMyAdmin — companions are opt-in via companion:add', function () {
     $config = ConfigData::from(['name' => 'demo', 'database' => 'mariadb']);
-    $harness = companionsHarness();
+    $harness = companionsHarness(); // nothing pre-installed
 
     $harness->ensure($config, 'demo');
 
-    expect($harness->deployed)->toBe([CompanionDriver::PHPMYADMIN])
-        ->and($harness->namespaceEnsured)->toBeTrue()
-        ->and($harness->phpMyAdminRefreshed)->toBeTrue();
+    expect($harness->deployed)->toBe([])
+        ->and($harness->namespaceEnsured)->toBeFalse();
 });
 
-test('ensureProjectCompanions deploys pgAdmin for PostgreSQL', function () {
+test('ensureProjectCompanions never auto-installs pgAdmin for PostgreSQL', function () {
     $config = ConfigData::from(['name' => 'demo', 'database' => 'postgres']);
-    $harness = companionsHarness();
-
-    $harness->ensure($config, 'demo');
-
-    expect($harness->deployed)->toBe([CompanionDriver::PGADMIN]);
-});
-
-test('ensureProjectCompanions deploys Mongo Express for MongoDB', function () {
-    $config = ConfigData::from(['name' => 'demo', 'database' => 'mongodb']);
-    $harness = companionsHarness();
-
-    $harness->ensure($config, 'demo');
-
-    expect($harness->deployed)->toBe([CompanionDriver::MONGO_EXPRESS]);
-});
-
-test('ensureProjectCompanions deploys nothing for SQLite', function () {
-    $config = ConfigData::from(['name' => 'demo', 'database' => 'sqlite']);
     $harness = companionsHarness();
 
     $harness->ensure($config, 'demo');
@@ -94,19 +75,36 @@ test('ensureProjectCompanions deploys nothing for SQLite', function () {
     expect($harness->deployed)->toBe([]);
 });
 
-test('ensureProjectCompanions adds RedisInsight alongside the database companion', function () {
-    $config = ConfigData::from(['name' => 'demo', 'database' => 'mariadb', 'cacheDriver' => 'redis']);
+test('ensureProjectCompanions never auto-installs Mongo Express for MongoDB', function () {
+    $config = ConfigData::from(['name' => 'demo', 'database' => 'mongodb']);
     $harness = companionsHarness();
 
     $harness->ensure($config, 'demo');
 
-    expect($harness->deployed)->toContain(CompanionDriver::PHPMYADMIN)
-        ->and($harness->deployed)->toContain(CompanionDriver::REDISINSIGHT);
+    expect($harness->deployed)->toBe([]);
+});
+
+test('ensureProjectCompanions never auto-installs RedisInsight for Redis', function () {
+    $config = ConfigData::from(['name' => 'demo', 'cacheDriver' => 'redis']);
+    $harness = companionsHarness();
+
+    $harness->ensure($config, 'demo');
+
+    expect($harness->deployed)->toBe([]);
+});
+
+test('ensureProjectCompanions deploys nothing for SQLite', function () {
+    $config = ConfigData::from(['name' => 'demo', 'database' => 'sqlite']);
+    $harness = companionsHarness([CompanionDriver::PHPMYADMIN, CompanionDriver::PGADMIN, CompanionDriver::MONGO_EXPRESS]);
+
+    $harness->ensure($config, 'demo');
+
+    expect($harness->deployed)->toBe([]);
 });
 
 test('ensureProjectCompanions skips memcached — it has no companion at all', function () {
     $config = ConfigData::from(['name' => 'demo', 'cacheDriver' => 'memcached']);
-    $harness = companionsHarness();
+    $harness = companionsHarness([CompanionDriver::REDISINSIGHT]);
 
     $harness->ensure($config, 'demo');
 
@@ -117,6 +115,7 @@ test('ensureProjectCompanions re-applies an already-installed companion so its i
     // Re-applying unconditionally is the fix for stale companion ingresses after
     // config:tld — a companion installed under the old TLD must be re-rendered on
     // up so its host (e.g. phpmyadmin.localhost) resolves, not left write-once.
+    // But it must already be installed — up never installs one for the first time.
     $config = ConfigData::from(['name' => 'demo', 'database' => 'postgres']);
     $harness = companionsHarness([CompanionDriver::PGADMIN]);
 
@@ -124,4 +123,24 @@ test('ensureProjectCompanions re-applies an already-installed companion so its i
 
     expect($harness->deployed)->toBe([CompanionDriver::PGADMIN])
         ->and($harness->namespaceEnsured)->toBeTrue();
+});
+
+test('ensureProjectCompanions re-applies phpMyAdmin and refreshes its server list when already installed', function () {
+    $config = ConfigData::from(['name' => 'demo', 'database' => 'mariadb']);
+    $harness = companionsHarness([CompanionDriver::PHPMYADMIN]);
+
+    $harness->ensure($config, 'demo');
+
+    expect($harness->deployed)->toBe([CompanionDriver::PHPMYADMIN])
+        ->and($harness->namespaceEnsured)->toBeTrue()
+        ->and($harness->phpMyAdminRefreshed)->toBeTrue();
+});
+
+test('ensureProjectCompanions re-applies only the already-installed companion, not both', function () {
+    $config = ConfigData::from(['name' => 'demo', 'database' => 'mariadb', 'cacheDriver' => 'redis']);
+    $harness = companionsHarness([CompanionDriver::REDISINSIGHT]);
+
+    $harness->ensure($config, 'demo');
+
+    expect($harness->deployed)->toBe([CompanionDriver::REDISINSIGHT]);
 });
